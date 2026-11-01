@@ -71,7 +71,7 @@
             android:id="@+id/buttonDump"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="강력 모드 1회 설정 방법 (원래 소리 음소거 권한)" />
+            android:text="🔑 강력 모드 권한 설정 (PC 없이 Shizuku로)" />
 
         <TextView
             android:id="@+id/textStatus"

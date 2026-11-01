@@ -81,6 +81,7 @@ class MainActivity : Activity() {
         settings = SpatialSettings.load(this)
         bindUi()
         setupListeners()
+        runCatching { rikka.shizuku.Shizuku.addRequestPermissionResultListener(shizukuPermissionListener) }
 
         // 앱을 다시 열었을 때 설정이 켜져 있으면 서비스도 확실히 살려 둔다.
         if (SoundController.sync(this)) {
@@ -119,6 +120,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        runCatching { rikka.shizuku.Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener) }
         TestSound.stop()
         super.onDestroy()
     }
@@ -285,7 +287,7 @@ class MainActivity : Activity() {
 
     private fun renderStrongStatus(s: EngineState.Snapshot, lines: MutableList<String>) {
         val dump = SessionMuter.hasDumpPermission(this)
-        lines += if (dump) "🔑 원래 소리 음소거 권한: 있음" else "🔑 원래 소리 음소거 권한: 없음 → 위 '1회 설정 방법' 버튼"
+        lines += if (dump) "🔑 원래 소리 음소거 권한: 있음" else "🔑 원래 소리 음소거 권한: 없음 → 위 '🔑 강력 모드 권한 설정' 버튼"
         when {
             !settings.enabled -> lines += "⏸ 꺼져 있음"
             !s.strongRunning -> lines += "⏳ 시작 대기 중 (오디오 공유를 허용해야 시작됨)"
@@ -364,22 +366,100 @@ class MainActivity : Activity() {
         }
     }
 
+    /** 강력 모드 권한 설정: Shizuku(PC 없이) 단계별 안내 + PC 명령어 대안 */
     private fun showDumpHelp() {
-        val granted = SessionMuter.hasDumpPermission(this)
+        if (SessionMuter.hasDumpPermission(this)) {
+            AlertDialog.Builder(this)
+                .setTitle("설정 완료 ✅")
+                .setMessage("원래 소리 음소거 권한이 이미 있습니다.\n강력 3D 모드를 선택하고 '3D 음향 켜기'를 누르세요.")
+                .setPositiveButton("확인", null)
+                .show()
+            return
+        }
+        val st = ShizukuHelper.state(this)
+        val (step, msg) = when (st) {
+            ShizukuHelper.State.NOT_INSTALLED -> "1/4 단계: Shizuku 설치" to
+                "PC 없이 권한을 받으려면 무료 앱 'Shizuku'가 필요합니다.\n\n" +
+                "아래 [Shizuku 설치]를 눌러 설치한 뒤, 이 앱으로 돌아와 이 버튼을 다시 누르세요."
+            ShizukuHelper.State.NOT_RUNNING -> "2/4 단계: Shizuku 실행 (처음 한 번 페어링)" to
+                "① 개발자 옵션 켜기 (이미 했으면 건너뛰기)\n" +
+                "   설정 → 휴대전화 정보 → 소프트웨어 정보 → '빌드번호'를 7번 연속 탭\n\n" +
+                "② Wi-Fi에 연결된 상태여야 합니다\n\n" +
+                "③ Shizuku 앱 열기 → '무선 디버깅을 통해 시작' 칸의 [페어링] 누르기\n" +
+                "   → 알림 허용을 물으면 허용\n\n" +
+                "④ [개발자 옵션 열기] → '무선 디버깅' 켜기 → '무선 디버깅' 글자를 눌러 들어가기\n" +
+                "   → '페어링 코드로 기기 페어링' 누르기 → 6자리 숫자가 보임\n\n" +
+                "⑤ 그 화면 그대로 상단바를 내려 Shizuku 알림의 [페어링 코드 입력]에 6자리 입력\n" +
+                "   → '페어링 성공' 알림이 뜸\n\n" +
+                "⑥ Shizuku 앱으로 돌아가 '무선 디버깅을 통해 시작'의 [시작] 누르기\n" +
+                "   → 'Shizuku가 실행 중입니다' 가 보이면 성공\n\n" +
+                "⑦ 이 앱으로 돌아와 이 버튼을 다시 누르기\n\n" +
+                "※ 폰을 재부팅하면 Shizuku만 ⑥번처럼 [시작]을 다시 누르면 됩니다 (페어링은 1번만)."
+            ShizukuHelper.State.NO_PERMISSION -> "3/4 단계: Shizuku 사용 허용" to
+                "Shizuku가 실행 중입니다 👍\n\n" +
+                "[허용 요청]을 누르면 Shizuku 창이 뜹니다. '항상 허용'(또는 '허용')을 누르세요.\n" +
+                "그러면 자동으로 권한을 받습니다."
+            ShizukuHelper.State.READY -> "4/4 단계: 권한 받기" to
+                "준비 완료! [권한 받기]를 누르면 바로 설정됩니다."
+        }
+        val b = AlertDialog.Builder(this)
+            .setTitle(step)
+            .setMessage(msg)
+            .setNeutralButton("PC로 하기") { _, _ -> showPcHelp() }
+            .setNegativeButton("닫기", null)
+        when (st) {
+            ShizukuHelper.State.NOT_INSTALLED ->
+                b.setPositiveButton("Shizuku 설치") { _, _ -> ShizukuHelper.openStore(this) }
+            ShizukuHelper.State.NOT_RUNNING -> {
+                b.setPositiveButton("Shizuku 열기") { _, _ -> ShizukuHelper.openShizuku(this) }
+                b.setNeutralButton("개발자 옵션 열기") { _, _ -> ShizukuHelper.openDeveloperOptions(this) }
+            }
+            ShizukuHelper.State.NO_PERMISSION ->
+                b.setPositiveButton("허용 요청") { _, _ -> ShizukuHelper.requestPermission(REQ_SHIZUKU) }
+            ShizukuHelper.State.READY ->
+                b.setPositiveButton("권한 받기") { _, _ -> grantViaShizuku() }
+        }
+        b.show()
+    }
+
+    private val shizukuPermissionListener =
+        rikka.shizuku.Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
+            if (requestCode != REQ_SHIZUKU) return@OnRequestPermissionResultListener
+            runOnUiThread {
+                if (grantResult == PackageManager.PERMISSION_GRANTED) grantViaShizuku()
+                else Toast.makeText(this, "Shizuku 허용이 거부되었습니다", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+    private fun grantViaShizuku() {
+        Toast.makeText(this, "권한을 받는 중…", Toast.LENGTH_SHORT).show()
+        Thread {
+            val ok = ShizukuHelper.grantDump(this)
+            runOnUiThread {
+                if (ok) {
+                    AlertDialog.Builder(this)
+                        .setTitle("설정 완료 ✅")
+                        .setMessage("이제 강력 3D 모드를 쓸 수 있습니다.\n'3D 음향 켜기'를 누르고, 소리 공유 창에서 [시작]을 누르세요.\n\n권한은 앱을 지우기 전까지 유지됩니다 (재부팅해도 OK).")
+                        .setPositiveButton("확인", null)
+                        .show()
+                    renderStatus(EngineState.snapshot)
+                } else {
+                    Toast.makeText(this, "권한 받기 실패 — 'PC로 하기' 방법을 써 주세요", Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
+    }
+
+    private fun showPcHelp() {
         val msg = buildString {
-            if (granted) append("✅ 이미 권한이 있습니다. 설정이 끝났어요!\n\n")
-            append("강력 3D 모드는 유튜브 원래 소리를 끄고, 앱이 직접 3D로 계산한 소리를 대신 내보냅니다. ")
-            append("원래 소리를 끄려면 PC에서 딱 한 번 아래 명령을 실행해야 합니다.\n\n")
-            append("1) 폰: 설정 → 휴대전화 정보 → 소프트웨어 정보 → '빌드번호' 7번 누르기 (개발자 옵션 켜기)\n")
+            append("1) 설정 → 휴대전화 정보 → 소프트웨어 정보 → '빌드번호' 7번 누르기 (개발자 옵션 켜기)\n")
             append("2) 설정 → 개발자 옵션 → 'USB 디버깅' 켜기\n")
             append("3) PC에 USB로 연결 후 PC 명령창에서:\n\n")
             append(SessionMuter.GRANT_COMMAND)
-            append("\n\n4) 이 앱을 완전히 닫았다가 다시 열기\n\n")
-            append("PC가 없으면: 'Shizuku' 또는 무선 디버깅용 앱(LADB 등)으로 같은 명령을 실행해도 됩니다.\n")
-            append("권한은 앱을 지우기 전까지 유지됩니다.")
+            append("\n\n4) 이 앱을 완전히 닫았다가 다시 열기")
         }
         AlertDialog.Builder(this)
-            .setTitle("강력 3D 모드 1회 설정")
+            .setTitle("PC로 권한 주기")
             .setMessage(msg)
             .setPositiveButton("명령어 복사") { _, _ ->
                 val cm = getSystemService(ClipboardManager::class.java)
@@ -424,6 +504,7 @@ class MainActivity : Activity() {
         private val CUSTOM = SOUND_PRESETS.lastIndex
         private const val REQ_PROJECTION = 10
         private const val REQ_RECORD = 11
+        private const val REQ_SHIZUKU = 12
         const val EXTRA_START = "start"
     }
 }

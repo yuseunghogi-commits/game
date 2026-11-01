@@ -17,6 +17,11 @@
     <!-- 세션 UID → 앱 이름 표시 -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
 
+    <queries>
+        <!-- Shizuku 설치 여부 확인/실행 -->
+        <package android:name="moe.shizuku.privileged.api" />
+    </queries>
+
     <application
         android:allowBackup="true"
         android:icon="@drawable/ic_headphones"
@@ -54,5 +59,14 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
+
+        <!-- Shizuku 가 이 앱에 바인더를 전달하는 통로 -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
     </application>
 </manifest>

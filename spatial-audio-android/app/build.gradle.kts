@@ -6,6 +6,9 @@ plugins {
 dependencies {
     // 숨겨진 시스템 API(ServiceManager) 접근용 — 세션 탐색에 사용
     implementation("org.lsposed.hiddenapibypass:hiddenapibypass:4.3")
+    // PC 없이 폰에서 ADB 권한(DUMP)을 받기 위한 Shizuku
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
 }
 
 android {
