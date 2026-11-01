@@ -20,6 +20,13 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
+      # 빌드마다 서명 키가 바뀌면 폰에서 덮어쓰기 업데이트가 안 되므로
+      # 디버그 서명 키를 캐시에 보관해 계속 같은 키로 서명한다.
+      - name: Restore signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: spatial-sound-debug-keystore-v1
       - name: Build APK
         run: |
           chmod +x gradlew
