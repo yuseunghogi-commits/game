@@ -153,3 +153,25 @@ button { font: inherit; color: inherit; }
 
 .ph svg { width: 70%; height: 70%; }
 .fac .ph { display: grid; place-items: center; }
+
+/* ---- P1: 상태 배지, 송전선, 저장 ---- */
+.badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 4px; font-size: 10.5px; font-weight: 600; vertical-align: 1px; }
+.badge.warn { background: rgba(242, 178, 72, 0.15); color: var(--amber); border: 1px solid rgba(242, 178, 72, 0.4); }
+.badge.bad { background: rgba(229, 96, 77, 0.15); color: var(--negative); border: 1px solid rgba(229, 96, 77, 0.45); }
+.badge.info { background: var(--energy-dim); color: var(--energy); border: 1px solid rgba(79, 209, 224, 0.4); }
+.btn.warn { border-color: var(--amber); color: var(--amber); }
+.btn.tiny { padding: 0 6px; font-size: 11px; line-height: 18px; }
+.dot-warn { color: var(--amber); font-size: 9px; vertical-align: 2px; }
+.bar-row { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin: 10px 0 4px; }
+.progress.soc > span { background: var(--energy); }
+.progress.line > span { background: linear-gradient(90deg, var(--energy), var(--amber)); }
+.thr { display: flex; align-items: center; gap: 4px; margin-top: 6px; color: var(--muted); font-size: 11px; flex-wrap: wrap; }
+.thr span { margin-left: 4px; }
+.seg.tabs { margin: 0 0 10px; }
+.cards.one { grid-template-columns: 1fr 2fr; }
+.cards.one .card { cursor: default; }
+.targets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.target { display: flex; flex-direction: column; gap: 2px; padding: 8px; background: var(--panel-solid); border: 1px solid var(--line); border-radius: var(--radius-sm); cursor: pointer; text-align: left; }
+.target .num { color: var(--amber); font-size: 12px; }
+.target.on { border-color: var(--energy); box-shadow: 0 0 0 1px var(--energy) inset; }
+.fac .ph svg { width: 80%; height: 80%; }

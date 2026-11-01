@@ -4,7 +4,8 @@
 import { heightAt, moistureAt, SEA_LEVEL } from '../world/terrain';
 import { PPM } from './units';
 
-export type TypeId = 'thermal' | 'solar' | 'wind';
+export type TypeId = 'thermal' | 'solar' | 'wind' | 'storage' | 'substation';
+export type GenTypeId = 'thermal' | 'solar' | 'wind';
 export type SizeId = 'small' | 'medium' | 'large';
 
 export interface FacilityTypeDef {
@@ -27,24 +28,74 @@ export interface FacilityTypeDef {
   /** 건설기간 유형 계수 (S-09) */
   buildFactor: number;
   dispatchable: boolean;
+  /** 'gen' 발전, 'storage' 저장, 'substation' 변전소(접속 용량 증설) */
+  kind: 'gen' | 'storage' | 'substation';
+  /** 저장: 중형 기준 에너지 용량 (Wh) */
+  energyWh?: number;
+  /** 변전소: 중형 기준 접속 용량 증설 (kW) */
+  hubAddKw?: number;
 }
 
 export const FACILITY_TYPES: Record<TypeId, FacilityTypeDef> = {
   thermal: {
     id: 'thermal', name: '열발전소', baseCapKw: 20_000, capexMinor: 2_200_000_00,
     fixedMinorPerDay: 4_000_00, fuelMinorPerMWh: 40_00, minOutputPpm: 300_000,
-    rampPpmPerDI: 125_000, startDelayDI: 2, buildFactor: 1.0, dispatchable: true,
+    rampPpmPerDI: 125_000, startDelayDI: 2, buildFactor: 1.0, dispatchable: true, kind: 'gen',
   },
   wind: {
     id: 'wind', name: '풍력 발전단지', baseCapKw: 20_000, capexMinor: 1_300_000_00,
     fixedMinorPerDay: 2_400_00, fuelMinorPerMWh: 0, minOutputPpm: 0,
-    rampPpmPerDI: PPM, startDelayDI: 0, buildFactor: 0.7, dispatchable: false,
+    rampPpmPerDI: PPM, startDelayDI: 0, buildFactor: 0.7, dispatchable: false, kind: 'gen',
   },
   solar: {
     id: 'solar', name: '태양광 발전소', baseCapKw: 20_000, capexMinor: 520_000_00,
     fixedMinorPerDay: 1_600_00, fuelMinorPerMWh: 0, minOutputPpm: 0,
-    rampPpmPerDI: PPM, startDelayDI: 0, buildFactor: 0.5, dispatchable: false,
+    rampPpmPerDI: PPM, startDelayDI: 0, buildFactor: 0.5, dispatchable: false, kind: 'gen',
   },
+  storage: {
+    id: 'storage', name: '배터리 저장시설', baseCapKw: 20_000, capexMinor: 700_000_00,
+    fixedMinorPerDay: 1_200_00, fuelMinorPerMWh: 0, minOutputPpm: 0,
+    rampPpmPerDI: PPM, startDelayDI: 0, buildFactor: 0.4, dispatchable: true, kind: 'storage',
+    energyWh: 80_000_000,
+  },
+  substation: {
+    id: 'substation', name: '변전소', baseCapKw: 0, capexMinor: 400_000_00,
+    fixedMinorPerDay: 800_00, fuelMinorPerMWh: 0, minOutputPpm: 0,
+    rampPpmPerDI: PPM, startDelayDI: 0, buildFactor: 0.4, dispatchable: false, kind: 'substation',
+    hubAddKw: 150_000,
+  },
+};
+
+/** 저장 효율 (Baseline §11.4): 충전·방전 각 0.9 → 왕복 0.81 */
+export const STORAGE_EFF_PPM = 900_000;
+/** 지역 허브 기본 접속 용량 (S-08, Baseline §10.9) */
+export const HUB_BASE_KW = 80_000;
+
+export type LineSizeId = SizeId;
+/** 송전선 (지역 간). 용량은 송전단 기준. 손실 l = min(l_max, λ × 길이) */
+export const LINE = {
+  capKw: { small: 50_000, medium: 150_000, large: 400_000 } as Record<SizeId, number>,
+  costPerKm: { small: 60_00, medium: 120_00, large: 240_00 } as Record<SizeId, number>,
+  fixedCost: 50_000_00,
+  buildDays: { small: 8, medium: 16, large: 30 } as Record<SizeId, number>,
+  lossPpmPerKm: 18,
+  lossMaxPpm: 200_000,
+  /** 유지비: 건설비의 0.1% / 게임일 */
+  fixedPpmPerDay: 1_000,
+};
+export const PLANET_RADIUS_KM = 6_000;
+
+/** 사건 (S-22: 예측 가능한 위험 + 제한적 사건). 비율은 게임년(120일)당 발생 수. */
+export const EVENTS = {
+  facilityWarnPerYear: 1.5,
+  linePerYearPer1000Km: 0.6,
+  hubPerYear: 0.3,
+  warnLeadDays: [3, 10] as [number, number],
+  repairDays: { facility: [2, 5], line: [1, 3], hub: [1, 2] } as Record<string, [number, number]>,
+  /** 복구비: 건설비 대비 ppm (허브는 고정액) */
+  repairPpm: { facility: 15_000, line: 20_000 },
+  hubRepairMinor: 50_000_00,
+  inspectionShare: 0.2,
 };
 
 /** 규모 계수 (Baseline §12.12, S-09). 대형은 MW당 건설비 ×0.9. */
@@ -76,6 +127,8 @@ export function specOf(type: TypeId, size: SizeId) {
     capexMinor: Math.round(t.capexMinor * s.cost),
     fixedMinorPerDay: Math.round(t.fixedMinorPerDay * s.fixed),
     buildDays: Math.max(1, Math.round(STANDARD_BUILD_DAYS * t.buildFactor * s.time)),
+    energyWh: Math.round((t.energyWh ?? 0) * s.cap),
+    hubAddKw: Math.round((t.hubAddKw ?? 0) * s.cap),
   };
 }
 

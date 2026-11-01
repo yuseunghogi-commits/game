@@ -6,7 +6,7 @@ import type { GameState } from '../sim/sim';
 import { latLonToVec } from '../world/terrain';
 import { STEPS_PER_DAY } from '../sim/units';
 
-const TYPE_COLOR: Record<string, number> = { thermal: 0xf2b248, solar: 0x4fd1e0, wind: 0xdfe6ee };
+const TYPE_COLOR: Record<string, number> = { thermal: 0xf2b248, solar: 0x4fd1e0, wind: 0xdfe6ee, storage: 0x6ccb8b, substation: 0x8b95a1 };
 
 export interface Globe {
   update(s: GameState, selected: number | null): void;
@@ -196,6 +196,42 @@ export async function createGlobe(
   let selectedId: number | null = null;
   const tmp = new THREE.Vector3();
 
+  // 송전선: 대원 호 위의 튜브. 흐름 방향으로 움직이는 빛, 색 = 상태·이용률
+  const lineGroup = new THREE.Group();
+  scene.add(lineGroup);
+  const lineMeshes = new Map<number, { mesh: THREE.Mesh; mat: THREE.ShaderMaterial }>();
+  function arcPoints(a: { lat: number; lon: number }, b: { lat: number; lon: number }) {
+    const va = vec(a.lat, a.lon), vb = vec(b.lat, b.lon);
+    const pts: THREE.Vector3[] = [];
+    const angle = va.angleTo(vb);
+    for (let i = 0; i <= 64; i++) {
+      const t = i / 64;
+      const p = new THREE.Vector3().copy(va).multiplyScalar(Math.sin((1 - t) * angle)).add(vb.clone().multiplyScalar(Math.sin(t * angle))).divideScalar(Math.sin(angle));
+      p.setLength(1.006 + Math.sin(Math.PI * t) * (0.02 + angle * 0.03));
+      pts.push(p);
+    }
+    return new THREE.CatmullRomCurve3(pts);
+  }
+  function makeLine(id: number, a: number, b: number) {
+    const geo = new THREE.TubeGeometry(arcPoints(state.regions[a], state.regions[b]), 96, 0.0042, 6, false);
+    const mat = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false,
+      uniforms: { color: { value: new THREE.Color(0x4fd1e0) }, time: { value: 0 }, dir: { value: 0 }, alpha: { value: 1 }, dash: { value: 0 } },
+      vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+      fragmentShader: `uniform vec3 color; uniform float time; uniform float dir; uniform float alpha; uniform float dash; varying vec2 vUv;
+        void main(){
+          float flow = dir == 0.0 ? 0.0 : pow(fract(vUv.x * 18.0 - time * 0.0012 * dir), 6.0);
+          float d = dash > 0.5 ? step(0.5, fract(vUv.x * 30.0)) : 1.0;
+          gl_FragColor = vec4(color * (0.55 + 1.2 * flow), alpha * d);
+        }`,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.renderOrder = 3;
+    lineGroup.add(mesh);
+    lineMeshes.set(id, { mesh, mat });
+    return { mesh, mat };
+  }
+
   function render(time: number) {
     // 태양 방향: 게임 시각 12:00에 경도 0이 정오
     const m = (state.step % STEPS_PER_DAY) / STEPS_PER_DAY;
@@ -247,6 +283,23 @@ export async function createGlobe(
     }
     for (const [id, mesh] of facMeshes) {
       if (!state.facilities.some((f) => f.id === id)) { facGroup.remove(mesh); facMeshes.delete(id); }
+    }
+
+    for (const l of state.lines) {
+      const o = lineMeshes.get(l.id) ?? makeLine(l.id, l.a, l.b);
+      const u = o.mat.uniforms;
+      u.time.value = time;
+      const util = l.lastSentWh / Math.max(1, l.capKw * 250);
+      if (l.status === 'construction') { u.color.value.setHex(0x8b95a1); u.alpha.value = 0.45; u.dash.value = 1; u.dir.value = 0; }
+      else if (l.health.s === 'failed') { u.color.value.setHex(0xe5604d); u.alpha.value = 0.9; u.dash.value = 1; u.dir.value = 0; }
+      else {
+        u.dash.value = 0; u.alpha.value = 0.95;
+        u.color.value.setHex(l.health.s === 'warning' ? 0xf2b248 : util > 0.9 ? 0xf2b248 : 0x4fd1e0);
+        u.dir.value = l.lastSentWh > 0 ? l.lastDir : 0;
+      }
+    }
+    for (const [id, o] of lineMeshes) {
+      if (!state.lines.some((l) => l.id === id)) { lineGroup.remove(o.mesh); o.mesh.geometry.dispose(); lineMeshes.delete(id); }
     }
 
     renderer.render(scene, camera);
