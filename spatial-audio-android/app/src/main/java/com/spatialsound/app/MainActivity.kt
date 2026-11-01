@@ -96,7 +96,6 @@ class MainActivity : Activity() {
 
     private fun needsNotificationPermission() = Build.VERSION.SDK_INT >= 33 &&
         checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-    }
 
     override fun onStart() {
         super.onStart()
