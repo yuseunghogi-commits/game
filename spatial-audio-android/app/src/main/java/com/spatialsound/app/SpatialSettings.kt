@@ -11,16 +11,18 @@ data class SpatialSettings(
     /** 헤드폰/이어폰이 연결됐을 때만 효과 켜기 */
     val headphonesOnly: Boolean = true,
     /** 가상 서라운드 강도 0..1000 */
-    val virtualizerStrength: Int = 800,
+    val virtualizerStrength: Int = 850,
     /** 저음 보강 0..1000 */
-    val bassStrength: Int = 300,
+    val bassStrength: Int = 250,
     /** 공간 EQ(입체감 커브) 0..100 */
-    val spaceEq: Int = 40,
+    val spaceEq: Int = 45,
     /** PresetReverb 프리셋 (세션 단위 적용 앱에서만 동작) */
-    val reverbPreset: Int = PresetReverb.PRESET_NONE.toInt(),
+    val reverbPreset: Int = PresetReverb.PRESET_MEDIUMROOM.toInt(),
     val presetIndex: Int = 0,
     /** true = 강력 3D 모드 (내부 오디오 캡처 + 직접 계산) */
     val strongMode: Boolean = false,
+    /** 강력 모드: 좌우 넓이 0..100 (가상 스피커 각도 ±30°~±70° + 좌우 차이 강조) */
+    val width: Int = 55,
 ) {
     fun save(context: Context) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
@@ -33,6 +35,7 @@ data class SpatialSettings(
             .putInt("reverb", reverbPreset)
             .putInt("preset", presetIndex)
             .putBoolean("strongMode", strongMode)
+            .putInt("width", width)
             .apply()
     }
 
@@ -52,6 +55,7 @@ data class SpatialSettings(
                 reverbPreset = p.getInt("reverb", d.reverbPreset),
                 presetIndex = p.getInt("preset", d.presetIndex),
                 strongMode = p.getBoolean("strongMode", d.strongMode),
+                width = p.getInt("width", d.width),
             )
         }
     }
@@ -64,15 +68,17 @@ data class SoundPreset(
     val bass: Int,
     val spaceEq: Int,
     val reverb: Short,
+    val width: Int,
 )
 
 val SOUND_PRESETS = listOf(
-    SoundPreset("음악 (자연스러운 입체감)", 650, 250, 35, PresetReverb.PRESET_NONE),
-    SoundPreset("영화관", 1000, 550, 55, PresetReverb.PRESET_LARGEHALL),
-    SoundPreset("콘서트홀", 900, 350, 45, PresetReverb.PRESET_MEDIUMHALL),
-    SoundPreset("게임 (발소리/방향감)", 1000, 250, 70, PresetReverb.PRESET_SMALLROOM),
-    SoundPreset("보컬/팟캐스트", 400, 50, 20, PresetReverb.PRESET_NONE),
-    SoundPreset("사용자 설정", -1, -1, -1, PresetReverb.PRESET_NONE),
+    // 이름, 3D 강도, 저음, 방 울림/공간감, 잔향(방 크기), 좌우 넓이
+    SoundPreset("음악 (자연스러운 입체감)", 850, 250, 45, PresetReverb.PRESET_MEDIUMROOM, 55),
+    SoundPreset("영화관", 1000, 500, 60, PresetReverb.PRESET_LARGEROOM, 80),
+    SoundPreset("콘서트홀", 950, 300, 55, PresetReverb.PRESET_LARGEHALL, 60),
+    SoundPreset("게임 (발소리/방향감)", 1000, 200, 35, PresetReverb.PRESET_SMALLROOM, 95),
+    SoundPreset("보컬/팟캐스트", 650, 50, 30, PresetReverb.PRESET_SMALLROOM, 30),
+    SoundPreset("사용자 설정", -1, -1, -1, PresetReverb.PRESET_NONE, -1),
 )
 
 val REVERB_NAMES = listOf("없음", "작은 방", "중간 방", "큰 방", "중간 홀", "큰 홀", "플레이트")

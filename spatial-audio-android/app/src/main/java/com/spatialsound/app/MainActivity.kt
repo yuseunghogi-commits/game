@@ -38,6 +38,8 @@ class MainActivity : Activity() {
     private lateinit var labelBass: TextView
     private lateinit var textStatus: TextView
     private lateinit var labelReverb: TextView
+    private lateinit var labelWidth: TextView
+    private lateinit var seekWidth: SeekBar
     private lateinit var radioStrong: RadioButton
     private lateinit var radioBasic: RadioButton
 
@@ -64,6 +66,8 @@ class MainActivity : Activity() {
         labelBass = findViewById(R.id.labelBass)
         textStatus = findViewById(R.id.textStatus)
         labelReverb = findViewById(R.id.labelReverb)
+        labelWidth = findViewById(R.id.labelWidth)
+        seekWidth = findViewById(R.id.seekWidth)
         radioStrong = findViewById(R.id.radioStrong)
         radioBasic = findViewById(R.id.radioBasic)
         if (!SoundController.strongSupported()) {
@@ -133,6 +137,10 @@ class MainActivity : Activity() {
         radioStrong.isChecked = strong
         radioBasic.isChecked = !strong
         switchGlobal.visibility = if (strong) android.view.View.GONE else android.view.View.VISIBLE
+        val wv = if (strong) android.view.View.VISIBLE else android.view.View.GONE
+        labelWidth.visibility = wv
+        seekWidth.visibility = wv
+        seekWidth.progress = settings.width
         spinnerPreset.setSelection(settings.presetIndex.coerceIn(0, SOUND_PRESETS.lastIndex))
         spinnerReverb.setSelection(settings.reverbPreset.coerceIn(0, REVERB_NAMES.lastIndex))
         seekVirtualizer.progress = settings.virtualizerStrength
@@ -145,7 +153,9 @@ class MainActivity : Activity() {
 
     private fun updateLabels() {
         labelVirtualizer.text = "3D 서라운드 강도: ${settings.virtualizerStrength / 10}%"
-        labelSpace.text = "공간감 EQ (넓이·공기감): ${settings.spaceEq}%"
+        labelSpace.text = if (settings.strongMode) "방 울림 (벽 반사음): ${settings.spaceEq}%"
+        else "공간감 EQ (넓이·공기감): ${settings.spaceEq}%"
+        labelWidth.text = "좌우 넓이 (가상 스피커 ±${30 + settings.width * 55 / 100}°): ${settings.width}%"
         labelBass.text = "저음 보강: ${settings.bassStrength / 10}%"
         labelReverb.text = if (settings.strongMode) "잔향 (공간 크기)"
         else "잔향 (공간 크기) — 기본 모드에선 세션을 알려주는 음악앱에서만 적용"
@@ -189,6 +199,7 @@ class MainActivity : Activity() {
                     bassStrength = p0.bass,
                     spaceEq = p0.spaceEq,
                     reverbPreset = p0.reverb.toInt(),
+                    width = p0.width,
                 )
                 commit(next)
                 bindUi()
@@ -210,6 +221,9 @@ class MainActivity : Activity() {
         })
         seekSpace.setOnSeekBarChangeListener(seekListener { v ->
             settings.copy(spaceEq = v, presetIndex = CUSTOM)
+        })
+        seekWidth.setOnSeekBarChangeListener(seekListener { v ->
+            settings.copy(width = v, presetIndex = CUSTOM)
         })
         seekBass.setOnSeekBarChangeListener(seekListener { v ->
             settings.copy(bassStrength = v, presetIndex = CUSTOM)

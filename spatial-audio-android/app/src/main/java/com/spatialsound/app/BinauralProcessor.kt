@@ -2,214 +2,355 @@ package com.spatialsound.app
 
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.exp
+import kotlin.math.pow
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 /**
  * 강력 3D 모드의 직접 계산 엔진 (폰 내장 이펙트를 쓰지 않음).
  *
- * 스테레오 입력을 "머리 바깥에 놓인 가상 스피커"로 바꿔 양쪽 귀 신호를 계산한다.
+ * 스테레오 음원을 "가상의 방 안에 놓인 스피커"로 바꾸고, 그 소리가 내 머리에 도달하는 과정을 계산한다.
  *
- *  1. 앞쪽 가상 스피커(±30°)  : 반대쪽 귀로 넘어가는 소리를 시간차(ITD)·머리 그림자(저역통과)로 재현
- *  2. 뒤/옆 가상 스피커(±110°): 좌우 차이(사이드) 성분을 뒤쪽에서 들리게 배치 → 감싸는 느낌
- *  3. 초기 반사음              : 벽에서 튕겨 오는 소리 → 소리가 머릿속이 아니라 바깥에서 들림
- *  4. 잔향(경량 Freeverb)      : 방/홀 크기
- *  5. 저음 보강 + 리미터       : 음량이 커져도 찢어지지 않게
+ *  ■ 머리 모델 (Brown & Duda 구조형 HRTF, 1998)
+ *    - 양 귀 시간차(ITD): 머리 반지름 8.75cm 구 모델
+ *    - 머리 그림자: 소리가 온 쪽 귀는 고음 +6dB, 반대쪽 귀는 고음 -20dB 까지 → 좌우가 또렷해짐
+ *    - 귓바퀴 반사(pinna echo): 앞/뒤 구분 단서
+ *  ■ 가상 스피커: 앞 L/R (±30°~±70°, '좌우 넓이'), 뒤 서라운드 ±110°
+ *  ■ 가상의 방: 스피커마다 벽·바닥·천장 반사음 10개를 각자 도착 방향으로 HRTF 처리 (이미지 소스 근사)
+ *  ■ 잔향: 8채널 FDN (Feedback Delay Network) — RT60 으로 방/홀 크기 조절
+ *  ■ 저음 보강 + 리미터
  *
- * 모든 계산은 오디오 스레드 하나에서만 호출된다. 파라미터는 [setParams]로 언제든 바꿀 수 있다.
+ * [process] 는 오디오 스레드 하나에서만 호출된다. [setParams] 는 아무 스레드에서나 호출 가능.
  */
 class BinauralProcessor(private val fs: Int) {
 
-    // --- 파라미터 (0..1) -----------------------------------------------------
-    @Volatile private var amount = 0.8f   // 3D 강도
-    @Volatile private var room = 0.4f     // 공간감(반사음)
-    @Volatile private var bass = 0.3f     // 저음
-    @Volatile private var reverbSize = 0f // 잔향 크기 (0 = 없음)
+    // --- 파라미터 ------------------------------------------------------------
+    @Volatile private var pending: SpatialSettings? = null
     @Volatile var bypass = false
 
+    private var amount = 0.8f   // 3D 강도 (드라이/웻)
+    private var early = 0.45f   // 방 울림(반사음) 양
+    private var bass = 0.25f
+    private var width = 0.55f   // 좌우 넓이
+    private var roomIdx = 2
+
     fun setParams(s: SpatialSettings) {
-        amount = s.virtualizerStrength / 1000f
-        room = s.spaceEq / 100f
-        bass = s.bassStrength / 1000f
-        reverbSize = s.reverbPreset / (REVERB_NAMES.size - 1).toFloat()
+        pending = s
     }
 
-    // --- 지연선 --------------------------------------------------------------
-    private val size = 1 shl 14 // 48kHz 기준 약 340ms
+    // --- 입력 지연선 ---------------------------------------------------------
+    private val size = 1 shl 15 // 48kHz 기준 680ms
     private val mask = size - 1
     private val bufL = FloatArray(size)
     private val bufR = FloatArray(size)
-    private val bufS = FloatArray(size) // 사이드(L-R) 성분
-    private val bufM = FloatArray(size) // 반사음 입력 (저역통과된 L/R)
-    private val bufM2 = FloatArray(size)
+    private val bufS = FloatArray(size)
     private var w = 0
 
-    private fun ms(x: Double) = (x / 1000.0 * fs).roundToInt()
+    private fun samples(sec: Double) = (sec * fs).roundToInt()
 
-    // 앞 스피커 ±30°: 반대쪽 귀 지연 ≈ 0.27ms
-    private val dFront = ms(0.27)
-    // 뒤 스피커 ±110°: 사이드 성분을 12ms 늦게(디코릴레이션), 반대쪽 귀 지연 ≈ 0.62ms
-    private val dRear = ms(12.0)
-    private val dRearContra = ms(0.62)
+    // --- 머리 모델 -----------------------------------------------------------
+    private val headA = 0.0875      // 머리 반지름 (m)
+    private val sound = 343.0       // 음속 (m/s)
 
-    // 초기 반사음 (지연ms, 왼귀 게인, 오른귀 게인, 원천: 0=L 1=R)
-    private val taps = arrayOf(
-        doubleArrayOf(6.3, 0.55, 0.25, 0.0),
-        doubleArrayOf(8.9, 0.22, 0.50, 1.0),
-        doubleArrayOf(13.7, 0.40, 0.18, 1.0),
-        doubleArrayOf(17.1, 0.16, 0.42, 0.0),
-        doubleArrayOf(22.9, 0.30, 0.12, 0.0),
-        doubleArrayOf(27.4, 0.10, 0.28, 1.0),
-        doubleArrayOf(34.1, 0.18, 0.08, 1.0),
-        doubleArrayOf(41.6, 0.07, 0.16, 0.0),
+    /** 한쪽 귀 처리 상태 */
+    private class Ear {
+        var itd = 0
+        var b0 = 1f; var b1 = 0f; var a1 = 0f
+        var x1 = 0f; var y1 = 0f
+        var lp = 0f
+        var pinnaDelay = IntArray(0)
+        var pinnaGain = FloatArray(0)
+    }
+
+    /** 가상 음원 하나 (스피커 또는 벽 반사음) */
+    private class Src(
+        val input: Int,      // 0=L 1=R 2=S
+        val baseDelay: Int,  // 샘플
+        val gain: Float,
+        val lpCoef: Float,   // 벽 흡수/뒤쪽 어두움 (1 = 필터 없음)
+        val left: Ear,
+        val right: Ear,
     )
-    private val tapDelay = IntArray(taps.size) { ms(taps[it][0]) }
-    private val tapGL = FloatArray(taps.size) { taps[it][1].toFloat() }
-    private val tapGR = FloatArray(taps.size) { taps[it][2].toFloat() }
-    private val tapFromL = BooleanArray(taps.size) { taps[it][3] == 0.0 }
 
-    // --- 1차 필터 상태 -------------------------------------------------------
-    private fun coef(hz: Double) = (1.0 - exp(-2.0 * PI * hz / fs)).toFloat()
-    private val aShadow = coef(1400.0)   // 앞 스피커 머리 그림자
-    private val aRearIpsi = coef(5000.0) // 뒤쪽 소리는 귓바퀴 때문에 고음이 줄어듦
-    private val aRearContra = coef(800.0)
-    private val aRefl = coef(4500.0)     // 반사음은 벽에 흡수돼 어두워짐
-    private val aBass = coef(140.0)
-    private val aDc = coef(20.0)
+    private var sources: Array<Src> = emptyArray()
 
-    private var shL = 0f; private var shR = 0f
-    private var riL = 0f; private var riR = 0f
-    private var rcL = 0f; private var rcR = 0f
-    private var rfL = 0f; private var rfR = 0f
+    /** 귀 기준 입사각 θ(0 = 귀 정면, π = 반대편)에 대한 귀 처리 계산 */
+    private fun makeEar(thetaRaw: Double, pinna: Boolean, azimuthRad: Double): Ear {
+        val theta = thetaRaw.coerceIn(0.0, PI)
+        val e = Ear()
+        // ITD: 귀 쪽에서 오면 0, 반대편이면 최대 (≈0.66ms)
+        val t = if (theta < PI / 2) (headA / sound) * (1 - cos(theta))
+        else (headA / sound) * (theta - PI / 2 + 1)
+        e.itd = samples(t)
+
+        // 머리 그림자 1극 1영점 필터 (쌍선형 변환)
+        val alphaMin = 0.1
+        val thetaMin = 150.0 / 180.0 * PI
+        val alpha = (1 + alphaMin / 2) + (1 - alphaMin / 2) * cos(theta / thetaMin * PI)
+        val beta = 2 * sound / headA
+        val k = 2.0 * fs
+        e.b0 = ((alpha * k + beta) / (k + beta)).toFloat()
+        e.b1 = ((beta - alpha * k) / (k + beta)).toFloat()
+        e.a1 = ((beta - k) / (k + beta)).toFloat()
+
+        if (pinna) {
+            // Brown & Duda 귓바퀴 반사 (44.1kHz 샘플 단위 → 현재 fs 로 환산), 고도 0°
+            val rho = floatArrayOf(0.5f, -1f, 0.5f, -0.25f, 0.25f)
+            val aK = doubleArrayOf(1.0, 5.0, 5.0, 5.0, 5.0)
+            val bK = doubleArrayOf(2.0, 4.0, 7.0, 11.0, 13.0)
+            val dK = doubleArrayOf(1.0, 0.5, 0.5, 0.5, 0.5)
+            val az = abs(azimuthRad).coerceAtMost(PI)
+            e.pinnaDelay = IntArray(5) {
+                val tau = aK[it] * cos(az / 2) * sin(dK[it] * PI / 2) + bK[it]
+                (tau * fs / 44100.0).roundToInt().coerceAtLeast(1)
+            }
+            e.pinnaGain = FloatArray(5) { rho[it] * PINNA_AMOUNT }
+        }
+        return e
+    }
+
+    private fun lpCoef(hz: Double) =
+        if (hz <= 0) 1f else (1.0 - exp(-2.0 * PI * hz / fs)).toFloat().coerceAtMost(1f)
+
+    /** 방위각(도, 0=정면, +=오른쪽)에 음원 하나 배치 */
+    private fun place(input: Int, azDeg: Double, delaySec: Double, gain: Double, cutoffHz: Double, pinna: Boolean): Src {
+        val az = azDeg / 180.0 * PI
+        // 오른쪽 귀는 +90°, 왼쪽 귀는 -90° 방향
+        val thR = angleBetween(az, PI / 2)
+        val thL = angleBetween(az, -PI / 2)
+        return Src(
+            input = input,
+            baseDelay = samples(delaySec),
+            gain = gain.toFloat(),
+            lpCoef = lpCoef(cutoffHz),
+            left = makeEar(thL, pinna, az),
+            right = makeEar(thR, pinna, az),
+        )
+    }
+
+    private fun angleBetween(a: Double, b: Double): Double {
+        var d = abs(a - b) % (2 * PI)
+        if (d > PI) d = 2 * PI - d
+        return d
+    }
+
+    private fun rebuild() {
+        val room = ROOMS[roomIdx.coerceIn(0, ROOMS.lastIndex)]
+        val spk = 30.0 + 55.0 * width // 앞 스피커 각도 (±30° ~ ±85°)
+        val list = mutableListOf<Src>()
+
+        // 직접음: 앞 스피커
+        list += place(0, -spk, 0.0, 1.0, 0.0, true)
+        list += place(1, spk, 0.0, 1.0, 0.0, true)
+        // 뒤 서라운드 ±110°: 왼쪽 소리는 왼쪽 뒤에서만, 오른쪽은 오른쪽 뒤에서만 (좌우가 섞이지 않게)
+        // 7ms 지연으로 앞 스피커와 디코릴레이션 → 감싸는 느낌
+        val sur = 0.30 + 0.30 * width
+        list += place(0, -110.0, 0.007, sur, 7000.0, true)
+        list += place(1, 110.0, 0.007, sur, 7000.0, true)
+
+        // 방 반사음: 왼쪽 스피커 기준 (오른쪽은 좌우 대칭)
+        if (early > 0.001f) {
+            val scale = room.size
+            val g = early * 1.15 / scale.pow(0.35)
+            for (r in REFLECTIONS) {
+                val az = if (r[0].isNaN()) -spk else r[0]
+                val delay = r[1] / 1000.0 * scale
+                list += place(0, az, delay, r[2] * g, r[3], false)
+                list += place(1, -az, delay, r[2] * g, r[3], false)
+            }
+        }
+        sources = list.toTypedArray()
+
+        // 잔향 설정
+        rt60 = room.rt60
+        lateGain = (room.late * (0.4 + 0.6 * early)).toFloat()
+        preDelay = samples(0.012 * room.size)
+        for (i in 0 until FDN_N) {
+            fdnLen[i] = samples(FDN_MS[i] / 1000.0 * room.size).coerceIn(16, FDN_MAX - 1)
+            fdnG[i] = if (rt60 <= 0.0) 0f else 10.0.pow(-3.0 * fdnLen[i] / (fs * rt60)).toFloat()
+        }
+
+        // 대략적인 음량 보정 (나머지는 리미터가 처리)
+        var energy = 2.0 + 2 * sur * sur
+        if (early > 0.001f) {
+            val g = early * 1.15 / room.size.pow(0.35)
+            for (r in REFLECTIONS) energy += 2 * (r[2] * g) * (r[2] * g)
+        }
+        wetNorm = (1.0 / kotlin.math.sqrt(energy / 2.0)).toFloat() * 0.92f
+    }
+
+    // --- FDN 잔향 ------------------------------------------------------------
+    private val fdnLines = Array(FDN_N) { FloatArray(FDN_MAX) }
+    private val fdnIdx = IntArray(FDN_N)
+    private val fdnLen = IntArray(FDN_N) { 1000 }
+    private val fdnG = FloatArray(FDN_N)
+    private val fdnDamp = FloatArray(FDN_N)
+    private val fdnOut = FloatArray(FDN_N)
+    private val dampCoef = lpCoef(9000.0)
+    private val revInLp = lpCoef(6000.0)
+    private var revLpL = 0f
+    private var revLpR = 0f
+    private var rt60 = 0.0
+    private var lateGain = 0f
+    private var preDelay = 0
+    private var wetNorm = 1f
+
+    // --- 기타 ----------------------------------------------------------------
+    private val aBass = lpCoef(130.0)
+    private val aDc = lpCoef(15.0)
     private var lowL = 0f; private var lowR = 0f
     private var dcL = 0f; private var dcR = 0f
     private var limGain = 1f
+    private val release = (1.0 - exp(-1.0 / (0.25 * fs))).toFloat()
 
-    // --- 경량 Freeverb ------------------------------------------------------
-    private inner class Comb(len: Int) {
-        val b = FloatArray(len); var i = 0; var store = 0f
-        fun run(x: Float, fb: Float, damp: Float): Float {
-            val y = b[i]
-            store = y * (1 - damp) + store * damp
-            b[i] = x + store * fb
-            if (++i >= b.size) i = 0
-            return y
-        }
+    init {
+        rebuild()
     }
-    private inner class Allpass(len: Int) {
-        val b = FloatArray(len); var i = 0
-        fun run(x: Float): Float {
-            val bo = b[i]
-            val y = -x + bo
-            b[i] = x + bo * 0.5f
-            if (++i >= b.size) i = 0
-            return y
-        }
-    }
-    private fun sc(n: Int) = (n * fs / 44100.0).roundToInt().coerceAtLeast(8)
-    private val combL = intArrayOf(1116, 1188, 1277, 1356).map { Comb(sc(it)) }
-    private val combR = intArrayOf(1116, 1188, 1277, 1356).map { Comb(sc(it + 23)) }
-    private val apL = intArrayOf(556, 441).map { Allpass(sc(it)) }
-    private val apR = intArrayOf(556, 441).map { Allpass(sc(it + 23)) }
 
     /** 인터리브 스테레오(L,R,L,R…) float 버퍼를 제자리에서 처리 */
     fun process(buf: FloatArray, frames: Int) {
+        pending?.let { s ->
+            pending = null
+            amount = s.virtualizerStrength / 1000f
+            early = s.spaceEq / 100f
+            bass = s.bassStrength / 1000f
+            width = s.width / 100f
+            roomIdx = s.reverbPreset
+            rebuild()
+        }
         if (bypass) return
-        val amt = amount
-        val rm = room
-        val bs = bass
-        val rv = reverbSize
 
-        val gFrontContra = 0.62f * amt
-        val gRear = 0.55f * amt
-        val gRefl = 0.45f * rm
-        val gRev = 0.22f * rv
-        val fb = 0.70f + 0.26f * rv
-        val damp = 0.35f
-        val gBass = 1.6f * bs
-        // 크로스피드로 커진 음량을 대략 보정
-        val norm = 1f / (1f + gFrontContra * 0.5f + gRear * 0.3f + gRefl * 0.5f + gRev * 0.6f + gBass * 0.25f)
+        val srcs = sources
+        val wet = amount
+        val dry = 1f - amount
+        val sideBoost = 1f + 0.3f * width
+        val gBass = 1.5f * bass
+        val late = lateGain
+        val hasLate = late > 0f && rt60 > 0.0
 
         var p = 0
         for (f in 0 until frames) {
             var l = buf[p]
             var r = buf[p + 1]
-
-            // DC 제거 (직류 성분이 쌓여 리미터를 망치지 않게)
             dcL += aDc * (l - dcL); l -= dcL
             dcR += aDc * (r - dcR); r -= dcR
 
-            bufL[w] = l
-            bufR[w] = r
-            bufS[w] = (l - r) * 0.5f
+            // 좌우 넓히기 (Mid/Side)
+            val m = (l + r) * 0.5f
+            val s = (l - r) * 0.5f * sideBoost
+            bufL[w] = m + s
+            bufR[w] = m - s
+            bufS[w] = s
 
-            // 1) 앞 가상 스피커: 반대쪽 채널을 늦게 + 어둡게 섞음
-            val cl = bufR[(w - dFront) and mask]
-            val cr = bufL[(w - dFront) and mask]
-            shL += aShadow * (cl - shL)
-            shR += aShadow * (cr - shR)
-            var outL = l + gFrontContra * shL
-            var outR = r + gFrontContra * shR
+            var outL = 0f
+            var outR = 0f
+            for (src in srcs) {
+                val b = when (src.input) { 0 -> bufL; 1 -> bufR; else -> bufS }
+                outL += src.gain * ear(src.left, b, src.baseDelay, src.lpCoef)
+                outR += src.gain * ear(src.right, b, src.baseDelay, src.lpCoef)
+            }
 
-            // 2) 뒤/옆 가상 스피커: 사이드 성분 (왼쪽 뒤 = +S, 오른쪽 뒤 = -S)
-            val sNear = bufS[(w - dRear) and mask]
-            val sFar = bufS[(w - dRear - dRearContra) and mask]
-            riL += aRearIpsi * (sNear - riL)
-            riR += aRearIpsi * (-sNear - riR)
-            rcL += aRearContra * (-sFar - rcL) // 오른쪽 뒤 스피커가 왼쪽 귀로
-            rcR += aRearContra * (sFar - rcR)
-            outL += gRear * (riL + 0.45f * rcL)
-            outR += gRear * (riR + 0.45f * rcR)
-
-            // 3) 초기 반사음
-            rfL += aRefl * (l - rfL)
-            rfR += aRefl * (r - rfR)
-            bufM[w] = rfL
-            bufM2[w] = rfR
-            if (gRefl > 0f) {
-                var eL = 0f; var eR = 0f
-                for (t in tapDelay.indices) {
-                    val src = if (tapFromL[t]) bufM else bufM2
-                    val x = src[(w - tapDelay[t]) and mask]
-                    eL += x * tapGL[t]
-                    eR += x * tapGR[t]
+            // 잔향 (FDN, Householder 행렬)
+            if (hasLate) {
+                val di = (w - preDelay) and mask
+                revLpL += revInLp * (bufL[di] - revLpL)
+                revLpR += revInLp * (bufR[di] - revLpR)
+                var sum = 0f
+                for (i in 0 until FDN_N) {
+                    val y = fdnLines[i][fdnIdx[i]]
+                    fdnDamp[i] += dampCoef * (y - fdnDamp[i])
+                    fdnOut[i] = fdnDamp[i]
+                    sum += fdnOut[i]
                 }
-                outL += gRefl * eL
-                outR += gRefl * eR
+                val h = sum * (2f / FDN_N)
+                var rl = 0f
+                var rr = 0f
+                for (i in 0 until FDN_N) {
+                    val inp = if (i and 1 == 0) revLpL else revLpR
+                    val line = fdnLines[i]
+                    line[fdnIdx[i]] = inp * 0.9f + fdnG[i] * (fdnOut[i] - h)
+                    if (++fdnIdx[i] >= fdnLen[i]) fdnIdx[i] = 0
+                    rl += fdnOut[i] * OUT_L[i]
+                    rr += fdnOut[i] * OUT_R[i]
+                }
+                outL += late * rl * 0.6f
+                outR += late * rr * 0.6f
             }
 
-            // 4) 잔향
-            if (gRev > 0f) {
-                val inp = (rfL + rfR) * 0.015f
-                var yl = 0f; var yr = 0f
-                for (c in combL) yl += c.run(inp, fb, damp)
-                for (c in combR) yr += c.run(inp, fb, damp)
-                for (a in apL) yl = a.run(yl)
-                for (a in apR) yr = a.run(yr)
-                outL += gRev * yl
-                outR += gRev * yr
-            }
+            outL = dry * l + wet * wetNorm * outL
+            outR = dry * r + wet * wetNorm * outR
 
-            // 5) 저음 보강 (저역만 뽑아서 더함)
+            // 저음 보강
             lowL += aBass * (l - lowL)
             lowR += aBass * (r - lowR)
             outL += gBass * lowL
             outR += gBass * lowR
 
-            outL *= norm
-            outR *= norm
-
-            // 리미터: 빠른 어택, 느린 릴리즈
+            // 리미터: 즉시 어택, 250ms 릴리즈
             val peak = maxOf(abs(outL), abs(outR))
-            val target = if (peak * limGain > 0.95f) 0.95f / peak else 1f
-            limGain = if (target < limGain) target else limGain + (1f - limGain) * 0.0005f
-            outL *= limGain
-            outR *= limGain
+            if (peak * limGain > 0.97f) limGain = 0.97f / peak
+            else limGain += (1f - limGain) * release
+            buf[p] = (outL * limGain).coerceIn(-1f, 1f)
+            buf[p + 1] = (outR * limGain).coerceIn(-1f, 1f)
 
-            buf[p] = outL.coerceIn(-1f, 1f)
-            buf[p + 1] = outR.coerceIn(-1f, 1f)
             p += 2
             w = (w + 1) and mask
         }
+    }
+
+    private fun ear(e: Ear, b: FloatArray, base: Int, lpc: Float): Float {
+        val n0 = w - base - e.itd
+        var x = b[n0 and mask]
+        val pd = e.pinnaDelay
+        for (k in pd.indices) x += e.pinnaGain[k] * b[(n0 - pd[k]) and mask]
+        if (lpc < 1f) {
+            e.lp += lpc * (x - e.lp)
+            x = e.lp
+        }
+        val y = e.b0 * x + e.b1 * e.x1 - e.a1 * e.y1
+        e.x1 = x
+        e.y1 = y
+        return y
+    }
+
+    private class Room(val size: Double, val rt60: Double, val late: Double)
+
+    companion object {
+        private const val PINNA_AMOUNT = 0.35f
+        private const val FDN_N = 8
+        private const val FDN_MAX = 1 shl 13
+        private val FDN_MS = doubleArrayOf(29.7, 37.1, 41.1, 43.7, 53.3, 59.9, 67.7, 73.1)
+        private val OUT_L = floatArrayOf(1f, -1f, 1f, 1f, -1f, 1f, -1f, -1f)
+        private val OUT_R = floatArrayOf(1f, 1f, -1f, 1f, 1f, -1f, -1f, 1f)
+
+        /** REVERB_NAMES 와 같은 순서: 없음, 작은 방, 중간 방, 큰 방, 중간 홀, 큰 홀, 플레이트 */
+        private val ROOMS = arrayOf(
+            Room(0.8, 0.0, 0.0),
+            Room(0.7, 0.4, 0.6),
+            Room(1.0, 0.7, 0.75),
+            Room(1.4, 1.0, 0.85),
+            Room(2.0, 1.6, 0.95),
+            Room(2.8, 2.4, 1.05),
+            Room(1.2, 1.5, 1.0),
+        )
+
+        /**
+         * 왼쪽 스피커 기준 반사음: [방위각(도, NaN=스피커와 같은 방향), 지연(ms), 게인, 벽 흡수 차단주파수(Hz)]
+         * 청취자가 방 가운데 있는 직육면체 방을 근사.
+         */
+        private val REFLECTIONS = arrayOf(
+            doubleArrayOf(Double.NaN, 2.6, 0.50, 6000.0), // 바닥
+            doubleArrayOf(-90.0, 4.0, 0.55, 8000.0),      // 왼쪽 벽
+            doubleArrayOf(Double.NaN, 6.5, 0.38, 7000.0), // 천장
+            doubleArrayOf(-20.0, 7.8, 0.35, 6000.0),      // 앞 벽
+            doubleArrayOf(70.0, 9.5, 0.42, 6000.0),       // 오른쪽 벽
+            doubleArrayOf(-150.0, 13.0, 0.38, 5000.0),    // 뒷벽
+            doubleArrayOf(130.0, 18.5, 0.28, 4000.0),     // 2차 반사
+            doubleArrayOf(-115.0, 22.0, 0.26, 4000.0),
+            doubleArrayOf(40.0, 26.0, 0.22, 3500.0),
+            doubleArrayOf(170.0, 31.0, 0.20, 3000.0),
+        )
     }
 }
