@@ -66,6 +66,48 @@ class Strong3DService : Service() {
         }
     }
 
+    // --- "처음 소리가 두 번 들림" 방지 ---------------------------------------
+    //  새 재생이 시작되면 원래 소리가 음소거될 때까지 처리된 소리를 잠깐 멈춘다(hold).
+    //  그 사이에는 원래 소리만 들리고, 음소거되는 순간 3D 소리로 부드럽게 넘어간다.
+    @Volatile private var hold = false
+    private var holdDeadline = 0L
+    private var lastMediaPlayers = 0
+
+    private fun pollNow() {
+        val m = muter ?: return
+        if (!running) return
+        val allMuted = runCatching { m.poll() }.getOrDefault(false)
+        if (hold && (allMuted || android.os.SystemClock.uptimeMillis() > holdDeadline)) hold = false
+        publishState()
+    }
+
+    private val periodicPoll = object : Runnable {
+        override fun run() {
+            if (!running) return
+            pollNow()
+            muterHandler?.postDelayed(this, 1000)
+        }
+    }
+
+    private val playbackCallback = object : AudioManager.AudioPlaybackCallback() {
+        override fun onPlaybackConfigChanged(configs: MutableList<android.media.AudioPlaybackConfiguration>) {
+            val media = configs.count {
+                when (it.audioAttributes.usage) {
+                    AudioAttributes.USAGE_MEDIA, AudioAttributes.USAGE_GAME, AudioAttributes.USAGE_UNKNOWN -> true
+                    else -> false
+                }
+            }
+            if (media > lastMediaPlayers) {
+                hold = true
+                holdDeadline = android.os.SystemClock.uptimeMillis() + 800
+            }
+            lastMediaPlayers = media
+            // 덤프에 세션이 늦게 나타날 수 있어서 몇 번 연달아 확인
+            val h = muterHandler ?: return
+            for (d in longArrayOf(0, 60, 150, 300, 550)) h.postDelayed({ pollNow() }, d)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -115,23 +157,24 @@ class Strong3DService : Service() {
         audioManager.registerAudioDeviceCallback(deviceCallback, main)
         refreshDevices()
 
-        // 원래 소리 음소거 담당 (별도 스레드에서 1초마다)
+        running = true
+
+        // 원래 소리 음소거 담당 (별도 스레드). 새 소리가 시작되면 즉시, 평소엔 1초마다.
         val ht = HandlerThread("muter").also { it.start() }
         muterThread = ht
         val mh = Handler(ht.looper)
         muterHandler = mh
-        val m = SessionMuter(this)
-        muter = m
-        mh.post(object : Runnable {
-            override fun run() {
-                if (!running) return
-                runCatching { m.poll() }
-                publishState()
-                mh.postDelayed(this, 1000)
-            }
-        })
-
-        running = true
+        muter = SessionMuter(this)
+        // 이미 재생 중인 소리가 있으면 첫 음소거가 끝날 때까지 hold
+        lastMediaPlayers = audioManager.activePlaybackConfigurations.count {
+            it.audioAttributes.usage == AudioAttributes.USAGE_MEDIA ||
+                it.audioAttributes.usage == AudioAttributes.USAGE_GAME ||
+                it.audioAttributes.usage == AudioAttributes.USAGE_UNKNOWN
+        }
+        hold = true
+        holdDeadline = android.os.SystemClock.uptimeMillis() + 800
+        mh.post(periodicPoll)
+        audioManager.registerAudioPlaybackCallback(playbackCallback, mh)
         worker = Thread({ audioLoop(p) }, "strong3d-audio").apply {
             priority = Thread.MAX_PRIORITY
             start()
@@ -198,6 +241,8 @@ class Strong3DService : Service() {
         updateBypass()
 
         val buf = FloatArray(chunk)
+        var outGain = 0f
+        val rampStep = 1f / (0.015f * rate)
         try {
             record.startRecording()
             track.play()
@@ -208,6 +253,17 @@ class Strong3DService : Service() {
                     continue
                 }
                 dsp.process(buf, n / 2)
+                // hold 중엔 0, 아니면 1 로 15ms 동안 부드럽게 (딸깍 소리 방지)
+                val target = if (hold) 0f else 1f
+                if (outGain != target || target == 0f) {
+                    var i = 0
+                    while (i < n) {
+                        outGain += (target - outGain).coerceIn(-rampStep, rampStep)
+                        buf[i] *= outGain
+                        buf[i + 1] *= outGain
+                        i += 2
+                    }
+                }
                 track.write(buf, 0, n, AudioTrack.WRITE_BLOCKING)
             }
         } catch (t: Throwable) {
@@ -226,6 +282,7 @@ class Strong3DService : Service() {
         runCatching { record?.stop() } // 블로킹 read 깨우기
         worker?.join(500)
         worker = null
+        runCatching { audioManager.unregisterAudioPlaybackCallback(playbackCallback) }
         muterHandler?.removeCallbacksAndMessages(null)
         val m = muter
         val ht = muterThread

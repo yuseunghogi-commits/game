@@ -40,9 +40,12 @@ class SessionMuter(private val context: Context) {
 
     fun hasDumpPermission() = hasDumpPermission(context)
 
-    /** 덤프를 읽어 새 세션은 음소거, 사라진 세션은 정리. 1초마다 호출. */
-    fun poll() {
-        if (!hasDumpPermission()) return
+    /**
+     * 덤프를 읽어 새 세션은 음소거, 사라진 세션은 정리.
+     * @return 음소거해야 할 세션이 모두 음소거됐으면 true
+     */
+    fun poll(): Boolean {
+        if (!hasDumpPermission()) return false
         val found = findSessions()
         // 사라진 세션 해제
         val gone = muted.keys - found.keys
@@ -51,13 +54,16 @@ class SessionMuter(private val context: Context) {
         muted.entries.filter { !runCatching { it.value.second.hasControl() }.getOrDefault(false) }
             .map { it.key }.forEach { id -> muted.remove(id)?.second?.let { release(it) } }
         // 새 세션 음소거
+        var all = true
         for ((id, s) in found) {
             if (muted.containsKey(id)) continue
             if (s.uid == myUid || s.pkg in EXCLUDED || s.pkg in restrictedPackages) continue
-            val fx = mute(id) ?: continue
+            val fx = mute(id)
+            if (fx == null) { all = false; continue }
             muted[id] = s to fx
             Log.i(TAG, "음소거: session=$id pkg=${s.pkg}")
         }
+        return all
     }
 
     fun releaseAll() {
