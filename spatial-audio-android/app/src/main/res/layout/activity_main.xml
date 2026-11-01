@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FF121218"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="3D 사운드"
+            android:textColor="#FFFFFFFF"
+            android:textSize="28sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            android:text="유튜브·넷플릭스·음악앱 소리를 헤드폰용 입체 음향으로"
+            android:textColor="#FFAAAAC0"
+            android:textSize="14sp" />
+
+        <Switch
+            android:id="@+id/switchEnabled"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#FF1E1E2A"
+            android:padding="16dp"
+            android:text="3D 음향 켜기"
+            android:textColor="#FFFFFFFF"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/textStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="#FF1A1A24"
+            android:lineSpacingExtra="4dp"
+            android:padding="12dp"
+            android:textColor="#FFCCCCDD"
+            android:textSize="13sp" />
+
+        <TextView
+            style="@style/SectionTitle"
+            android:text="프리셋" />
+
+        <Spinner
+            android:id="@+id/spinnerPreset"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:background="#FF1E1E2A" />
+
+        <TextView
+            android:id="@+id/labelVirtualizer"
+            style="@style/SliderLabel" />
+
+        <SeekBar
+            android:id="@+id/seekVirtualizer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="1000" />
+
+        <TextView
+            android:id="@+id/labelSpace"
+            style="@style/SliderLabel" />
+
+        <SeekBar
+            android:id="@+id/seekSpace"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="100" />
+
+        <TextView
+            android:id="@+id/labelBass"
+            style="@style/SliderLabel" />
+
+        <SeekBar
+            android:id="@+id/seekBass"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="1000" />
+
+        <TextView
+            style="@style/SliderLabel"
+            android:text="잔향 (공간 크기) — 세션을 알려주는 음악앱에서만 적용" />
+
+        <Spinner
+            android:id="@+id/spinnerReverb"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:background="#FF1E1E2A" />
+
+        <TextView
+            style="@style/SectionTitle"
+            android:text="옵션" />
+
+        <Switch
+            android:id="@+id/switchGlobal"
+            style="@style/OptionSwitch"
+            android:text="모든 앱에 적용 (유튜브 등 포함)" />
+
+        <Switch
+            android:id="@+id/switchHeadphonesOnly"
+            style="@style/OptionSwitch"
+            android:text="헤드폰/이어폰 연결 시에만 적용" />
+
+        <Button
+            android:id="@+id/buttonTest"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="🎧 3D 테스트 사운드 (머리 주위를 도는 소리)" />
+
+        <Button
+            android:id="@+id/buttonSystem"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="기기 내장 공간 음향 설정 열기" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="팁: 효과가 안 느껴지면 다른 이퀄라이저 앱(삼성 Dolby Atmos, Wavelet 등)을 끄고 다시 켜 보세요. 빠른 설정 패널에 '3D 사운드' 타일을 추가하면 한 번에 켜고 끌 수 있습니다."
+            android:textColor="#FF8888A0"
+            android:textSize="12sp" />
+    </LinearLayout>
+</ScrollView>
