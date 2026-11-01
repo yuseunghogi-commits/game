@@ -68,7 +68,8 @@ class BinauralProcessor(private val fs: Int) {
     private class Src(
         val input: Int,      // 0=L 1=R 2=S
         val baseDelay: Int,  // 샘플
-        val gain: Float,
+        val gainL: Float,
+        val gainR: Float,
         val lpCoef: Float,   // 벽 흡수/뒤쪽 어두움 (1 = 필터 없음)
         val left: Ear,
         val right: Ear,
@@ -123,12 +124,18 @@ class BinauralProcessor(private val fs: Int) {
         return Src(
             input = input,
             baseDelay = samples(delaySec),
-            gain = gain.toFloat(),
+            // 반대쪽 귀로 새는 소리를 줄여 좌우를 또렷하게 (정면/정후방 음원은 영향 없음)
+            gainL = (gain * if (az > 0) contraMul(az) else 1.0).toFloat(),
+            gainR = (gain * if (az < 0) contraMul(az) else 1.0).toFloat(),
             lpCoef = lpCoef(cutoffHz),
             left = makeEar(thL, pinna, az),
             right = makeEar(thR, pinna, az),
         )
     }
+
+    /** 옆에 있는 음원일수록 반대쪽 귀 게인을 더 줄임 */
+    private fun contraMul(az: Double) = 1.0 - (1.0 - contra) * abs(sin(az))
+    private var contra = 0.3
 
     private fun angleBetween(a: Double, b: Double): Double {
         var d = abs(a - b) % (2 * PI)
@@ -138,7 +145,8 @@ class BinauralProcessor(private val fs: Int) {
 
     private fun rebuild() {
         val room = ROOMS[roomIdx.coerceIn(0, ROOMS.lastIndex)]
-        val spk = 30.0 + 55.0 * width // 앞 스피커 각도 (±30° ~ ±85°)
+        val spk = 30.0 + 50.0 * width // 앞 스피커 각도 (±30° ~ ±80°)
+        contra = 0.30 - 0.25 * width  // 반대쪽 귀 누설: 넓이 0% → -10dB, 100% → -26dB 추가 감쇠
         val list = mutableListOf<Src>()
 
         // 직접음: 앞 스피커
@@ -167,10 +175,8 @@ class BinauralProcessor(private val fs: Int) {
         rt60 = room.rt60
         lateGain = (room.late * (0.4 + 0.6 * early)).toFloat()
         preDelay = samples(0.012 * room.size)
-        for (i in 0 until FDN_N) {
-            fdnLen[i] = samples(FDN_MS[i] / 1000.0 * room.size).coerceIn(16, FDN_MAX - 1)
-            fdnG[i] = if (rt60 <= 0.0) 0f else 10.0.pow(-3.0 * fdnLen[i] / (fs * rt60)).toFloat()
-        }
+        revL.configure(room.size, 1.0)
+        revR.configure(room.size, 1.037) // 길이를 살짝 달리해 좌우 잔향을 디코릴레이션
 
         // 대략적인 음량 보정 (나머지는 리미터가 처리)
         var energy = 2.0 + 2 * sur * sur
@@ -182,12 +188,46 @@ class BinauralProcessor(private val fs: Int) {
     }
 
     // --- FDN 잔향 ------------------------------------------------------------
-    private val fdnLines = Array(FDN_N) { FloatArray(FDN_MAX) }
-    private val fdnIdx = IntArray(FDN_N)
-    private val fdnLen = IntArray(FDN_N) { 1000 }
-    private val fdnG = FloatArray(FDN_N)
-    private val fdnDamp = FloatArray(FDN_N)
-    private val fdnOut = FloatArray(FDN_N)
+    /** 8채널 FDN 하나. 왼쪽 입력용/오른쪽 입력용 두 개를 써서 잔향도 좌우 방향을 유지한다. */
+    private inner class Fdn {
+        val lines = Array(FDN_N) { FloatArray(FDN_MAX) }
+        val idx = IntArray(FDN_N)
+        val len = IntArray(FDN_N) { 1000 }
+        val g = FloatArray(FDN_N)
+        val damp = FloatArray(FDN_N)
+        var outA = 0f // 같은 쪽 귀
+        var outB = 0f // 반대쪽 귀 (디코릴레이션된 출력)
+
+        fun configure(size: Double, stretch: Double) {
+            for (i in 0 until FDN_N) {
+                len[i] = samples(FDN_MS[i] / 1000.0 * size * stretch).coerceIn(16, FDN_MAX - 1)
+                g[i] = if (rt60 <= 0.0) 0f else 10.0.pow(-3.0 * len[i] / (fs * rt60)).toFloat()
+                if (idx[i] >= len[i]) idx[i] = 0
+            }
+        }
+
+        fun run(x: Float) {
+            var sum = 0f
+            for (i in 0 until FDN_N) {
+                damp[i] += dampCoef * (lines[i][idx[i]] - damp[i])
+                sum += damp[i]
+            }
+            val h = sum * (2f / FDN_N)
+            var a = 0f
+            var b = 0f
+            for (i in 0 until FDN_N) {
+                val inp = if (i and 1 == 0) x else -x
+                lines[i][idx[i]] = inp * 0.9f + g[i] * (damp[i] - h)
+                if (++idx[i] >= len[i]) idx[i] = 0
+                a += damp[i] * OUT_L[i]
+                b += damp[i] * OUT_R[i]
+            }
+            outA = a
+            outB = b
+        }
+    }
+    private lateinit var revL: Fdn
+    private lateinit var revR: Fdn
     private val dampCoef = lpCoef(9000.0)
     private val revInLp = lpCoef(6000.0)
     private var revLpL = 0f
@@ -206,6 +246,8 @@ class BinauralProcessor(private val fs: Int) {
     private val release = (1.0 - exp(-1.0 / (0.25 * fs))).toFloat()
 
     init {
+        revL = Fdn()
+        revR = Fdn()
         rebuild()
     }
 
@@ -225,7 +267,6 @@ class BinauralProcessor(private val fs: Int) {
         val srcs = sources
         val wet = amount
         val dry = 1f - amount
-        val sideBoost = 1f + 0.3f * width
         val gBass = 1.5f * bass
         val late = lateGain
         val hasLate = late > 0f && rt60 > 0.0
@@ -237,46 +278,29 @@ class BinauralProcessor(private val fs: Int) {
             dcL += aDc * (l - dcL); l -= dcL
             dcR += aDc * (r - dcR); r -= dcR
 
-            // 좌우 넓히기 (Mid/Side)
-            val m = (l + r) * 0.5f
-            val s = (l - r) * 0.5f * sideBoost
-            bufL[w] = m + s
-            bufR[w] = m - s
-            bufS[w] = s
+            // (Mid/Side 넓히기는 한쪽 소리를 반대쪽 채널로 새게 만들어서 쓰지 않음 —
+            //  넓이는 가상 스피커 각도로만 조절)
+            bufL[w] = l
+            bufR[w] = r
+            bufS[w] = (l - r) * 0.5f
 
             var outL = 0f
             var outR = 0f
             for (src in srcs) {
                 val b = when (src.input) { 0 -> bufL; 1 -> bufR; else -> bufS }
-                outL += src.gain * ear(src.left, b, src.baseDelay, src.lpCoef)
-                outR += src.gain * ear(src.right, b, src.baseDelay, src.lpCoef)
+                outL += src.gainL * ear(src.left, b, src.baseDelay, src.lpCoef)
+                outR += src.gainR * ear(src.right, b, src.baseDelay, src.lpCoef)
             }
 
-            // 잔향 (FDN, Householder 행렬)
+            // 잔향: 왼쪽 소리의 잔향은 주로 왼쪽 귀에, 오른쪽은 오른쪽에 (반대쪽은 REV_CROSS 만큼)
             if (hasLate) {
                 val di = (w - preDelay) and mask
                 revLpL += revInLp * (bufL[di] - revLpL)
                 revLpR += revInLp * (bufR[di] - revLpR)
-                var sum = 0f
-                for (i in 0 until FDN_N) {
-                    val y = fdnLines[i][fdnIdx[i]]
-                    fdnDamp[i] += dampCoef * (y - fdnDamp[i])
-                    fdnOut[i] = fdnDamp[i]
-                    sum += fdnOut[i]
-                }
-                val h = sum * (2f / FDN_N)
-                var rl = 0f
-                var rr = 0f
-                for (i in 0 until FDN_N) {
-                    val inp = if (i and 1 == 0) revLpL else revLpR
-                    val line = fdnLines[i]
-                    line[fdnIdx[i]] = inp * 0.9f + fdnG[i] * (fdnOut[i] - h)
-                    if (++fdnIdx[i] >= fdnLen[i]) fdnIdx[i] = 0
-                    rl += fdnOut[i] * OUT_L[i]
-                    rr += fdnOut[i] * OUT_R[i]
-                }
-                outL += late * rl * 0.6f
-                outR += late * rr * 0.6f
+                revL.run(revLpL)
+                revR.run(revLpR)
+                outL += late * 0.6f * (revL.outA + REV_CROSS * revR.outB)
+                outR += late * 0.6f * (revR.outA + REV_CROSS * revL.outB)
             }
 
             outL = dry * l + wet * wetNorm * outL
@@ -320,6 +344,7 @@ class BinauralProcessor(private val fs: Int) {
     companion object {
         private const val PINNA_AMOUNT = 0.35f
         private const val FDN_N = 8
+        private const val REV_CROSS = 0.15f
         private const val FDN_MAX = 1 shl 13
         private val FDN_MS = doubleArrayOf(29.7, 37.1, 41.1, 43.7, 53.3, 59.9, 67.7, 73.1)
         private val OUT_L = floatArrayOf(1f, -1f, 1f, 1f, -1f, 1f, -1f, -1f)
@@ -341,16 +366,16 @@ class BinauralProcessor(private val fs: Int) {
          * 청취자가 방 가운데 있는 직육면체 방을 근사.
          */
         private val REFLECTIONS = arrayOf(
-            doubleArrayOf(Double.NaN, 2.6, 0.50, 6000.0), // 바닥
+            doubleArrayOf(Double.NaN, 3.4, 0.30, 5000.0), // 바닥 (너무 크면 음색이 뭉개짐)
             doubleArrayOf(-90.0, 4.0, 0.55, 8000.0),      // 왼쪽 벽
             doubleArrayOf(Double.NaN, 6.5, 0.38, 7000.0), // 천장
             doubleArrayOf(-20.0, 7.8, 0.35, 6000.0),      // 앞 벽
-            doubleArrayOf(70.0, 9.5, 0.42, 6000.0),       // 오른쪽 벽
-            doubleArrayOf(-150.0, 13.0, 0.38, 5000.0),    // 뒷벽
-            doubleArrayOf(130.0, 18.5, 0.28, 4000.0),     // 2차 반사
-            doubleArrayOf(-115.0, 22.0, 0.26, 4000.0),
-            doubleArrayOf(40.0, 26.0, 0.22, 3500.0),
-            doubleArrayOf(170.0, 31.0, 0.20, 3000.0),
+            doubleArrayOf(70.0, 9.5, 0.10, 6000.0),       // 오른쪽 벽 (반대편은 약하게)
+            doubleArrayOf(-150.0, 13.0, 0.40, 5000.0),    // 뒷벽 (왼쪽 뒤)
+            doubleArrayOf(-60.0, 16.0, 0.30, 4500.0),     // 2차 반사 (같은 쪽 위주)
+            doubleArrayOf(-115.0, 22.0, 0.28, 4000.0),
+            doubleArrayOf(150.0, 26.0, 0.06, 3500.0),
+            doubleArrayOf(-170.0, 31.0, 0.22, 3000.0),
         )
     }
 }

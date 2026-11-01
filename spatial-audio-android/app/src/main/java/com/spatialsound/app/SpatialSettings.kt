@@ -73,7 +73,7 @@ data class SoundPreset(
 
 val SOUND_PRESETS = listOf(
     // 이름, 3D 강도, 저음, 방 울림/공간감, 잔향(방 크기), 좌우 넓이
-    SoundPreset("음악 (자연스러운 입체감)", 850, 250, 45, PresetReverb.PRESET_MEDIUMROOM, 55),
+    SoundPreset("음악 (자연스러운 입체감)", 850, 250, 45, PresetReverb.PRESET_MEDIUMROOM, 65),
     SoundPreset("영화관", 1000, 500, 60, PresetReverb.PRESET_LARGEROOM, 80),
     SoundPreset("콘서트홀", 950, 300, 55, PresetReverb.PRESET_LARGEHALL, 60),
     SoundPreset("게임 (발소리/방향감)", 1000, 200, 35, PresetReverb.PRESET_SMALLROOM, 95),
