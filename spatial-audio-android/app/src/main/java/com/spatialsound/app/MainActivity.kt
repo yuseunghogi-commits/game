@@ -2,15 +2,21 @@ package com.spatialsound.app
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioManager
+import android.media.projection.MediaProjectionConfig
+import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.RadioButton
 import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.Switch
@@ -31,6 +37,9 @@ class MainActivity : Activity() {
     private lateinit var labelSpace: TextView
     private lateinit var labelBass: TextView
     private lateinit var textStatus: TextView
+    private lateinit var labelReverb: TextView
+    private lateinit var radioStrong: RadioButton
+    private lateinit var radioBasic: RadioButton
 
     private var settings = SpatialSettings()
     /** 코드로 위젯 값을 바꾸는 동안 리스너가 반응하지 않도록 */
@@ -54,6 +63,13 @@ class MainActivity : Activity() {
         labelSpace = findViewById(R.id.labelSpace)
         labelBass = findViewById(R.id.labelBass)
         textStatus = findViewById(R.id.textStatus)
+        labelReverb = findViewById(R.id.labelReverb)
+        radioStrong = findViewById(R.id.radioStrong)
+        radioBasic = findViewById(R.id.radioBasic)
+        if (!SoundController.strongSupported()) {
+            radioStrong.isEnabled = false
+            radioStrong.text = "강력 3D 모드 — Android 10 이상 필요"
+        }
 
         spinnerPreset.adapter = darkAdapter(SOUND_PRESETS.map { it.name })
         spinnerReverb.adapter = darkAdapter(REVERB_NAMES)
@@ -62,13 +78,24 @@ class MainActivity : Activity() {
         bindUi()
         setupListeners()
 
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
+        // 앱을 다시 열었을 때 설정이 켜져 있으면 서비스도 확실히 살려 둔다.
+        if (SoundController.sync(this)) {
+            requestStrongStart()
+        } else if (needsNotificationPermission()) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         }
-        // 앱을 다시 열었을 때 설정이 켜져 있으면 서비스도 확실히 살려 둔다.
-        SpatialAudioService.sync(this)
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        // 빠른 설정 타일에서 강력 모드를 켠 경우
+        settings = SpatialSettings.load(this)
+        bindUi()
+        syncServices()
+    }
+
+    private fun needsNotificationPermission() = Build.VERSION.SDK_INT >= 33 &&
+        checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
     }
 
     override fun onStart() {
@@ -103,6 +130,10 @@ class MainActivity : Activity() {
         switchEnabled.isChecked = settings.enabled
         switchGlobal.isChecked = settings.globalMode
         switchHeadphonesOnly.isChecked = settings.headphonesOnly
+        val strong = settings.strongMode && SoundController.strongSupported()
+        radioStrong.isChecked = strong
+        radioBasic.isChecked = !strong
+        switchGlobal.visibility = if (strong) android.view.View.GONE else android.view.View.VISIBLE
         spinnerPreset.setSelection(settings.presetIndex.coerceIn(0, SOUND_PRESETS.lastIndex))
         spinnerReverb.setSelection(settings.reverbPreset.coerceIn(0, REVERB_NAMES.lastIndex))
         seekVirtualizer.progress = settings.virtualizerStrength
@@ -117,13 +148,15 @@ class MainActivity : Activity() {
         labelVirtualizer.text = "3D 서라운드 강도: ${settings.virtualizerStrength / 10}%"
         labelSpace.text = "공간감 EQ (넓이·공기감): ${settings.spaceEq}%"
         labelBass.text = "저음 보강: ${settings.bassStrength / 10}%"
+        labelReverb.text = if (settings.strongMode) "잔향 (공간 크기)"
+        else "잔향 (공간 크기) — 기본 모드에선 세션을 알려주는 음악앱에서만 적용"
     }
 
     private fun commit(newSettings: SpatialSettings) {
         settings = newSettings
         settings.save(this)
         updateLabels()
-        SpatialAudioService.sync(this)
+        syncServices()
         SpatialTileService.requestUpdate(this)
         renderStatus(EngineState.snapshot)
     }
@@ -138,6 +171,13 @@ class MainActivity : Activity() {
         switchHeadphonesOnly.setOnCheckedChangeListener { _, checked ->
             if (!binding) commit(settings.copy(headphonesOnly = checked))
         }
+        radioStrong.setOnCheckedChangeListener { _, checked ->
+            if (!binding && checked && !settings.strongMode) { commit(settings.copy(strongMode = true)); bindUi() }
+        }
+        radioBasic.setOnCheckedChangeListener { _, checked ->
+            if (!binding && checked && settings.strongMode) { commit(settings.copy(strongMode = false)); bindUi() }
+        }
+        findViewById<Button>(R.id.buttonDump).setOnClickListener { showDumpHelp() }
 
         spinnerPreset.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(p: AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
@@ -203,6 +243,11 @@ class MainActivity : Activity() {
         lines += if (s.headphones) "🎧 헤드폰 연결됨: ${s.headphoneName.ifBlank { "알 수 없음" }}"
         else "🔈 헤드폰이 연결되지 않음"
 
+        if (settings.strongMode && SoundController.strongSupported()) {
+            renderStrongStatus(s, lines)
+            textStatus.text = lines.joinToString("\n")
+            return
+        }
         when {
             !settings.enabled -> lines += "⏸ 꺼져 있음"
             !s.running -> lines += "⏳ 시작하는 중…"
@@ -223,6 +268,113 @@ class MainActivity : Activity() {
         }
         systemSpatializerInfo()?.let { lines += it }
         textStatus.text = lines.joinToString("\n")
+    }
+
+    private fun renderStrongStatus(s: EngineState.Snapshot, lines: MutableList<String>) {
+        val dump = SessionMuter.hasDumpPermission(this)
+        lines += if (dump) "🔑 원래 소리 음소거 권한: 있음" else "🔑 원래 소리 음소거 권한: 없음 → 위 '1회 설정 방법' 버튼"
+        when {
+            !settings.enabled -> lines += "⏸ 꺼져 있음"
+            !s.strongRunning -> lines += "⏳ 시작 대기 중 (오디오 공유를 허용해야 시작됨)"
+            settings.headphonesOnly && !s.headphones -> lines += "⏸ 헤드폰 연결 대기 중 (소리는 그대로 통과)"
+            else -> lines += "✅ 강력 3D 적용 중 — 유튜브 등 모든 앱"
+        }
+        if (s.strongRunning && s.mutedApps.isNotEmpty()) {
+            lines += "처리 중인 앱: " + s.mutedApps.joinToString { appLabel(it) }
+        }
+        if (s.strongRunning && s.restrictedApps.isNotEmpty()) {
+            lines += "⚠️ 캡처를 막은 앱(원음 그대로 재생): " + s.restrictedApps.take(4).joinToString { appLabel(it) }
+        }
+    }
+
+    private fun appLabel(pkg: String): String = runCatching {
+        packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+    }.getOrDefault(pkg)
+
+    // --- 서비스 연결 / 강력 모드 시작 ----------------------------------------
+
+    private fun syncServices() {
+        if (SoundController.sync(this)) requestStrongStart()
+    }
+
+    private fun requestStrongStart() {
+        if (pendingProjection) return
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            val perms = mutableListOf(Manifest.permission.RECORD_AUDIO)
+            if (needsNotificationPermission()) perms += Manifest.permission.POST_NOTIFICATIONS
+            requestPermissions(perms.toTypedArray(), REQ_RECORD)
+            return
+        }
+        if (!SessionMuter.hasDumpPermission(this)) {
+            // 권한 없이 시작하면 원래 소리 + 처리된 소리가 겹쳐서 메아리처럼 들린다.
+            commit(settings.copy(enabled = false))
+            bindUi()
+            showDumpHelp()
+            return
+        }
+        val mpm = getSystemService(MediaProjectionManager::class.java)
+        val intent = if (Build.VERSION.SDK_INT >= 34) {
+            // '앱 하나만' 공유하면 다른 앱 소리를 못 가져오므로 전체 화면 공유로 고정
+            mpm.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay())
+        } else mpm.createScreenCaptureIntent()
+        pendingProjection = true
+        Toast.makeText(this, "소리를 가져오려면 '시작'을 눌러 주세요 (화면은 녹화되지 않습니다)", Toast.LENGTH_LONG).show()
+        @Suppress("DEPRECATION")
+        startActivityForResult(intent, REQ_PROJECTION)
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_PROJECTION) return
+        pendingProjection = false
+        if (resultCode == RESULT_OK && data != null) {
+            Strong3DService.start(this, resultCode, data)
+        } else {
+            Toast.makeText(this, "허용하지 않아서 강력 3D 모드를 켜지 못했습니다", Toast.LENGTH_SHORT).show()
+            commit(settings.copy(enabled = false))
+            bindUi()
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQ_RECORD) return
+        val idx = permissions.indexOf(Manifest.permission.RECORD_AUDIO)
+        if (idx >= 0 && grantResults.getOrNull(idx) == PackageManager.PERMISSION_GRANTED) {
+            requestStrongStart()
+        } else {
+            Toast.makeText(this, "다른 앱 소리를 가져오려면 '오디오 녹음' 권한이 필요합니다", Toast.LENGTH_LONG).show()
+            commit(settings.copy(enabled = false))
+            bindUi()
+        }
+    }
+
+    private fun showDumpHelp() {
+        val granted = SessionMuter.hasDumpPermission(this)
+        val msg = buildString {
+            if (granted) append("✅ 이미 권한이 있습니다. 설정이 끝났어요!\n\n")
+            append("강력 3D 모드는 유튜브 원래 소리를 끄고, 앱이 직접 3D로 계산한 소리를 대신 내보냅니다. ")
+            append("원래 소리를 끄려면 PC에서 딱 한 번 아래 명령을 실행해야 합니다.\n\n")
+            append("1) 폰: 설정 → 휴대전화 정보 → 소프트웨어 정보 → '빌드번호' 7번 누르기 (개발자 옵션 켜기)\n")
+            append("2) 설정 → 개발자 옵션 → 'USB 디버깅' 켜기\n")
+            append("3) PC에 USB로 연결 후 PC 명령창에서:\n\n")
+            append(SessionMuter.GRANT_COMMAND)
+            append("\n\n4) 이 앱을 완전히 닫았다가 다시 열기\n\n")
+            append("PC가 없으면: 'Shizuku' 또는 무선 디버깅용 앱(LADB 등)으로 같은 명령을 실행해도 됩니다.\n")
+            append("권한은 앱을 지우기 전까지 유지됩니다.")
+        }
+        AlertDialog.Builder(this)
+            .setTitle("강력 3D 모드 1회 설정")
+            .setMessage(msg)
+            .setPositiveButton("명령어 복사") { _, _ ->
+                val cm = getSystemService(ClipboardManager::class.java)
+                cm.setPrimaryClip(ClipData.newPlainText("adb", SessionMuter.GRANT_COMMAND))
+                Toast.makeText(this, "복사했습니다", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("닫기", null)
+            .show()
     }
 
     /** Android 12L+ 기기 내장 공간 음향(Spatializer) 상태 안내 */
@@ -253,7 +405,12 @@ class MainActivity : Activity() {
         }
     }
 
+    private var pendingProjection = false
+
     companion object {
         private val CUSTOM = SOUND_PRESETS.lastIndex
+        private const val REQ_PROJECTION = 10
+        private const val REQ_RECORD = 11
+        const val EXTRA_START = "start"
     }
 }

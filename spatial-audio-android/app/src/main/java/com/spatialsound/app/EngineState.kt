@@ -14,6 +14,13 @@ object EngineState {
         val globalHasControl: Boolean = true,
         /** 세션 ID → 패키지 이름 (세션을 알려준 음악 앱들) */
         val sessions: Map<Int, String> = emptyMap(),
+        // --- 강력 3D 모드 ---
+        val strongRunning: Boolean = false,
+        val dumpGranted: Boolean = false,
+        /** 원래 소리를 음소거 중인 앱 */
+        val mutedApps: List<String> = emptyList(),
+        /** 캡처를 막아 둔 앱 (강력 모드 적용 불가) */
+        val restrictedApps: Set<String> = emptySet(),
     )
 
     @Volatile

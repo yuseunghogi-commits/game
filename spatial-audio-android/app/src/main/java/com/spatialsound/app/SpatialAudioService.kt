@@ -116,7 +116,7 @@ class SpatialAudioService : Service() {
         sessionEngines.values.forEach { it.release() }
         sessionEngines.clear()
         sessionPackages.clear()
-        EngineState.update { EngineState.Snapshot(running = false) }
+        EngineState.update { it.copy(running = false, globalOk = false, sessions = emptyMap()) }
         super.onDestroy()
     }
 
@@ -264,15 +264,12 @@ class SpatialAudioService : Service() {
             26, // TYPE_BLE_HEADSET (API 31)
         )
 
-        /** 설정을 저장한 뒤 호출하면 서비스가 켜지거나 갱신/종료된다. */
-        fun sync(context: Context) {
-            val s = SpatialSettings.load(context)
-            val intent = Intent(context, SpatialAudioService::class.java)
-            if (s.enabled) {
-                context.startForegroundService(intent)
-            } else {
-                context.stopService(intent)
-            }
+        fun start(context: Context) {
+            context.startForegroundService(Intent(context, SpatialAudioService::class.java))
+        }
+
+        fun stop(context: Context) {
+            context.stopService(Intent(context, SpatialAudioService::class.java))
         }
     }
 }

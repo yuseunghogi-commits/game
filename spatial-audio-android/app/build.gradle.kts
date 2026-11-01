@@ -3,6 +3,11 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+dependencies {
+    // 숨겨진 시스템 API(ServiceManager) 접근용 — 세션 탐색에 사용
+    implementation("org.lsposed.hiddenapibypass:hiddenapibypass:4.3")
+}
+
 android {
     namespace = "com.spatialsound.app"
     compileSdk = 34

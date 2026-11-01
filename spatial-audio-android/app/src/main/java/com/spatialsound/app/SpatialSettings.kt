@@ -19,6 +19,8 @@ data class SpatialSettings(
     /** PresetReverb 프리셋 (세션 단위 적용 앱에서만 동작) */
     val reverbPreset: Int = PresetReverb.PRESET_NONE.toInt(),
     val presetIndex: Int = 0,
+    /** true = 강력 3D 모드 (내부 오디오 캡처 + 직접 계산) */
+    val strongMode: Boolean = false,
 ) {
     fun save(context: Context) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
@@ -30,6 +32,7 @@ data class SpatialSettings(
             .putInt("spaceEq", spaceEq)
             .putInt("reverb", reverbPreset)
             .putInt("preset", presetIndex)
+            .putBoolean("strongMode", strongMode)
             .apply()
     }
 
@@ -48,6 +51,7 @@ data class SpatialSettings(
                 spaceEq = p.getInt("spaceEq", d.spaceEq),
                 reverbPreset = p.getInt("reverb", d.reverbPreset),
                 presetIndex = p.getInt("preset", d.presetIndex),
+                strongMode = p.getBoolean("strongMode", d.strongMode),
             )
         }
     }
