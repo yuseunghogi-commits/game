@@ -57,60 +57,103 @@ function bestPaths(src: number, nodeCount: number, edges: Edge[], res: Map<numbe
   });
 }
 
-export function allocate(nodeCount: number, units: Unit[], sinks: Sink[], edges: Edge[]): AllocResult {
-  const unitRes = new Map(units.map((u) => [u.key, u.availWh]));
-  const sinkRes = new Map(sinks.map((s) => [s.key, s.capWh]));
-  const edgeRes = new Map(edges.map((e) => [e.id, e.usable ? e.capWh : 0]));
-  const edgeDir = new Map<number, 0 | 1 | -1>(edges.map((e) => [e.id, 0]));
-  const blocked = new Set<string>();
-  const out: AllocResult = { flows: [], edgeUse: new Map(), unitUsed: new Map(), sinkUsed: new Map() };
+/** 상태를 유지하는 배분기: 우선순위 계층(핵심 부하 → 계약 → 시장)을 차례로 실행해도
+ *  선로 잔여 용량·방향·공급 잔량이 이어진다 (Baseline §10.7). */
+export class Allocator {
+  units: Unit[] = [];
+  unitRes = new Map<string, number>();
+  edgeRes: Map<number, number>;
+  edgeDir: Map<number, 0 | 1 | -1>;
+  out: AllocResult = { flows: [], edgeUse: new Map(), unitUsed: new Map(), sinkUsed: new Map() };
 
-  for (let iter = 0; iter < 5000; iter++) {
-    const paths = new Map<number, (Path | null)[]>();
-    let best: { u: Unit; s: Sink; p: Path; val: number } | null = null;
-    for (const u of units) {
-      if ((unitRes.get(u.key) ?? 0) <= 0) continue;
-      if (!paths.has(u.node)) paths.set(u.node, bestPaths(u.node, nodeCount, edges, edgeRes, edgeDir));
-      const ps = paths.get(u.node)!;
-      for (const s of sinks) {
-        if ((sinkRes.get(s.key) ?? 0) <= 0 || blocked.has(u.key + '|' + s.key)) continue;
-        if (s.localOnly && s.node !== u.node) continue;
-        const p = ps[s.node];
-        if (!p) continue;
-        const val = s.value * p.gain - u.cost;
-        if (val > 0 && (!best || val > best.val + 1e-9)) best = { u, s, p, val };
-      }
-    }
-    if (!best) break;
-    const { u, s, p } = best;
-    // 보낼 양 x의 상한: 공급 잔량, 각 엣지 잔여 용량(앞 구간 이득 반영), 수요처 잔량
-    let x = unitRes.get(u.key)!;
-    let prefix = 1;
-    for (const h of p.hops) {
-      x = Math.min(x, Math.floor((edgeRes.get(h.edge.id)! ) / prefix));
-      prefix *= (PPM - h.edge.lossPpm) / PPM;
-    }
-    x = Math.min(x, Math.floor(sinkRes.get(s.key)! / p.gain));
-    // 1 kWh 미만 잔량은 보내지 않는다 (반올림으로 생기는 미세 흐름·손실 반복 방지)
-    if (x < MIN_TRANSFER_WH) { blocked.add(u.key + '|' + s.key); continue; }
-    // 정수 구간별 전송
-    let amount = x;
-    for (const h of p.hops) {
-      const e = h.edge;
-      const delivered = Math.floor((amount * (PPM - e.lossPpm)) / PPM);
-      edgeRes.set(e.id, edgeRes.get(e.id)! - amount);
-      edgeDir.set(e.id, h.dir);
-      const use = out.edgeUse.get(e.id) ?? { dir: h.dir, sentWh: 0, lossWh: 0 };
-      use.sentWh += amount;
-      use.lossWh += amount - delivered;
-      out.edgeUse.set(e.id, use);
-      amount = delivered;
-    }
-    unitRes.set(u.key, unitRes.get(u.key)! - x);
-    sinkRes.set(s.key, sinkRes.get(s.key)! - amount);
-    out.unitUsed.set(u.key, (out.unitUsed.get(u.key) ?? 0) + x);
-    out.sinkUsed.set(s.key, (out.sinkUsed.get(s.key) ?? 0) + amount);
-    out.flows.push({ unit: u.key, sink: s.key, sentWh: x, deliveredWh: amount, edges: p.hops.map((h) => h.edge.id) });
+  constructor(public nodeCount: number, units: Unit[], public edges: Edge[]) {
+    this.edgeRes = new Map(edges.map((e) => [e.id, e.usable ? e.capWh : 0]));
+    this.edgeDir = new Map<number, 0 | 1 | -1>(edges.map((e) => [e.id, 0]));
+    this.addUnits(units);
   }
-  return out;
+
+  addUnits(units: Unit[]) {
+    for (const u of units) {
+      if (this.unitRes.has(u.key)) continue;
+      this.units.push(u);
+      this.unitRes.set(u.key, u.availWh);
+    }
+    this.units.sort((a, b) => a.cost - b.cost || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  }
+
+  removeUnit(key: string) {
+    this.unitRes.set(key, 0);
+  }
+
+  /** 수요처 목록에 대해 배분하고, 이번 실행에서 수요처별 수전량을 돌려준다. */
+  run(sinks: Sink[]): Map<string, number> {
+    const { unitRes, edgeRes, edgeDir, out, units, edges, nodeCount } = this;
+    const sinkRes = new Map(sinks.map((s) => [s.key, s.capWh]));
+    const got = new Map<string, number>();
+    const blocked = new Set<string>();
+    for (let iter = 0; iter < 5000; iter++) {
+      const paths = new Map<number, (Path | null)[]>();
+      let best: { u: Unit; s: Sink; p: Path; val: number } | null = null;
+      for (const u of units) {
+        if ((unitRes.get(u.key) ?? 0) <= 0) continue;
+        if (!paths.has(u.node)) paths.set(u.node, bestPaths(u.node, nodeCount, edges, edgeRes, edgeDir));
+        const ps = paths.get(u.node)!;
+        for (const s of sinks) {
+          if ((sinkRes.get(s.key) ?? 0) <= 0 || blocked.has(u.key + '|' + s.key)) continue;
+          if (s.localOnly && s.node !== u.node) continue;
+          const p = ps[s.node];
+          if (!p) continue;
+          const val = s.value * p.gain - u.cost;
+          if (val > 0 && (!best || val > best.val + 1e-9)) best = { u, s, p, val };
+        }
+      }
+      if (!best) break;
+      const { u, s, p } = best;
+      let x = unitRes.get(u.key)!;
+      let prefix = 1;
+      for (const h of p.hops) {
+        x = Math.min(x, Math.floor(edgeRes.get(h.edge.id)! / prefix));
+        prefix *= (PPM - h.edge.lossPpm) / PPM;
+      }
+      x = Math.min(x, Math.floor(sinkRes.get(s.key)! / p.gain));
+      // 1 kWh 미만 잔량은 보내지 않는다 (반올림으로 생기는 미세 흐름·손실 반복 방지)
+      if (x < MIN_TRANSFER_WH) { blocked.add(u.key + '|' + s.key); continue; }
+      let amount = x;
+      for (const h of p.hops) {
+        const e = h.edge;
+        const delivered = Math.floor((amount * (PPM - e.lossPpm)) / PPM);
+        edgeRes.set(e.id, edgeRes.get(e.id)! - amount);
+        edgeDir.set(e.id, h.dir);
+        const use = out.edgeUse.get(e.id) ?? { dir: h.dir, sentWh: 0, lossWh: 0 };
+        use.sentWh += amount;
+        use.lossWh += amount - delivered;
+        out.edgeUse.set(e.id, use);
+        amount = delivered;
+      }
+      unitRes.set(u.key, unitRes.get(u.key)! - x);
+      sinkRes.set(s.key, sinkRes.get(s.key)! - amount);
+      out.unitUsed.set(u.key, (out.unitUsed.get(u.key) ?? 0) + x);
+      out.sinkUsed.set(s.key, (out.sinkUsed.get(s.key) ?? 0) + amount);
+      got.set(s.key, (got.get(s.key) ?? 0) + amount);
+      out.flows.push({ unit: u.key, sink: s.key, sentWh: x, deliveredWh: amount, edges: p.hops.map((h) => h.edge.id) });
+    }
+    return got;
+  }
+
+  /** 같은 계층 수요처들을 이행률이 고르게 오르도록 여러 라운드로 나눠 배분한다 (최대–최소 공정, 허용 오차 1/rounds). */
+  runFair(sinks: Sink[], rounds = 10): Map<string, number> {
+    const total = new Map<string, number>();
+    for (let k = 1; k <= rounds; k++) {
+      const caps = sinks.map((s) => ({ ...s, capWh: Math.max(0, Math.ceil((s.capWh * k) / rounds) - (total.get(s.key) ?? 0)) }));
+      const got = this.run(caps.filter((c) => c.capWh > 0));
+      for (const [key, v] of got) total.set(key, (total.get(key) ?? 0) + v);
+    }
+    return total;
+  }
+}
+
+export function allocate(nodeCount: number, units: Unit[], sinks: Sink[], edges: Edge[]): AllocResult {
+  const a = new Allocator(nodeCount, units, edges);
+  a.run(sinks);
+  return a.out;
 }

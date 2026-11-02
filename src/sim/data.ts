@@ -148,9 +148,13 @@ export interface RegionDef {
   solar: number;
   wind: number;
   growthPpmPerYear: number;
+  /** 접근성 계수 (ppm, 사업권 가격) */
+  accessPpm: number;
+  /** 토지 임대료 기준 (minor / MW / 게임일) */
+  landRentPerMwDayMinor: number;
 }
 
-const REGION_NAMES = ['아우렐', '바스티온', '세룰레아', '드라바', '에스커', '펜마크'];
+const REGION_NAMES = ['아우렐', '바스티온', '세룰레아', '드라바', '에스커', '펜마크', '오린', '카스텔', '루멘', '베리스', '토르바', '니발'];
 
 const BASE_SHAPE = [
   0.72, 0.68, 0.66, 0.65, 0.67, 0.74, 0.86, 0.98, 1.06, 1.1, 1.12, 1.13,
@@ -166,7 +170,9 @@ function lcg(seed: number) {
 }
 
 /** 시드에서 지역을 결정적으로 만든다. 육지 위의 서로 떨어진 지점을 고른다. */
-export function generateRegions(seed: number, count = 6): RegionDef[] {
+export const REGION_COUNT = 12;
+
+export function generateRegions(seed: number, count = REGION_COUNT): RegionDef[] {
   const rnd = lcg(seed * 7919 + 17);
   const candidates: { lat: number; lon: number; h: number }[] = [];
   const N = 1500;
@@ -213,6 +219,8 @@ export function generateRegions(seed: number, count = 6): RegionDef[] {
       solar: Math.max(1, Math.min(5, Math.round(5 - Math.abs(p.lat) / 15 - moist * 1.5))),
       wind: Math.max(1, Math.min(5, Math.round(1 + Math.abs(p.lat) / 15 + rnd() * 2))),
       growthPpmPerYear: 20_000 + Math.floor(rnd() * 4) * 10_000,
+      accessPpm: 850_000 + Math.floor(rnd() * 9) * 50_000,
+      landRentPerMwDayMinor: (40 + Math.floor(rnd() * 9) * 10) * 100,
     };
   });
 }
@@ -226,3 +234,148 @@ export const MARKET = {
   /** 외생 입력 평활화 (S-06): DI당 0.25 */
   alphaPpm: 250_000,
 };
+
+// ================= P2: 경영 =================
+
+export type LicenseType = 'GEN' | 'STO' | 'TRN' | 'RET';
+export const LICENSE_NAMES: Record<LicenseType, string> = { GEN: '발전 사업권', STO: '저장 사업권', TRN: '송전 사업권', RET: '소매 공급 사업권' };
+/** 사업권 (Baseline §8, 결정 S-11·S-15). 기간 = 1 게임년(120일), 유예 30일, 갱신비 = 현재 가격의 30%. */
+export const LICENSE = {
+  termDays: 120,
+  graceDays: 30,
+  renewShare: 0.3,
+  alertDays: [30, 7, 1],
+  multMin: 0.5,
+  multMax: 3.0,
+  /** 회사 정격 한도(kW) / 기준 가격 / 일 수수료 (minor) */
+  tiers: {
+    GEN: { small: { quotaKw: 30_000, price: 120_000_00, fee: 1_500_00 }, medium: { quotaKw: 100_000, price: 350_000_00, fee: 4_000_00 }, large: { quotaKw: 300_000, price: 900_000_00, fee: 10_000_00 } },
+    STO: { small: { quotaKw: 20_000, price: 60_000_00, fee: 800_00 }, medium: { quotaKw: 60_000, price: 170_000_00, fee: 2_000_00 }, large: { quotaKw: 200_000, price: 450_000_00, fee: 5_000_00 } },
+    TRN: { small: { quotaKw: 0, price: 80_000_00, fee: 1_000_00 }, medium: { quotaKw: 0, price: 80_000_00, fee: 1_000_00 }, large: { quotaKw: 0, price: 80_000_00, fee: 1_000_00 } },
+    RET: { small: { quotaKw: 0, price: 200_000_00, fee: 3_000_00 }, medium: { quotaKw: 0, price: 200_000_00, fee: 3_000_00 }, large: { quotaKw: 0, price: 200_000_00, fee: 3_000_00 } },
+  } as Record<LicenseType, Record<SizeId, { quotaKw: number; price: number; fee: number }>>,
+};
+/** 시설 종류 → 필요한 사업권 */
+export const REQUIRED_LICENSE: Record<TypeId, LicenseType> = { thermal: 'GEN', solar: 'GEN', wind: 'GEN', storage: 'STO', substation: 'TRN' };
+
+/** 토지 (Baseline §9, 결정 S-19). 시설 부지마다 임대. 임대료 = 지역 기준 × 부지 MW. */
+export const LAND = {
+  termDays: 120,
+  graceDays: 30,
+  renewIncreasePpm: 100_000,
+  depositDays: 30,
+  /** 매입가 = 현재 연 임대료 × 3 */
+  buyYears: 3,
+  resaleShare: 0.85,
+  substationFootprintKw: 10_000,
+};
+
+/** 대출 (Baseline §17.5, 결정 S-18). 월 = 30 게임일, 연 = 120 게임일. */
+export const LOAN = {
+  baseRatePpmPerYear: 80_000,
+  terms: [6, 12, 24, 36],
+  monthDays: 30,
+  baseCreditMinor: 300_000_00,
+  facilityLtvPpm: 500_000,
+  landLtvPpm: 700_000,
+  prepayFeePpm: 10_000,
+  penaltyRatePpm: 40_000,
+};
+
+/** 지급불능 (Baseline §17.6, 결정 S-12). */
+export const INSOLVENCY = {
+  arrearsToRestructureDays: 30,
+  negativeCashLimitMinor: 500_000_00,
+  restructureDays: 30,
+};
+
+/** 매각·폐기 (Q35, Baseline §12.16) */
+export const DISPOSAL = {
+  saleShareOk: 0.7,
+  saleShareFailed: 0.4,
+  disposeCostPpm: { thermal: 100_000, solar: 50_000, wind: 50_000, storage: 50_000, substation: 30_000 } as Record<TypeId, number>,
+};
+
+/** 계약 (Baseline §14.9, 결정 S-04): PPA는 지역 인도·판매 한도 포함, 직접 공급은 별도 고객 부하 */
+export const CONTRACT = {
+  offerEveryDays: 7,
+  offerExpireDays: 14,
+  maxOpenOffersPerRegion: 3,
+  tolerancePpm: 20_000,
+  lambdaPpm: { ppa: 100_000, direct: 200_000, critical: 1_000_000 },
+  ppa: { mwMin: 5, mwMax: 40, priceMin: 0.88, priceMax: 1.04, terms: [60, 90, 120] },
+  direct: { mwMin: 4, mwMax: 24, priceMin: 1.08, priceMax: 1.25, terms: [90, 120, 180], criticalShare: 0.25, criticalPremium: 1.1 },
+  reliabilityDays: 30,
+};
+
+/** 연구 (Baseline §19, 결정 S-10: 원자력 계열 제외) */
+export interface ResearchNode { id: string; branch: string; name: string; tier: 1 | 2 | 3; requires?: string; costMinor: number; minDays: number; effect: string }
+export const RESEARCH: ResearchNode[] = [
+  { id: 'gen1', branch: '발전', name: '연소 효율', tier: 1, costMinor: 150_000_00, minDays: 10, effect: '연료비 ×0.95' },
+  { id: 'gen2', branch: '발전', name: '출력 유연성', tier: 2, requires: 'gen1', costMinor: 400_000_00, minDays: 20, effect: '열발전 램프 ×1.5, 최소 출력 −10%p' },
+  { id: 'tx1', branch: '송전', name: '저손실 도체', tier: 1, costMinor: 150_000_00, minDays: 10, effect: '신규 송전선 손실 ×0.9' },
+  { id: 'tx2', branch: '송전', name: '고용량 선로', tier: 2, requires: 'tx1', costMinor: 400_000_00, minDays: 20, effect: '신규 송전선 용량 ×1.2' },
+  { id: 'tx3', branch: '송전', name: '신속 복구', tier: 3, requires: 'tx2', costMinor: 900_000_00, minDays: 30, effect: '복구 기간 ×0.7' },
+  { id: 'sto1', branch: '저장', name: '전력 변환 효율', tier: 1, costMinor: 150_000_00, minDays: 10, effect: '충·방전 효율 +2%p' },
+  { id: 'sto2', branch: '저장', name: '고밀도 셀', tier: 2, requires: 'sto1', costMinor: 400_000_00, minDays: 20, effect: '신규 저장 용량 ×1.2' },
+  { id: 'auto1', branch: '자동화', name: '수요 예측', tier: 1, costMinor: 150_000_00, minDays: 10, effect: '지역 24시간 가격 예측 표시' },
+  { id: 'auto2', branch: '자동화', name: '자동 운영', tier: 2, requires: 'auto1', costMinor: 400_000_00, minDays: 20, effect: '자동 실행: 예방 점검·저장 기준 자동 조정' },
+  { id: 'env1', branch: '환경', name: '배출 저감', tier: 1, costMinor: 150_000_00, minDays: 10, effect: '환경 비용 ×0.85' },
+  { id: 'con1', branch: '건설', name: '모듈 공법', tier: 1, costMinor: 150_000_00, minDays: 10, effect: '건설비 ×0.95' },
+  { id: 'con2', branch: '건설', name: '병행 시공', tier: 2, requires: 'con1', costMinor: 400_000_00, minDays: 20, effect: '공사 기간 ×0.9, 동시 건설 +1' },
+];
+export const RESEARCH_MAX_ACTIVE = 2;
+export const BASE_CONCURRENT_BUILDS = 3;
+
+/** 환경 (Baseline §22, Q21): 30일 이동 합계 지표 */
+export const ENV = {
+  impactPpmPerMWh: { thermal: PPM, solar: 50_000, wind: 50_000, storage: 0, substation: 0 } as Record<TypeId, number>,
+  priceMinorPerUnit: 8_00,
+  /** 지역 기준치 = 기준 수요 MW × 이 값 (단위/30일) */
+  thresholdPerMw: 100,
+  warnLevelPpm: 800_000,
+  windowDays: 30,
+  overMultiplier: 1.5,
+};
+
+/** 규제 변경 (Baseline §23, Q26): 통지 60일 후 시행 */
+export const REGULATION = { noticeDays: 60, everyDaysMin: 60, everyDaysMax: 120, envPriceStep: 1.25 };
+
+/** 시장 사건 (S-22: 예측 가능한 위험 + 제한적 사건). 게임년당 비율 */
+export const MARKET_EVENTS = {
+  fuelEveryDays: 30, fuelStepMin: 0.9, fuelStepMax: 1.12, fuelMin: 0.75, fuelMax: 1.4,
+  demandShockPerYear: 0.4, demandShockMin: 0.8, demandShockMax: 1.22, demandShockDays: [5, 12] as [number, number],
+  supplyShockPerYear: 0.3, supplyShockMin: 0.5, supplyShockMax: 0.72, supplyShockDays: [2, 5] as [number, number],
+  leadDays: 2,
+};
+
+/** 자동화 (Baseline §20, 결정 S-16) */
+export const AUTOMATION = { dailyActionLimit: 20, defaultDailyBudgetMinor: 300_000_00, retryLimit: 3 };
+
+/** 난이도 프리셋 (Baseline §5.1) */
+export interface Multipliers { startCash: number; loanRate: number; capex: number; opex: number; demandGrowth: number; volatility: number; events: number; research: number; env: number; regulation: number }
+export const DIFFICULTY: Record<'easy' | 'standard' | 'hard', { name: string; m: Multipliers }> = {
+  easy: { name: '완화', m: { startCash: 1.5, loanRate: 0.75, capex: 0.85, opex: 0.85, demandGrowth: 1.2, volatility: 0.5, events: 0.5, research: 0.8, env: 0.8, regulation: 0.8 } },
+  standard: { name: '표준', m: { startCash: 1, loanRate: 1, capex: 1, opex: 1, demandGrowth: 1, volatility: 1, events: 1, research: 1, env: 1, regulation: 1 } },
+  hard: { name: '도전', m: { startCash: 0.7, loanRate: 1.5, capex: 1.2, opex: 1.2, demandGrowth: 0.8, volatility: 1.5, events: 1.5, research: 1.25, env: 1.25, regulation: 1.25 } },
+};
+
+/** 시작 시나리오 (Q52 D, Q53 A: 비슷한 초기 순자산) */
+export type ScenarioId = 'A' | 'B' | 'C' | 'custom';
+export const SCENARIOS: Record<Exclude<ScenarioId, 'custom'>, { name: string; desc: string }> = {
+  A: { name: '빈손 창업', desc: '사업권·시설 없이 자본만으로 시작' },
+  B: { name: '소규모 사업권 보유', desc: '한 지역의 소형 발전 사업권을 가지고 시작 (현금은 그만큼 적음)' },
+  C: { name: '소형 발전시설 보유', desc: '소형 열발전소와 사업권·토지를 가지고 시작 (현금은 그만큼 적음)' },
+};
+
+/** 선택형 목표 (Q28 C, 결정 S-20: 보상은 표시용) */
+export const OBJECTIVES = [
+  { id: 'cap100', name: '발전 설비 100 MW' },
+  { id: 'regions6', name: '6개 지역 진출' },
+  { id: 'lines5', name: '송전선 5개 연결' },
+  { id: 'contracts5', name: '계약 5건 완료' },
+  { id: 'reliability', name: '공급 신뢰도 99% (30일, 계약 3건 이상)' },
+  { id: 'research', name: '연구 분기 하나 완성' },
+  { id: 'green', name: '설비 100 MW 이상에서 모든 지역 환경 지표 0.8 미만' },
+  { id: 'debt', name: '대출을 쓴 뒤 부채 비율 0.3 이하' },
+] as const;

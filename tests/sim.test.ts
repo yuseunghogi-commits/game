@@ -5,9 +5,12 @@ import { deserialize, serialize, stateHash, SaveError } from '../src/sim/save';
 import { MARKET, specOf } from '../src/sim/data';
 import { moneyFor, roundHalfEven, splitByWeights, STEPS_PER_DAY, STEPS_PER_DI } from '../src/sim/units';
 import { heightAt, SEA_LEVEL } from '../src/world/terrain';
+import { licensed } from './helpers';
+import { addCapital } from '../src/sim/sim';
 
 function gameWithPlants() {
   const s = createGame(42);
+  licensed(s, [0, 1]);
   issue(s, { kind: 'build', regionId: 0, type: 'solar', size: 'small' });
   issue(s, { kind: 'build', regionId: 1, type: 'thermal', size: 'small' });
   issue(s, { kind: 'build', regionId: 1, type: 'wind', size: 'small' });
@@ -51,6 +54,7 @@ describe('시장 가격 (M4)', () => {
   it('AT-M4: 가격은 플레이어 공급과 무관', () => {
     const a = createGame(7);
     const b = createGame(7);
+    licensed(b, [0]);
     issue(b, { kind: 'build', regionId: 0, type: 'solar', size: 'small' });
     advance(a, STEPS_PER_DAY * 6);
     advance(b, STEPS_PER_DAY * 6);
@@ -102,6 +106,7 @@ describe('건설', () => {
   it('준공까지 예약 → 단계별 청구, 완공 시 예약 0', () => {
     const s = createGame(3);
     const spec = specOf('solar', 'small');
+    licensed(s, [0]);
     issue(s, { kind: 'build', regionId: 0, type: 'solar', size: 'small' });
     step(s);
     expect(s.reserved).toBeGreaterThan(0);
@@ -117,6 +122,7 @@ describe('건설', () => {
     step(s);
     expect(s.facilities.length).toBe(0);
     expect(availableCash(s)).toBe(s.cash);
+    void addCapital;
   });
   it('AT-K2: 단계 1·2 완료, 단계 3 진행 40% 취소 → 현금 환불 25,800, 예약 해제 20,000', () => {
     const f = {
@@ -180,6 +186,7 @@ describe('가상 행성', () => {
 describe('경제 기준점 (S-01 가정: 회수 ≈ 90일)', () => {
   it('열발전 소형이 운영되며 하루 순현금이 양수', () => {
     const s = createGame(42);
+    issue(s, { kind: 'acquireLicense', regionId: 1, type: 'GEN', size: 'small' });
     issue(s, { kind: 'build', regionId: 1, type: 'thermal', size: 'small' });
     const days = specOf('thermal', 'small').buildDays + 3;
     advance(s, days * STEPS_PER_DAY);

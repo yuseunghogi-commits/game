@@ -2,9 +2,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   addCapital, advance, createGame, hubCapacityKw, issue, ledgerCash, neighbors, pendingCash, step, type GameState,
 } from '../src/sim/sim';
-import { EVENTS, HUB_BASE_KW, specOf } from '../src/sim/data';
+import { EVENTS, HUB_BASE_KW, generateRegions, specOf } from '../src/sim/data';
 import { deserialize, serialize, stateHash } from '../src/sim/save';
 import { STEPS_PER_DAY, STEPS_PER_DI } from '../src/sim/units';
+import { licensed } from './helpers';
 
 const saved = JSON.parse(JSON.stringify(EVENTS));
 afterEach(() => Object.assign(EVENTS, JSON.parse(JSON.stringify(saved))));
@@ -17,8 +18,8 @@ function gridGame(): { s: GameState; a: number; b: number } {
   s.regions[a].pBaseMinor = 6_000;
   s.regions[b].pBaseMinor = 16_000;
   addCapital(s, 50_000_000_00);
+  licensed(s, [a, b]);
   issue(s, { kind: 'build', regionId: a, type: 'thermal', size: 'small' });
-  issue(s, { kind: 'build', regionId: a, type: 'solar', size: 'medium' });
   issue(s, { kind: 'buildLine', a, b, size: 'small' });
   issue(s, { kind: 'build', regionId: b, type: 'storage', size: 'small' });
   return { s, a, b };
@@ -85,13 +86,19 @@ describe('P1 접속 용량·변전소', () => {
   it('접속 용량을 넘는 건설은 거부', () => {
     const s = createGame(5);
     addCapital(s, 10_000_000_00);
-    for (let i = 0; i < 5; i++) issue(s, { kind: 'build', regionId: 0, type: 'solar', size: 'medium' });
+    licensed(s, [0]);
+    // 대형 60 MW + 중형 20 MW = 기본 접속 용량 80 MW, 이후 소형 5 MW는 거부
+    issue(s, { kind: 'build', regionId: 0, type: 'solar', size: 'large' });
+    issue(s, { kind: 'build', regionId: 0, type: 'solar', size: 'medium' });
+    issue(s, { kind: 'build', regionId: 0, type: 'solar', size: 'small' });
     step(s);
-    expect(s.facilities.length).toBe(Math.floor(HUB_BASE_KW / specOf('solar', 'medium').capKw));
+    expect(specOf('solar', 'large').capKw + specOf('solar', 'medium').capKw).toBe(HUB_BASE_KW);
+    expect(s.facilities.length).toBe(2);
     expect(s.notices.some((n) => n.text.includes('접속 용량 부족'))).toBe(true);
   });
   it('변전소 준공 후 접속 용량 증가', () => {
     const s = createGame(5);
+    licensed(s, [0]);
     issue(s, { kind: 'build', regionId: 0, type: 'substation', size: 'small' });
     advance(s, (specOf('substation', 'small').buildDays + 1) * STEPS_PER_DAY);
     expect(hubCapacityKw(s, 0)).toBe(HUB_BASE_KW + specOf('substation', 'small').hubAddKw);
@@ -130,6 +137,7 @@ describe('P1 고장·복구', () => {
   it('예방 점검을 하면 고장 없이 정상으로 돌아온다', () => {
     Object.assign(EVENTS, { facilityWarnPerYear: 5000, linePerYearPer1000Km: 0, hubPerYear: 0, warnLeadDays: [5, 5] });
     const s = createGame(9);
+    licensed(s, [0]);
     issue(s, { kind: 'build', regionId: 0, type: 'solar', size: 'small' });
     advance(s, STEPS_PER_DAY * 6);
     const f = s.facilities[0];
@@ -169,23 +177,25 @@ describe('P1 결정론·저장', () => {
     advance(t, STEPS_PER_DAY * 10);
     expect(stateHash(t)).toBe(stateHash(s));
   });
-  it('v1(P0) 세이브를 v2로 변환해 계속 진행', () => {
-    const s = createGame(3);
-    issue(s, { kind: 'build', regionId: 0, type: 'solar', size: 'small' });
-    advance(s, STEPS_PER_DAY * 8);
-    const v1: Record<string, unknown> = JSON.parse(JSON.stringify(s));
-    for (const k of ['hubs', 'lines', 'nextLineId', 'rng', 'lastDI']) delete v1[k];
-    v1.schemaVersion = 1;
-    v1.facilities = (v1.facilities as Record<string, unknown>[]).map((f) => {
-      const g = { ...f };
-      for (const k of ['health', 'energyWh', 'socWh', 'dischargeAtMinor', 'chargeAtMinor', 'lastStorageWh', 'hubAddKw']) delete g[k];
-      return g;
-    });
-    const text = JSON.stringify({ schemaVersion: 1, hash: stateHash(v1), state: v1 });
-    const m = deserialize(text);
-    expect(m.schemaVersion).toBe(2);
-    expect(m.lines).toEqual([]);
+  it('v1(P0) 세이브를 v3로 변환해 계속 진행 (기존 시설은 사업권·임대를 받아 계속 운영)', () => {
+    const regions = generateRegions(3, 6).map((r) => { const g: Record<string, unknown> = { ...r }; delete g.accessPpm; delete g.landRentPerMwDayMinor; return g; });
+    const spec = specOf('solar', 'small');
+    const v1 = {
+      schemaVersion: 1, seed: 3, step: 8 * STEPS_PER_DAY, cash: 1_500_000_00 - spec.capexMinor, reserved: 0, regions,
+      regionState: regions.map(() => ({ refSupplyKw: 500_000, demandKw: 500_000, priceMinor: 10_000, soldWh: 0, capWh: 0 })),
+      facilities: [{ id: 1, type: 'solar', size: 'small', regionId: 0, capKw: spec.capKw, capexMinor: spec.capexMinor, fixedMinorPerDay: spec.fixedMinorPerDay,
+        status: 'operating', stage: 5, stageStep: 0, stageSteps: [1, 1, 1, 1, 1, 1], stageCosts: [0, 0, 0, 0, 0, spec.capexMinor], online: true, outputKw: 0, startDelay: 0, lastGenWh: 0, lastSoldWh: 0 }],
+      nextFacilityId: 2, commandSeq: 0, pending: [],
+      ledger: [{ id: 'init:capital', step: 0, debit: 'cash', credit: 'equity', amount: 1_500_000_00, memo: '' }, { id: 'capex:1:5', step: 1, debit: 'capex', credit: 'cash', amount: spec.capexMinor, memo: '' }],
+      dayAcc: {}, lastPostedDay: 7, dayStartCash: 1_500_000_00 - spec.capexMinor, history: [], notices: [],
+    };
+    const m = deserialize(JSON.stringify({ schemaVersion: 1, hash: stateHash(v1), state: v1 }));
+    expect(m.schemaVersion).toBe(3);
+    expect(m.licenses.length).toBeGreaterThan(0);
+    expect(m.cash).toBe(ledgerCash(m) + pendingCash(m));
     advance(m, STEPS_PER_DAY * 3);
-    expect(m.facilities[0].status).toBe('operating');
+    expect(m.facilities[0].rightsOk).toBe(true);
+    expect(m.facilities[0].lastGenWh + m.history.length).toBeGreaterThan(0);
+    expect(m.cash).toBe(ledgerCash(m) + pendingCash(m));
   });
 });

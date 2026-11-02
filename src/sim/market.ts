@@ -26,7 +26,7 @@ export function localMinute(r: RegionDef, step: number): number {
 }
 
 /** 지역 수요 (kW). 24점 일주기를 분 단위로 선형 보간 (계단 변화 제거) + 연 성장. */
-export function demandKw(r: RegionDef, step: number): number {
+export function demandKw(r: RegionDef, step: number, growthMult = 1): number {
   const m = localMinute(r, step);
   const h = Math.floor(m / 60);
   const frac = (m % 60) / 60;
@@ -34,7 +34,7 @@ export function demandKw(r: RegionDef, step: number): number {
   const b = r.shapePpm[(h + 1) % 24];
   const shape = a + (b - a) * frac;
   const years = step / STEPS_PER_DAY / DAYS_PER_YEAR;
-  const growth = Math.pow(1 + r.growthPpmPerYear / PPM, years);
+  const growth = Math.pow(1 + (r.growthPpmPerYear * growthMult) / PPM, years);
   return Math.floor((r.demandBaseKw * shape * growth) / PPM);
 }
 

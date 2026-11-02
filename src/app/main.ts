@@ -164,7 +164,7 @@ function buildSection(ri: number): string {
   if (tab === 'line') {
     const nb = neighbors(state.regions)[ri];
     if (lineTarget === null || !nb.includes(lineTarget)) lineTarget = nb[0];
-    const spec = lineSpec(state.regions, ri, lineTarget, buildSize);
+    const spec = lineSpec(state, ri, lineTarget, buildSize);
     const ok = availableCash(state) >= spec.capexMinor;
     const pr = state.regionState[lineTarget].priceMinor;
     return head + `<div class="targets">${nb.map((j) => `<button class="target ${j === lineTarget ? 'on' : ''}" data-target="${j}">

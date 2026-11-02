@@ -36,6 +36,41 @@ const MIGRATIONS: Record<number, (s: any) => any> = {
       ...f, health: { s: 'ok' }, energyWh: 0, socWh: 0, dischargeAtMinor: 0, chargeAtMinor: 0, lastStorageWh: 0, hubAddKw: 0,
     })),
   }),
+  // v2 (P1) → v3 (P2): 사업권·토지·대출·계약·연구·자동화·환경. 기존 시설은 계속 운영되도록 사업권과 임대를 부여한다.
+  2: (s) => {
+    const day = 1440;
+    const regions = s.regions.map((r: any) => ({ accessPpm: 1_000_000, landRentPerMwDayMinor: 60_00, ...r }));
+    let nextId = Math.max(s.nextFacilityId ?? 1, s.nextLineId ?? 1);
+    const licenses: any[] = [];
+    regions.forEach((_: any, ri: number) => {
+      const here = s.facilities.filter((f: any) => f.regionId === ri);
+      const gen = here.filter((f: any) => ['thermal', 'solar', 'wind'].includes(f.type)).reduce((a: number, f: any) => a + f.capKw, 0);
+      const sto = here.filter((f: any) => f.type === 'storage').reduce((a: number, f: any) => a + f.capKw, 0);
+      const trn = here.some((f: any) => f.type === 'substation') || s.lines.some((l: any) => l.a === ri || l.b === ri);
+      const mk = (type: string, quotaKw: number) => licenses.push({ id: nextId++, regionId: ri, type, size: 'medium', quotaKw, priceMinor: 0, feePerDayMinor: 2_000_00, expiresAt: s.step + 120 * day, state: 'active', autoRenew: true });
+      if (gen > 0) mk('GEN', gen);
+      if (sto > 0) mk('STO', sto);
+      if (trn) mk('TRN', 0);
+    });
+    const dayAcc: Record<string, any> = {};
+    for (const k of Object.keys(s.dayAcc ?? {})) dayAcc[`f${k}`] = { revenue: s.dayAcc[k].revenue, cost: s.dayAcc[k].fuel, kind: 'market' };
+    return {
+      ...s, schemaVersion: 3, regions, dayAcc,
+      rules: { preset: 'standard', scenario: 'A', m: { startCash: 1, loanRate: 1, capex: 1, opex: 1, demandGrowth: 1, volatility: 1, events: 1, research: 1, env: 1, regulation: 1 }, insolvency: 'bailout', startCashMinor: 1_500_000_00 },
+      regionDyn: regions.map(() => ({ envDaily: [0], envPriceMult: 1, pendingReg: null, demandShock: null, supplyShock: null, priceSamples: [] })),
+      facilities: s.facilities.map((f: any) => ({ ...f, effPpm: 900_000, rightsOk: true,
+        land: { mode: 'lease', rentPerDayMinor: Math.max(1, Math.round((60_00 * (f.type === 'substation' ? 10_000 : f.capKw)) / 1000)), depositMinor: 0, expiresAt: s.step + 120 * day, state: 'active', purchaseMinor: 0 } })),
+      lines: s.lines.map((l: any) => ({ ...l, rightsOk: true })),
+      licenses, loans: [], offers: [], contracts: [],
+      research: { done: [], active: [] },
+      automation: { autoRenew: true, autoInspect: false, autoStorage: false, dailyBudgetMinor: 300_000_00, spentTodayMinor: 0, actionsToday: 0, keys: [], failures: {}, locks: {} },
+      nextId,
+      history: (s.history ?? []).map((h: any) => ({ ...h, netWorth: h.cash })),
+      lastDI: { contractWh: 0, ...s.lastDI },
+      fuelMult: 1, nextFuelMult: 1, insolvency: 'normal', arrearsSince: 0, restructureUntil: 0, bailouts: 0, everBorrowed: false,
+      reliability: { obligation: [0], delivered: [0] }, completedContracts: 0, objectivesDone: {}, nextRegulationAt: s.step + 90 * day,
+    };
+  },
 };
 
 export function deserialize(text: string): GameState {
