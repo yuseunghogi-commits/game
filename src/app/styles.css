@@ -255,10 +255,12 @@ details.more .menu { position: absolute; right: 0; top: 30px; z-index: 5; displa
 .goal.done .mark { color: var(--positive); }
 
 /* ---- 새 게임 ---- */
-#modal { position: absolute; inset: 0; display: none; place-items: center; background: rgba(5, 7, 10, 0.72); backdrop-filter: blur(6px); z-index: 20; overflow: auto; padding: 24px 16px; }
+#modal { position: absolute; inset: 0; display: none; place-items: center; background: radial-gradient(ellipse at 50% 50%, rgba(5, 7, 10, 0.25), rgba(5, 7, 10, 0.8) 70%); backdrop-filter: blur(1.5px); z-index: 20; overflow: auto; padding: 24px 16px; }
 #modal.show { display: grid; }
 .ng { width: min(760px, 100%); background: var(--panel); border: 1px solid var(--line-strong); border-radius: 14px; padding: 28px; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
-.ng-title { font-weight: 800; letter-spacing: 0.3em; font-size: 24px; }
+.ng-title { font-weight: 800; letter-spacing: 0.3em; font-size: 24px; animation: titlein 1.2s ease-out both; }
+@keyframes titlein { from { opacity: 0; letter-spacing: 0.6em; } to { opacity: 1; letter-spacing: 0.3em; } }
+#modal .ng:not(.dialog) { background: rgba(14, 18, 24, 0.82); }
 .ng-title b { color: var(--energy); }
 .ng-sub { color: var(--muted); margin: 6px 0 20px; }
 .ng-sec { margin-bottom: 16px; flex: 1; }

@@ -398,6 +398,7 @@ async function main() {
       void maybeAutosave();
     }
     globeApi?.update(state, ui.selected, overlay, ui.facility);
+    globeApi?.setIdle(showNewGame);
     if (now - lastUi > 250 && !pointerDown) { renderAll(); lastUi = now; }
     requestAnimationFrame(loop);
   };

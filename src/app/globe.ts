@@ -15,6 +15,8 @@ export interface Globe {
   update(s: GameState, selected: number | null, overlay?: Overlay, selectedFacility?: number | null): void;
   dispose(): void;
   focus(lat: number, lon: number): void;
+  /** 타이틀(새 게임) 화면: 천천히 자동 회전 */
+  setIdle(on: boolean): void;
   labels: HTMLElement;
 }
 
@@ -347,6 +349,7 @@ export async function createGlobe(
     labels,
     update(next, selected, ov, fac) { state = next; selectedId = selected; if (ov) overlay = ov; selectedFac = fac ?? null; },
     focus(lat, lon) { focusTarget = vec(lat, lon).normalize(); },
+    setIdle(on) { controls.autoRotate = on; controls.autoRotateSpeed = 0.35; labels.style.opacity = on ? '0' : '1'; },
     dispose() { stopped = true; window.removeEventListener('resize', onResize); controls.dispose(); renderer.dispose(); },
   };
 }
