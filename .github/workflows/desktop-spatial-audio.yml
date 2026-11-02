@@ -1,0 +1,40 @@
+name: Build 3D Sound for PC
+
+on:
+  push:
+    paths:
+      - "spatial-audio-desktop/**"
+      - "spatial-audio-android/app/src/main/java/com/spatialsound/app/BinauralProcessor.kt"
+      - ".github/workflows/desktop-spatial-audio.yml"
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: spatial-audio-desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build jar
+        run: ./gradlew.bat --no-daemon fatJar
+      - name: Package Windows app (Java 포함, 설치 불필요)
+        shell: pwsh
+        run: |
+          jpackage --type app-image --name 3DSound --input build/libs --main-jar 3DSound.jar `
+            --main-class com.spatialsound.desktop.MainKt --dest dist --app-version 1.0.0 `
+            --java-options "-Dfile.encoding=UTF-8"
+          Copy-Item README.md dist/3DSound/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 3DSound-Windows
+          path: spatial-audio-desktop/dist/3DSound
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 3DSound-jar-Mac-Linux
+          path: spatial-audio-desktop/build/libs/3DSound.jar
