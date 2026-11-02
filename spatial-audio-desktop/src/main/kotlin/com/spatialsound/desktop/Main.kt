@@ -30,6 +30,12 @@ import javax.swing.WindowConstants
 /** 노트북/PC용 3D 사운드. 안드로이드 앱의 강력 3D 엔진과 같은 소리. */
 fun main() {
     runCatching { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()) }
+    // 실측 HRIR (jar 안의 리소스)
+    runCatching {
+        MainWindow::class.java.getResourceAsStream("/hrir_kemar.bin")?.use {
+            com.spatialsound.app.BinauralProcessor.hrirBase = com.spatialsound.app.HrirSet.load(it)
+        }
+    }
     SwingUtilities.invokeLater { MainWindow().isVisible = true }
 }
 
@@ -46,6 +52,10 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
     private val enable3d = JCheckBox("3D 효과 켜기 (끄면 원음 그대로 비교)", true)
     private val presetBox = JComboBox((SOUND_PRESETS.map { it.name } + "사용자 설정").toTypedArray())
     private val reverbBox = JComboBox(REVERB_NAMES.toTypedArray())
+    private val engineBox = JComboBox(arrayOf("🏠 공간 모드 (실측 HRTF) — 추천", "🎯 정위 모드 — 방향 또렷 (게임·영화)", "기본 모드 (이전 엔진)"))
+    private val earBox = JComboBox(com.spatialsound.app.HrirSet.EAR_NAMES.toTypedArray())
+    private val sSpread = slider(30, 120, settings.spread)
+    private val lSpread = JLabel()
     private val sStrength = slider(0, 1000, settings.virtualizerStrength)
     private val sWidth = slider(0, 100, settings.width)
     private val sRoom = slider(0, 100, settings.spaceEq)
@@ -86,7 +96,12 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         row(enable3d)
         row(status)
 
-        row(title("② 소리 조절"))
+        row(title("② 3D 엔진"))
+        row(engineBox)
+        row(lSpread); row(sSpread)
+        row(JLabel("👂 귀 맞춤 (앞/뒤가 헷갈리면 단계를 바꿔 보세요)")); row(earBox)
+
+        row(title("③ 소리 조절"))
         row(JLabel("프리셋")); row(presetBox)
         row(lStrength); row(sStrength)
         row(lFront); row(sFront)
@@ -97,7 +112,10 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         row(JLabel("잔향 (방 크기)")); row(reverbBox)
         row(lBass); row(sBass)
 
-        contentPane = root
+        contentPane = javax.swing.JScrollPane(root).apply {
+            border = null; verticalScrollBar.unitIncrement = 16
+            horizontalScrollBarPolicy = javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+        }
         applyFont(root)
         reverbBox.selectedIndex = settings.reverbPreset.coerceIn(0, REVERB_NAMES.lastIndex)
         presetBox.selectedIndex = prefs.getInt("preset", 0).coerceIn(0, SOUND_PRESETS.size)
@@ -121,9 +139,17 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         }
         listOf(sStrength, sWidth, sRoom, sBass, sFront, sRearAngle, sRearLevel).forEach { s -> s.addChangeListener { changed() } }
         reverbBox.addActionListener { changed() }
+        engineBox.selectedIndex = intArrayOf(1, 2, 0).indexOf(settings.engineMode).coerceAtLeast(0)
+        earBox.selectedIndex = settings.earSize.coerceIn(0, 4)
+        engineBox.addActionListener { changed() }
+        earBox.addActionListener { changed() }
+        sSpread.addChangeListener { changed() }
+        lSpread.isVisible = settings.engineMode == 2; sSpread.isVisible = lSpread.isVisible
 
         pack()
-        minimumSize = Dimension(440, size.height)
+        val screenH = java.awt.Toolkit.getDefaultToolkit().screenSize.height
+        size = Dimension(width + 24, minOf(height, (screenH * 0.85).toInt()))
+        minimumSize = Dimension(460, 400)
         setLocationRelativeTo(null)
     }
 
@@ -134,9 +160,13 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
             virtualizerStrength = sStrength.value, bassStrength = sBass.value, spaceEq = sRoom.value,
             reverbPreset = reverbBox.selectedIndex, width = sWidth.value,
             frontAngle = sFront.value, rearAngle = sRearAngle.value, rearLevel = sRearLevel.value,
+            engineMode = intArrayOf(1, 2, 0)[engineBox.selectedIndex.coerceAtLeast(0)],
+            spread = sSpread.value, earSize = earBox.selectedIndex.coerceAtLeast(0),
         )
+        lSpread.isVisible = settings.engineMode == 2; sSpread.isVisible = lSpread.isVisible
+        val soundOnly = settings.copy(engineMode = 1, spread = 90, earSize = 2)
         if (!applyingPreset && presetBox.selectedIndex < SOUND_PRESETS.size &&
-            SOUND_PRESETS[presetBox.selectedIndex].s != settings
+            SOUND_PRESETS[presetBox.selectedIndex].s != soundOnly
         ) {
             presetBox.selectedIndex = SOUND_PRESETS.size // 사용자 설정
         }
@@ -147,6 +177,7 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
 
     private fun updateLabels() {
         lStrength.text = "3D 강도: ${sStrength.value / 10}%"
+        lSpread.text = "방향 펼침: 스테레오 끝 = ±${sSpread.value}°"
         lWidth.text = "좌우 분리 (반대쪽 귀로 새는 소리 줄이기): ${sWidth.value}%"
         lFront.text = "앞 스피커 각도: ±${sFront.value}° (작을수록 정면)"
         lRearAngle.text = "뒤 스피커 각도: ±${sRearAngle.value}° (90°=옆, 180°=바로 뒤)"
@@ -241,6 +272,9 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         frontAngle = prefs.getInt("front", 45),
         rearAngle = prefs.getInt("rearAngle", 125),
         rearLevel = prefs.getInt("rearLevel", 40),
+        engineMode = prefs.getInt("engine", 1),
+        spread = prefs.getInt("spread", 90),
+        earSize = prefs.getInt("ear", 2),
     )
 
     private fun saveSettings() {
@@ -249,6 +283,7 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         prefs.putInt("width", settings.width)
         prefs.putInt("front", settings.frontAngle); prefs.putInt("rearAngle", settings.rearAngle)
         prefs.putInt("rearLevel", settings.rearLevel)
+        prefs.putInt("engine", settings.engineMode); prefs.putInt("spread", settings.spread); prefs.putInt("ear", settings.earSize)
     }
 
     private fun pickFont(): Font {

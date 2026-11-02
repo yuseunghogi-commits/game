@@ -10,6 +10,9 @@ data class SpatialSettings(
     val frontAngle: Int = 45,           // 앞 스피커 각도 ±0..90°
     val rearAngle: Int = 125,           // 뒤 스피커 각도 ±90..180°
     val rearLevel: Int = 40,            // 뒤 스피커 양 0..100
+    val engineMode: Int = 1,            // 0 기본(모델), 1 공간(실측), 2 정위
+    val spread: Int = 90,               // 정위 모드 방향 펼침 30..120°
+    val earSize: Int = 2,               // 귀 맞춤 0..4
 )
 
 data class SoundPreset(val name: String, val s: SpatialSettings)

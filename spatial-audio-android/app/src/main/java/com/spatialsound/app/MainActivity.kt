@@ -41,6 +41,11 @@ class MainActivity : Activity() {
     private lateinit var labelWidth: TextView
     private lateinit var headGroup: android.widget.LinearLayout
     private lateinit var layoutGroup: android.widget.LinearLayout
+    private lateinit var spinnerEngine: Spinner
+    private lateinit var spinnerEar: Spinner
+    private lateinit var seekSpread: SeekBar
+    private lateinit var labelSpread: TextView
+    private lateinit var textEngineInfo: TextView
     private lateinit var speakerLayout: SpeakerLayoutView
     private lateinit var seekFront: SeekBar
     private lateinit var seekRearAngle: SeekBar
@@ -81,6 +86,13 @@ class MainActivity : Activity() {
         labelWidth = findViewById(R.id.labelWidth)
         headGroup = findViewById(R.id.headGroup)
         layoutGroup = findViewById(R.id.layoutGroup)
+        spinnerEngine = findViewById(R.id.spinnerEngine)
+        spinnerEar = findViewById(R.id.spinnerEar)
+        seekSpread = findViewById(R.id.seekSpread)
+        labelSpread = findViewById(R.id.labelSpread)
+        textEngineInfo = findViewById(R.id.textEngineInfo)
+        spinnerEngine.adapter = darkAdapter(ENGINE_NAMES)
+        spinnerEar.adapter = darkAdapter(HrirSet.EAR_NAMES)
         speakerLayout = findViewById(R.id.speakerLayout)
         seekFront = findViewById(R.id.seekFront)
         seekRearAngle = findViewById(R.id.seekRearAngle)
@@ -169,6 +181,12 @@ class MainActivity : Activity() {
         seekWidth.progress = settings.width
         headGroup.visibility = wv
         layoutGroup.visibility = wv
+        spinnerEngine.setSelection(engineToPos(settings.engineMode))
+        spinnerEar.setSelection(settings.earSize.coerceIn(0, HrirSet.EAR_NAMES.lastIndex))
+        seekSpread.progress = settings.spread - 30
+        val loc = settings.engineMode == 2
+        labelSpread.visibility = if (loc) android.view.View.VISIBLE else android.view.View.GONE
+        seekSpread.visibility = labelSpread.visibility
         seekFront.progress = settings.frontAngle
         seekRearAngle.progress = settings.rearAngle - 90
         seekRearLevel.progress = settings.rearLevel
@@ -191,6 +209,8 @@ class MainActivity : Activity() {
         labelSpace.text = if (settings.strongMode) "방 울림 (벽 반사음): ${settings.spaceEq}%"
         else "공간감 EQ (넓이·공기감): ${settings.spaceEq}%"
         labelWidth.text = "좌우 분리 (반대쪽 귀로 새는 소리 줄이기): ${settings.width}%"
+        labelSpread.text = "방향 펼침: 스테레오 끝 = ±${settings.spread}° (클수록 좌우가 넓고 또렷)"
+        textEngineInfo.text = ENGINE_INFO[engineToPos(settings.engineMode)]
         labelFront.text = "앞 스피커 각도: ±${settings.frontAngle}° (작을수록 정면)"
         labelRearAngle.text = "뒤 스피커 각도: ±${settings.rearAngle}° (90°=옆, 180°=바로 뒤)"
         labelRearLevel.text = "뒤 스피커 양: ${settings.rearLevel}% (0이면 전부 앞에서)"
@@ -276,6 +296,24 @@ class MainActivity : Activity() {
         seekSpace.setOnSeekBarChangeListener(seekListener { v ->
             settings.copy(spaceEq = v, presetIndex = CUSTOM)
         })
+        spinnerEngine.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
+                val mode = POS_TO_ENGINE[pos]
+                if (binding || mode == settings.engineMode) return
+                commit(settings.copy(engineMode = mode))
+                bindUi()
+            }
+            override fun onNothingSelected(p: AdapterView<*>?) {}
+        }
+        spinnerEar.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
+                if (binding || pos == settings.earSize) return
+                commit(settings.copy(earSize = pos))
+            }
+            override fun onNothingSelected(p: AdapterView<*>?) {}
+        }
+        seekSpread.setOnSeekBarChangeListener(seekListener { v -> settings.copy(spread = v + 30) })
+        findViewById<Button>(R.id.buttonEarTest).setOnClickListener { showEarTest() }
         seekFront.setOnSeekBarChangeListener(seekListener { v ->
             speakerLayout.setAngles(v, settings.rearAngle)
             settings.copy(frontAngle = v, presetIndex = CUSTOM)
@@ -379,6 +417,35 @@ class MainActivity : Activity() {
             }
             else -> "⚠️ 이어폰 머리 센서를 찾지 못했습니다 (여기를 눌러 안내 보기)\n→ 이어폰이 'Android 헤드 트래킹'을 지원해야 합니다"
         }
+    }
+
+    /** 귀 맞춤 테스트: 단계별로 들어 보고 앞/뒤가 가장 확실한 단계 선택 */
+    private fun showEarTest() {
+        val base = Strong3DService.ensureHrir(this) ?: run {
+            Toast.makeText(this, "실측 데이터를 불러오지 못했습니다", Toast.LENGTH_SHORT).show(); return
+        }
+        var chosen = settings.earSize
+        val items = HrirSet.EAR_NAMES.map { "▶ $it" }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("👂 귀 맞춤 테스트")
+            .setSingleChoiceItems(items, chosen) { _, which ->
+                chosen = which
+                EarFitTest.play(base, which)
+            }
+            .setMessage(null)
+            .setPositiveButton("이 단계로 선택") { _, _ ->
+                EarFitTest.stop()
+                commit(settings.copy(earSize = chosen))
+                bindUi()
+                Toast.makeText(this, "귀 맞춤: ${HrirSet.EAR_NAMES[chosen]}", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("닫기") { _, _ -> EarFitTest.stop() }
+            .show()
+        Toast.makeText(
+            this,
+            "헤드폰을 쓰고 각 단계를 눌러 들어 보세요.\n소리 순서: ${EarFitTest.SEQUENCE_TEXT}\n앞/뒤가 가장 확실히 구분되는 단계를 고르세요.",
+            Toast.LENGTH_LONG,
+        ).show()
     }
 
     private fun showHeadHelp() {
@@ -618,6 +685,21 @@ class MainActivity : Activity() {
 
     companion object {
         private val CUSTOM = SOUND_PRESETS.lastIndex
+
+        /** 화면 순서: 공간(실측), 정위, 기본 */
+        private val ENGINE_NAMES = listOf(
+            "🏠 공간 모드 (실측 HRTF) — 방 안 스피커처럼, 추천",
+            "🎯 정위 모드 — 어디서 소리 나는지 또렷하게 (게임·영화)",
+            "기본 모드 (이전 엔진, 계산 모델)",
+        )
+        private val ENGINE_INFO = listOf(
+            "실제 사람 머리 모양 더미헤드(KEMAR)에서 측정한 귀 특성으로 가상 스피커를 들려줍니다.",
+            "소리를 주파수별로 쪼개 스테레오 위치에 맞는 정확한 방향에 하나씩 놓습니다. 배경음은 옆/뒤로 분리. 반사음·잔향은 약하게.",
+            "v1.1 까지의 엔진 (구 모양 머리 계산 모델).",
+        )
+        private val POS_TO_ENGINE = intArrayOf(1, 2, 0)
+        private fun engineToPos(mode: Int) = POS_TO_ENGINE.indexOf(mode).coerceAtLeast(0)
+
         private const val REQ_PROJECTION = 10
         private const val REQ_RECORD = 11
         private const val REQ_SHIZUKU = 12

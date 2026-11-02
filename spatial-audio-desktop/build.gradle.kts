@@ -7,7 +7,7 @@ plugins {
 val sharedDir = layout.buildDirectory.dir("shared-src")
 val copyShared by tasks.registering(Copy::class) {
     from("../spatial-audio-android/app/src/main/java/com/spatialsound/app") {
-        include("BinauralProcessor.kt")
+        include("BinauralProcessor.kt", "HrtfRenderer.kt", "HrirSet.kt", "Fft.kt")
     }
     into(sharedDir.map { it.dir("com/spatialsound/app") })
 }
@@ -19,6 +19,8 @@ java {
 kotlin {
     sourceSets["main"].kotlin.srcDir(sharedDir)
 }
+// 실측 HRIR 데이터도 안드로이드 assets 의 같은 파일을 사용
+sourceSets["main"].resources.srcDir("../spatial-audio-android/app/src/main/assets")
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
     kotlinOptions.jvmTarget = "17"
 }

@@ -29,6 +29,12 @@ data class SpatialSettings(
     val rearAngle: Int = 120,
     /** 강력 모드: 뒤 스피커 소리 양 0..100 */
     val rearLevel: Int = 45,
+    /** 강력 모드 엔진: 0 = 기본(머리 모델), 1 = 공간(실측 HRTF), 2 = 정위(방향 또렷) */
+    val engineMode: Int = 1,
+    /** 정위 모드: 스테레오 끝이 놓일 각도 30..120° */
+    val spread: Int = 90,
+    /** 귀 맞춤 단계 0..4 (2 = 기본) */
+    val earSize: Int = 2,
     /** 강력 모드: 헤드 트래킹 (이어폰 센서로 고개를 돌려도 소리 위치 고정) */
     val headTracking: Boolean = false,
     /** 헤드 트래킹 방향이 반대로 느껴질 때 */
@@ -50,6 +56,9 @@ data class SpatialSettings(
             .putInt("frontAngle", frontAngle)
             .putInt("rearAngle", rearAngle)
             .putInt("rearLevel", rearLevel)
+            .putInt("engineMode", engineMode)
+            .putInt("spread", spread)
+            .putInt("earSize", earSize)
             .putBoolean("headInvert", headInvert)
             .apply()
     }
@@ -75,6 +84,9 @@ data class SpatialSettings(
                 frontAngle = p.getInt("frontAngle", d.frontAngle),
                 rearAngle = p.getInt("rearAngle", d.rearAngle),
                 rearLevel = p.getInt("rearLevel", d.rearLevel),
+                engineMode = p.getInt("engineMode", d.engineMode),
+                spread = p.getInt("spread", d.spread),
+                earSize = p.getInt("earSize", d.earSize),
                 headInvert = p.getBoolean("headInvert", d.headInvert),
             )
         }

@@ -111,6 +111,58 @@
             android:orientation="vertical">
 
             <TextView
+                style="@style/SectionTitle"
+                android:text="3D 엔진" />
+
+            <Spinner
+                android:id="@+id/spinnerEngine"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:background="#FF1E1E2A" />
+
+            <TextView
+                android:id="@+id/textEngineInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:textColor="#FFAAAAC0"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/labelSpread"
+                style="@style/SliderLabel" />
+
+            <SeekBar
+                android:id="@+id/seekSpread"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="90" />
+
+            <TextView
+                style="@style/SliderLabel"
+                android:text="👂 귀 맞춤 (실측 엔진) — 앞/뒤가 헷갈리면 테스트로 내 귀에 맞는 단계를 고르세요" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Spinner
+                    android:id="@+id/spinnerEar"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:background="#FF1E1E2A" />
+
+                <Button
+                    android:id="@+id/buttonEarTest"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="귀 맞춤 테스트" />
+            </LinearLayout>
+
+            <TextView
                 style="@style/SliderLabel"
                 android:text="🔊 스피커 배치 — 동그라미를 끌어서 소리 방향을 바꾸세요 (🟣 앞 / 🔵 뒤)" />
 

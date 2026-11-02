@@ -272,6 +272,7 @@ class Strong3DService : Service() {
             .build()
 
         this.record = record
+        ensureHrir(this)
         val dsp = BinauralProcessor(rate).also { it.setParams(settings); processor = it }
         updateBypass()
 
@@ -437,6 +438,15 @@ class Strong3DService : Service() {
 
         fun stop(context: Context) {
             context.stopService(Intent(context, Strong3DService::class.java))
+        }
+
+        /** 실측 HRIR 을 앱 assets 에서 한 번만 불러 둔다 */
+        fun ensureHrir(context: Context): HrirSet? {
+            BinauralProcessor.hrirBase?.let { return it }
+            return runCatching {
+                context.assets.open("hrir_kemar.bin").use { HrirSet.load(it) }
+            }.onFailure { Log.e(TAG, "HRIR 로드 실패", it) }
+                .getOrNull()?.also { BinauralProcessor.hrirBase = it }
         }
 
         private val HEADPHONE_TYPES = setOf(

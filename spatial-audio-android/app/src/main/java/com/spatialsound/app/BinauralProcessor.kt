@@ -38,6 +38,26 @@ class BinauralProcessor(private val fs: Int) {
     private var frontAngle = 50.0 // 앞 스피커 각도 (±도)
     private var rearAngle = 120.0 // 뒤 스피커 각도 (±도)
     private var rearLevel = 0.5   // 뒤 스피커 소리 양
+    private var engineMode = 0    // 0 = 기본(모델), 1 = 공간(실측 HRTF), 2 = 정위
+    private var spreadDeg = 90.0
+    private var earSize = 2
+
+    // --- 실측 HRTF 렌더러 (모드 1, 2) ----------------------------------------
+    @Volatile private var renderer: HrtfRenderer? = null
+    private var rendererLoading = false
+    private val rOut = FloatArray(2)
+    /** 실측 렌더러를 쓰는 중이면 그 지연만큼 나머지 경로(반사음·잔향·원음)도 늦춰서 맞춘다 */
+    private var latency = 0
+
+    private fun ensureRenderer() {
+        if (engineMode == 0 || renderer != null || rendererLoading) return
+        val base = hrirBase ?: return
+        rendererLoading = true
+        Thread({
+            renderer = HrtfRenderer(fs, base)
+            rendererLoading = false
+        }, "hrtf-init").apply { isDaemon = true; start() }
+    }
 
     fun setParams(s: SpatialSettings) {
         pending = s
@@ -177,13 +197,17 @@ class BinauralProcessor(private val fs: Int) {
         contra = 0.30 - 0.25 * width  // 좌우 분리: 반대쪽 귀 누설 0% → -10dB, 100% → -26dB 추가 감쇠
         val list = mutableListOf<Src>()
 
-        // 직접음: 앞 스피커
-        list += place(0, -spk, 0.0, 1.0, 0.0, true)
-        list += place(1, spk, 0.0, 1.0, 0.0, true)
+        val lat = latency / fs.toDouble()
+        val useHrtf = latency > 0
+        // 직접음: 앞 스피커 (실측 모드에선 HrtfRenderer 가 담당)
+        if (!useHrtf) {
+            list += place(0, -spk, 0.0, 1.0, 0.0, true)
+            list += place(1, spk, 0.0, 1.0, 0.0, true)
+        }
         // 뒤 서라운드 (±rearAngle): 왼쪽 소리는 왼쪽 뒤에서만, 오른쪽은 오른쪽 뒤에서만 (좌우가 섞이지 않게)
         // 7ms 지연으로 앞 스피커와 디코릴레이션 → 감싸는 느낌
         val sur = rearLevel
-        if (sur > 0.001) {
+        if (sur > 0.001 && !useHrtf) {
             list += place(0, -rearAngle, 0.007, sur, 7000.0, true)
             list += place(1, rearAngle, 0.007, sur, 7000.0, true)
         }
@@ -191,10 +215,11 @@ class BinauralProcessor(private val fs: Int) {
         // 방 반사음: 왼쪽 스피커 기준 (오른쪽은 좌우 대칭)
         if (early > 0.001f) {
             val scale = room.size
-            val g = early * 1.15 / scale.pow(0.35)
+            // 정위 모드는 방향이 흐려지지 않게 반사음을 절반으로
+            val g = early * 1.15 / scale.pow(0.35) * (if (engineMode == 2) 0.5 else 1.0)
             for (r in REFLECTIONS) {
                 val az = if (r[0].isNaN()) -spk else r[0]
-                val delay = r[1] / 1000.0 * scale
+                val delay = r[1] / 1000.0 * scale + lat
                 list += place(0, az, delay, r[2] * g, r[3], false)
                 list += place(1, -az, delay, r[2] * g, r[3], false)
             }
@@ -203,8 +228,8 @@ class BinauralProcessor(private val fs: Int) {
 
         // 잔향 설정
         rt60 = room.rt60
-        lateGain = (room.late * (0.4 + 0.6 * early)).toFloat()
-        preDelay = samples(0.012 * room.size)
+        lateGain = (room.late * (0.4 + 0.6 * early) * (if (engineMode == 2) 0.5 else 1.0)).toFloat()
+        preDelay = samples(0.012 * room.size) + latency
         revL.configure(room.size, 1.0)
         revR.configure(room.size, 1.037) // 길이를 살짝 달리해 좌우 잔향을 디코릴레이션
 
@@ -293,6 +318,11 @@ class BinauralProcessor(private val fs: Int) {
             frontAngle = s.frontAngle.toDouble().coerceIn(0.0, 90.0)
             rearAngle = s.rearAngle.toDouble().coerceIn(90.0, 180.0)
             rearLevel = s.rearLevel / 100.0
+            engineMode = s.engineMode
+            spreadDeg = s.spread.toDouble()
+            earSize = s.earSize
+            renderer?.setEarSize(earSize)
+            ensureRenderer()
             rebuildWithFade()
         }
         // 헤드 트래킹: 1.5° 이상 움직였고 이전 전환이 끝났으면 새 각도로
@@ -301,9 +331,27 @@ class BinauralProcessor(private val fs: Int) {
             appliedYaw = yaw
             rebuildWithFade()
         }
+        // 실측 렌더러 준비/해제 반영
+        val rnd = if (engineMode != 0) renderer else null
+        val wantLatency = if (rnd != null) HrtfRenderer.LATENCY else 0
+        if (wantLatency != latency) {
+            latency = wantLatency
+            rnd?.setEarSize(earSize)
+            rebuild()
+            oldSources = null
+        }
+        rnd?.let {
+            it.mode = if (engineMode == 2) HrtfRenderer.Mode.LOCALIZE else HrtfRenderer.Mode.SPEAKERS
+            it.frontAngle = frontAngle
+            it.rearAngle = rearAngle
+            it.rearLevel = rearLevel
+            it.spread = spreadDeg
+            it.headYaw = headYawDeg
+        }
         if (bypass) return
 
         val srcs = sources
+        val lat = latency
         val wet = amount
         val dry = 1f - amount
         val gBass = 1.5f * bass
@@ -325,6 +373,15 @@ class BinauralProcessor(private val fs: Int) {
 
             var outL = 0f
             var outR = 0f
+            if (rnd != null) {
+                // 직접음(실측 HRTF) — LATENCY 만큼 늦게 나옴. 나머지 경로도 같은 만큼 늦춘 입력을 씀.
+                rnd.process(l, r, rOut)
+                outL = rOut[0] / wetNorm
+                outR = rOut[1] / wetNorm
+                val di = (w - lat) and mask
+                l = bufL[di]
+                r = bufR[di]
+            }
             for (src in srcs) {
                 val b = when (src.input) { 0 -> bufL; 1 -> bufR; else -> bufS }
                 outL += src.gainL * ear(src.left, b, src.baseDelay, src.lpCoef)
@@ -395,6 +452,9 @@ class BinauralProcessor(private val fs: Int) {
     private class Room(val size: Double, val rt60: Double, val late: Double)
 
     companion object {
+        /** 실측 HRIR 데이터 — 앱 시작 시 한 번 불러서 넣어 둔다 (없으면 실측 모드는 기본 모드로 동작) */
+        @Volatile var hrirBase: HrirSet? = null
+
         private const val PINNA_AMOUNT = 0.35f
         private const val FDN_N = 8
         private const val REV_CROSS = 0.15f
