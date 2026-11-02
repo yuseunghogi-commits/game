@@ -15,7 +15,7 @@ import { loadSettings, saveSettings, type Settings } from './settings';
 import { autosave, deleteSlot, exportText, importText, latestSlot, listSlots, loadFrom, migrateLegacy, saveTo, type SlotId } from './saves';
 import { sound } from './audio';
 import { STEPS, advanceTutorial, highlight, tutorialHtml } from './tutorial';
-import { translate } from './i18n';
+import { romanize, translate } from './i18n';
 
 const params = new URLSearchParams(location.search);
 const DEV = params.has('dev');
@@ -155,6 +155,7 @@ async function applySetting(key: string, value: string) {
   else if (key === 'tutorial') { settings.tutorial = true; settings.tutorialStep = 0; ui.modal = 'none'; }
   saveSettings(settings);
   if (settings.quality !== prevQuality) await buildGlobe();
+  labelNames();
 }
 
 // ---- 입력 (이벤트 위임) ----
@@ -305,6 +306,13 @@ async function buildGlobe() {
     },
   });
   $('loading').classList.add('hide');
+  labelNames();
+}
+
+/** 행성 위 지역 이름표도 언어에 맞춘다 */
+function labelNames() {
+  const els = globeApi?.labels.querySelectorAll('.region-label');
+  els?.forEach((el, i) => { const n = state.regions[i]?.name ?? ''; el.textContent = settings.lang === 'en' ? romanize(n) : n; });
 }
 
 function pick(id: number) {
