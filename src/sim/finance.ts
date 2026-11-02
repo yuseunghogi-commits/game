@@ -4,7 +4,7 @@
 
 import { DISPOSAL, INSOLVENCY, LAND, LOAN, LICENSE, type TypeId } from './data';
 import { discretionaryBlocked, notify, post, txId } from './core';
-import { landBuyPrice } from './rights';
+import { landBuyPrice, usageFeePerDay } from './rights';
 import { PPM, STEPS_PER_DAY, roundHalfEven } from './units';
 import type { Facility, GameState, Loan } from './types';
 
@@ -103,7 +103,8 @@ export function loansDay(s: GameState, day: number) {
 /** 7일 의무 지출 예측 (유지비·수수료·임대료·상환) */
 export function upcomingObligations(s: GameState, days = 7): number {
   const daily = s.facilities.reduce((a, f) => a + (f.status === 'operating' ? f.fixedMinorPerDay : 0) + (f.land.mode === 'lease' && f.land.state !== 'expired' ? f.land.rentPerDayMinor : 0), 0)
-    + s.licenses.reduce((a, l) => a + (l.state !== 'expired' ? l.feePerDayMinor : 0), 0);
+    + s.licenses.reduce((a, l) => a + (l.state !== 'expired' ? l.feePerDayMinor : 0), 0)
+    + s.regions.reduce((a, _, ri) => a + usageFeePerDay(s, ri, 'GEN') + usageFeePerDay(s, ri, 'STO'), 0);
   const horizon = s.step + days * STEPS_PER_DAY;
   const loans = s.loans.reduce((a, l) => a + (l.nextDueStep <= horizon ? l.paymentMinor : 0) + l.arrearsMinor, 0);
   return daily * days + loans;

@@ -3,7 +3,7 @@
 import {
   buildCheck, canRenew, canStart, creditLimit, disposeCost, envIndex, envPriceMinor, facilitySpec, hubCapacityKw, hubUsedKw,
   isStandardRecord, landBuyPrice, licensePrice, licensesOf, lineCheck, lineSpec, loanBalance, mods, neighbors, netWorth,
-  quotaKw, quotaUsedKw, recommendations, reliability, renewCost, researchCost, saleValue, solarPpm, supplyHeadroomKw, windPpm,
+  quotaKw, quotaUsedKw, recommendations, usageFeePerDay, reliability, renewCost, researchCost, saleValue, solarPpm, supplyHeadroomKw, windPpm,
   annuityPayment, upcomingObligations, type ContractOffer, type Facility, type GameState, type Health, type Line,
 } from '../sim/sim';
 import {
@@ -185,15 +185,16 @@ function licenseSection(s: GameState, ri: number): string {
     const own = ls.map((l) => {
       const left = daysLeft(s, l.expiresAt);
       return `<div class="lic-item">${SIZES[l.size].name}${t === 'GEN' || t === 'STO' ? ` ${mw(l.quotaKw)} MW` : ''} · ${l.state === 'active' ? `${left}일` : ''} ${stateBadge(l.state, left)}
-        · 수수료 ${cr(l.feePerDayMinor)}/일 ${canRenew(s, l) ? `<button class="btn tiny" data-renew="${l.id}">갱신 ${cr(renewCost(s, l))}</button>` : ''}</div>`;
+        · 기본 수수료 ${cr(l.feePerDayMinor)}/일 ${canRenew(s, l) ? `<button class="btn tiny" data-renew="${l.id}">갱신 ${cr(renewCost(s, l))}</button>` : ''}</div>`;
     }).join('');
     const buy = (t === 'GEN' || t === 'STO' ? (['small', 'medium', 'large'] as SizeId[]) : (['small'] as SizeId[])).map((z) => {
       const p = licensePrice(s, ri, t, z);
       const label = t === 'GEN' || t === 'STO' ? `${SIZES[z].name} ${mw(p.quotaKw)}MW` : '취득';
-      return `<button class="btn tiny" data-lic="${ri}:${t}:${z}" title="취득가 ${cr(p.priceMinor)} CR, 수수료 ${cr(p.feePerDayMinor)} CR/일, 기간 ${LICENSE.termDays}일">${label} ${cr(p.priceMinor)}</button>`;
+      return `<button class="btn tiny" data-lic="${ri}:${t}:${z}" title="취득가 ${cr(p.priceMinor)} CR · 기본 수수료 ${cr(p.feePerDayMinor)} CR/일${p.perMwFeeMinor ? ` + 지은 MW당 ${cr(p.perMwFeeMinor)} CR/일` : ''} · 기간 ${LICENSE.termDays}일">${label} ${cr(p.priceMinor)}</button>`;
     }).join('');
     const showBuy = t === 'GEN' || t === 'STO' || !ls.some((l) => l.state !== 'expired');
-    return `<div class="lic"><div class="lic-head"><b>${LICENSE_NAMES[t]}</b><span class="num">${quota}</span></div>${own}${showBuy ? `<div class="lic-buy">${buy}</div>` : ''}</div>`;
+    const useFee = t === 'GEN' || t === 'STO' ? usageFeePerDay(s, ri, t) : 0;
+    return `<div class="lic"><div class="lic-head"><b>${LICENSE_NAMES[t]}</b><span class="num">${quota}</span></div>${own}${useFee ? `<div class="lic-item">사용 수수료 ${cr(useFee)}/일 (지은 MW × ${cr(licensePrice(s, ri, t, 'small').perMwFeeMinor)})</div>` : ''}${showBuy ? `<div class="lic-buy">${buy}</div>` : ''}</div>`;
   }).join('');
   return `<div class="section"><h3>사업권 <span class="h-note">기간 ${LICENSE.termDays}일 · 유예 ${LICENSE.graceDays}일</span></h3>${rows}
     <div class="note">발전·저장 사업권은 지을 수 있는 정격 용량 한도를 줍니다. 송전 사업권은 변전소와 송전선(양쪽 지역)에, 소매 공급 사업권은 직접 공급 계약에 필요합니다.</div></div>`;

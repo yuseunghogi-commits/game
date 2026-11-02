@@ -1,0 +1,30 @@
+# Windows 설치 파일 빌드 (Tauri). 결과물은 Actions 실행 페이지의 Artifacts에서 내려받는다.
+name: Windows build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['claude/**', 'main']
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npm test
+      - run: npx tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: planetary-grid-windows
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi

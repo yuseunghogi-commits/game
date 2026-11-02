@@ -247,7 +247,7 @@ export { distanceKm, facilitySpec, lineSpec, neighbors } from './geo';
 export { hubCapacityKw, hubUsedKw } from './hub';
 export { solarPpm, windPpm } from './output';
 export { netWorth, creditLimit, loanBalance, saleValue, disposeCost, upcomingObligations, annuityPayment } from './finance';
-export { licensePrice, licensesOf, quotaKw, quotaUsedKw, renewCost, canRenew, landBuyPrice } from './rights';
+export { licensePrice, licensesOf, quotaKw, quotaUsedKw, renewCost, canRenew, landBuyPrice, usageFeePerDay } from './rights';
 export { reliability, supplyHeadroomKw, activeContracts } from './contracts';
 export { envIndex, envPriceMinor } from './environment';
 export { mods, researchCost, canStart } from './research';

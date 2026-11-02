@@ -304,3 +304,15 @@ describe('P2 결정론·저장', () => {
 });
 
 void specOf;
+
+describe('수수료 함정 회귀 방지', () => {
+  it('중형 발전 사업권 + 소형 열발전 하나여도 하루 순현금이 양수 (수수료는 실제 지은 MW에 비례)', () => {
+    quiet();
+    const s = createGame(20261101);
+    issue(s, { kind: 'acquireLicense', regionId: 10, type: 'GEN', size: 'medium' });
+    issue(s, { kind: 'build', regionId: 10, type: 'thermal', size: 'small' });
+    days(s, 15);
+    const last = s.history.slice(-3);
+    for (const h of last) expect(h.netMinor).toBeGreaterThan(0);
+  });
+});

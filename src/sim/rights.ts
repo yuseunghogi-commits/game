@@ -24,7 +24,20 @@ export function licensePrice(s: GameState, regionId: number, type: LicenseType, 
   const t = LICENSE.tiers[type][size];
   const m = licenseMultiplier(s, regionId, type);
   // 금액은 1 CR 단위로 반올림해 표시가 깔끔하도록 한다
-  return { priceMinor: Math.round((t.price * m) / 100) * 100, feePerDayMinor: Math.round((t.fee * m * s.rules.m.regulation) / 100) * 100, quotaKw: t.quotaKw };
+  const reg = s.rules.m.regulation;
+  return {
+    priceMinor: Math.round((t.price * m) / 100) * 100,
+    feePerDayMinor: Math.round((t.fee * m * reg) / 100) * 100,
+    perMwFeeMinor: Math.round(LICENSE.perMwFee[type] * m * reg),
+    quotaKw: t.quotaKw,
+  };
+}
+
+/** 지역·유형별 사용량 수수료 (일): 사용 MW × MW당 수수료 (현재 지역 계수 기준) */
+export function usageFeePerDay(s: GameState, regionId: number, type: LicenseType): number {
+  if (licensesOf(s, regionId, type).length === 0) return 0;
+  const usedMw = quotaUsedKw(s, regionId, type) / 1000;
+  return Math.round(usedMw * licensePrice(s, regionId, type, 'small').perMwFeeMinor);
 }
 
 export function licensesOf(s: GameState, regionId: number, type: LicenseType, states: License['state'][] = ['active', 'grace']) {
@@ -149,8 +162,15 @@ function transition(s: GameState, expiresAt: number, state: License['state'], na
 export function rightsDay(s: GameState, day: number) {
   for (const l of s.licenses) {
     l.state = transition(s, l.expiresAt, l.state, `${s.regions[l.regionId].name} ${LICENSE_NAMES[l.type]}`, s.automation.autoRenew && l.autoRenew);
-    if (l.state !== 'expired') post(s, `D${day}:fee:${l.id}`, 'license', 'cash', l.feePerDayMinor, `사업권 수수료 #${l.id}`);
+    if (l.state !== 'expired') post(s, `D${day}:fee:${l.id}`, 'license', 'cash', l.feePerDayMinor, `사업권 기본 수수료 #${l.id}`);
   }
+  // 사용량 수수료: 지역·유형별로 실제 지은 정격 MW에 비례 (운영 가능한 사업권이 있을 때)
+  s.regions.forEach((_, ri) => {
+    for (const lt of ['GEN', 'STO'] as const) {
+      const fee = usageFeePerDay(s, ri, lt);
+      if (fee > 0) post(s, `D${day}:usefee:${ri}:${lt}`, 'license', 'cash', fee, `${s.regions[ri].name} ${LICENSE_NAMES[lt]} 사용 수수료`);
+    }
+  });
   for (const f of s.facilities) {
     if (f.land.mode === 'lease') {
       f.land.state = transition(s, f.land.expiresAt, f.land.state, `${s.regions[f.regionId].name} 시설 #${f.id} 토지 임대`, s.automation.autoRenew);

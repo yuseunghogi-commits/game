@@ -247,13 +247,16 @@ export const LICENSE = {
   alertDays: [30, 7, 1],
   multMin: 0.5,
   multMax: 3.0,
-  /** 회사 정격 한도(kW) / 기준 가격 / 일 수수료 (minor) */
+  /** 회사 정격 한도(kW) / 기준 가격 / 일 기본 수수료 (minor).
+   *  수수료는 기본 + 실제 사용 MW 비례(perMwFee). 한도만 크고 덜 지은 경우 수수료 함정을 막는다. */
   tiers: {
-    GEN: { small: { quotaKw: 30_000, price: 120_000_00, fee: 1_500_00 }, medium: { quotaKw: 100_000, price: 350_000_00, fee: 4_000_00 }, large: { quotaKw: 300_000, price: 900_000_00, fee: 10_000_00 } },
-    STO: { small: { quotaKw: 20_000, price: 60_000_00, fee: 800_00 }, medium: { quotaKw: 60_000, price: 170_000_00, fee: 2_000_00 }, large: { quotaKw: 200_000, price: 450_000_00, fee: 5_000_00 } },
+    GEN: { small: { quotaKw: 30_000, price: 120_000_00, fee: 300_00 }, medium: { quotaKw: 100_000, price: 350_000_00, fee: 600_00 }, large: { quotaKw: 300_000, price: 900_000_00, fee: 1_200_00 } },
+    STO: { small: { quotaKw: 20_000, price: 60_000_00, fee: 200_00 }, medium: { quotaKw: 60_000, price: 170_000_00, fee: 400_00 }, large: { quotaKw: 200_000, price: 450_000_00, fee: 800_00 } },
     TRN: { small: { quotaKw: 0, price: 80_000_00, fee: 1_000_00 }, medium: { quotaKw: 0, price: 80_000_00, fee: 1_000_00 }, large: { quotaKw: 0, price: 80_000_00, fee: 1_000_00 } },
     RET: { small: { quotaKw: 0, price: 200_000_00, fee: 3_000_00 }, medium: { quotaKw: 0, price: 200_000_00, fee: 3_000_00 }, large: { quotaKw: 0, price: 200_000_00, fee: 3_000_00 } },
   } as Record<LicenseType, Record<SizeId, { quotaKw: number; price: number; fee: number }>>,
+  /** 사용 MW당 일 수수료 (minor) — 발전·저장만 */
+  perMwFee: { GEN: 120_00, STO: 60_00, TRN: 0, RET: 0 } as Record<LicenseType, number>,
 };
 /** 시설 종류 → 필요한 사업권 */
 export const REQUIRED_LICENSE: Record<TypeId, LicenseType> = { thermal: 'GEN', solar: 'GEN', wind: 'GEN', storage: 'STO', substation: 'TRN' };
