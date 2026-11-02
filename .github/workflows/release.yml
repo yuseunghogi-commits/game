@@ -1,13 +1,11 @@
 name: Release 3D Sound
 
-# 수동 실행: Actions → "Release 3D Sound" → Run workflow → 버전 입력
+# RELEASE_VERSION 파일의 버전을 바꿔서 푸시하면 릴리스가 만들어진다.
 on:
+  push:
+    paths:
+      - "RELEASE_VERSION"
   workflow_dispatch:
-    inputs:
-      version:
-        description: "버전 (예: 1.0)"
-        required: true
-        default: "1.0"
 
 permissions:
   contents: write
@@ -72,15 +70,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - id: ver
+        run: echo "v=$(tr -d '[:space:]' < RELEASE_VERSION)" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
         with:
           path: out
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ inputs.version }}
+          tag_name: v${{ steps.ver.outputs.v }}
           target_commitish: ${{ github.sha }}
-          name: 3D 사운드 v${{ inputs.version }}
+          name: 3D 사운드 v${{ steps.ver.outputs.v }}
           body_path: spatial-audio-android/RELEASE_NOTES.md
           files: |
             out/3DSound-Android.apk
