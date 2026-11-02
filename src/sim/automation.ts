@@ -8,7 +8,8 @@ import { facilitySpec, lineSpec, neighbors } from './geo';
 import { mods } from './research';
 import { canRenew, licensesOf, quotaKw, quotaUsedKw, renewCost } from './rights';
 import { creditLimit } from './finance';
-import { hubCapacityKw, hubUsedKw } from './hub';
+import { bestPointFreeKw, hubUsedKw } from './hub';
+import { rushCheck, rushCost } from './ops';
 import { STEPS_PER_DAY } from './units';
 import type { Command, GameState } from './types';
 
@@ -87,10 +88,20 @@ export function recommendations(s: GameState): Recommendation[] {
     if (f.health.s === 'warning') out.push({ id: `insp${f.id}`, title: `${s.regions[f.regionId].name} ${FACILITY_TYPES[f.type].name} 예방 점검`, reason: '고장 전조 발견', effect: '고장 방지 (1일 정지)', costMinor: 0, cmd: { kind: 'inspect', target: 'facility', id: f.id }, priority: 90 });
     if (f.land.mode === 'lease' && f.land.state !== 'active') out.push({ id: `lease${f.id}`, title: `시설 #${f.id} 토지 임대 갱신`, reason: '임대 만료 — 유예 중', effect: `${LICENSE.termDays}일 연장 (임대료 +10%)`, costMinor: 0, cmd: { kind: 'renewLease', facilityId: f.id }, priority: 94 });
   }
+  // 복구 우선순위: 핵심 부하가 걸린 지역의 고장 시설은 긴급 복구를 추천
+  const criticalRegions = new Set(s.contracts.filter((c) => !c.done && c.critical).map((c) => c.regionId));
+  for (const f of s.facilities) {
+    if (f.health.s !== 'failed' || rushCheck(s, 'facility', f.id)) continue;
+    const crit = criticalRegions.has(f.regionId);
+    out.push({ id: `rush${f.id}`, title: `${s.regions[f.regionId].name} ${FACILITY_TYPES[f.type].name} #${f.id} 긴급 복구`, reason: crit ? '핵심 부하 지역의 고장 — 위약금이 큼' : '고장으로 정지 중', effect: '남은 복구 기간 절반', costMinor: rushCost('facility', f.capexMinor), cmd: { kind: 'rushRepair', target: 'facility', id: f.id }, priority: crit ? 93 : 40 });
+  }
+  s.hubs.forEach((h, i) => {
+    if (h.health.s === 'failed' && !rushCheck(s, 'hub', i)) out.push({ id: `rushh${i}`, title: `${s.regions[i].name} 수요 허브 긴급 복구`, reason: '허브 고장 — 지역 전체 정지', effect: '남은 복구 기간 절반', costMinor: rushCost('hub', 0), cmd: { kind: 'rushRepair', target: 'hub', id: i }, priority: 92 });
+  });
   for (const l of s.lines) if (l.health.s === 'warning') out.push({ id: `inspl${l.id}`, title: `${s.regions[l.a].name}–${s.regions[l.b].name} 송전선 점검`, reason: '고장 전조 발견', effect: '고장 방지', costMinor: 0, cmd: { kind: 'inspect', target: 'line', id: l.id }, priority: 88 });
   s.regions.forEach((r, ri) => {
-    const cap = hubCapacityKw(s, ri), used = hubUsedKw(s, ri);
-    if (used > 0 && cap - used < 20_000) out.push({ id: `sub${ri}`, title: `${r.name} 변전소 건설`, reason: `접속 용량 여유 ${((cap - used) / 1000).toFixed(0)} MW`, effect: `접속 용량 +${(facilitySpec(s, 'substation', 'medium').hubAddKw / 1000).toFixed(0)} MW`, costMinor: facilitySpec(s, 'substation', 'medium').capexMinor, cmd: licensesOf(s, ri, 'TRN', ['active']).length ? { kind: 'build', regionId: ri, type: 'substation', size: 'medium' } : null, priority: 60 });
+    const used = hubUsedKw(s, ri), free = bestPointFreeKw(s, ri);
+    if (used > 0 && free < 20_000 && !s.facilities.some((f) => f.regionId === ri && f.type === 'substation' && f.status === 'construction')) out.push({ id: `sub${ri}`, title: `${r.name} 변전소 건설`, reason: `접속점 여유 최대 ${(free / 1000).toFixed(0)} MW`, effect: `접속 용량 +${(facilitySpec(s, 'substation', 'medium').hubAddKw / 1000).toFixed(0)} MW`, costMinor: facilitySpec(s, 'substation', 'medium').capexMinor, cmd: licensesOf(s, ri, 'TRN', ['active']).length ? { kind: 'build', regionId: ri, type: 'substation', size: 'medium' } : null, priority: 60 });
     for (const lt of ['GEN', 'STO'] as const) {
       const q = quotaKw(s, ri, lt);
       if (q > 0 && q - quotaUsedKw(s, ri, lt) < 5_000) out.push({ id: `quota${ri}${lt}`, title: `${r.name} ${LICENSE_NAMES[lt]} 추가`, reason: '사업권 한도가 거의 찼습니다', effect: '건설 한도 확대', costMinor: 0, cmd: { kind: 'acquireLicense', regionId: ri, type: lt, size: 'medium' }, priority: 50 });

@@ -67,7 +67,7 @@ export function acceptOffer(s: GameState, offerId: number) {
   const start = Math.ceil((s.step + 1) / STEPS_PER_DI) * STEPS_PER_DI; // DI 경계 정렬 (시작은 올림)
   const c: Contract = {
     ...o, startStep: start, endStep: start + o.termDays * STEPS_PER_DAY,
-    deliveredWh: 0, obligationWh: 0, penaltyMinor: 0, revenueMinor: 0, lastObligationWh: 0, lastDeliveredWh: 0, done: false,
+    deliveredWh: 0, obligationWh: 0, penaltyMinor: 0, revenueMinor: 0, lastObligationWh: 0, lastDeliveredWh: 0, done: false, alertAt: -1,
   };
   s.offers = s.offers.filter((x) => x.id !== offerId);
   s.contracts.push(c);

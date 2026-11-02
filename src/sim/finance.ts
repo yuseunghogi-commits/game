@@ -20,7 +20,7 @@ export function annuityPayment(principal: number, annualPpm: number, months: num
 
 /** 장부가 (결정 S-13: 감가상각 없음 = 취득 원가) */
 export function bookValue(f: Facility): number {
-  if (f.status === 'operating') return f.capexMinor;
+  if (f.status === 'operating') return f.capexMinor + (f.expansion?.costMinor ?? 0);
   return f.stageCosts.slice(0, Math.max(0, f.stage + 1)).reduce((a, b) => a + b, 0);
 }
 
@@ -92,7 +92,7 @@ export function loansDay(s: GameState, day: number) {
     l.paidMonths += 1;
     l.nextDueStep += LOAN.monthDays * STEPS_PER_DAY;
     if (s.cash >= principal) post(s, `D${day}:prin:${l.id}`, 'loan', 'cash', principal, `원금 상환 #${l.id}`);
-    else { l.arrearsMinor += principal; notify(s, 'error', `대출 #${l.id} 상환 실패 — 연체 ${(principal / 100).toLocaleString()} CR`); }
+    else { l.arrearsMinor += principal; notify(s, 'error', `대출 #${l.id} 상환 실패 — 연체 ${(principal / 100).toLocaleString()} CR`, true); }
     if (l.balanceMinor === 0 && l.arrearsMinor === 0) {
       s.loans = s.loans.filter((x) => x.id !== l.id);
       notify(s, 'info', `대출 #${l.id} 상환 완료`);
@@ -120,18 +120,18 @@ export function insolvencyDay(s: GameState) {
     if (!trouble) { s.insolvency = 'normal'; notify(s, 'info', '구조조정 완료 — 정상 경영으로 복귀'); return; }
     if (s.step >= s.restructureUntil && s.rules.insolvency !== 'none') {
       s.insolvency = 'insolvent';
-      notify(s, 'error', s.rules.insolvency === 'bailout' ? '회생불능 — 구제를 신청할 수 있습니다' : '회생불능 — 회사가 청산되었습니다');
+      notify(s, 'error', s.rules.insolvency === 'bailout' ? '회생불능 — 구제를 신청할 수 있습니다' : '회생불능 — 회사가 청산되었습니다', true);
       if (s.rules.insolvency === 'liquidation') s.insolvency = 'liquidated';
     }
     return;
   }
   if (trouble) {
-    if (prev !== 'arrears') { s.insolvency = 'arrears'; s.arrearsSince = s.step; notify(s, 'error', '연체 상태 — 신규 투자가 막힙니다. 시설 매각·정지나 대출로 회복하세요'); }
+    if (prev !== 'arrears') { s.insolvency = 'arrears'; s.arrearsSince = s.step; notify(s, 'error', '연체 상태 — 신규 투자가 막힙니다. 시설 매각·정지나 대출로 회복하세요', true); }
     const days = (s.step - s.arrearsSince) / STEPS_PER_DAY;
     if (days >= INSOLVENCY.arrearsToRestructureDays || s.cash < -INSOLVENCY.negativeCashLimitMinor) {
       s.insolvency = 'restructuring';
       s.restructureUntil = s.step + INSOLVENCY.restructureDays * STEPS_PER_DAY;
-      notify(s, 'error', `구조조정 시작 — ${INSOLVENCY.restructureDays}일 안에 연체와 음수 현금을 해소하세요 (재무 화면의 매각 후보 참고)`);
+      notify(s, 'error', `구조조정 시작 — ${INSOLVENCY.restructureDays}일 안에 연체와 음수 현금을 해소하세요 (재무 화면의 매각 후보 참고)`, true);
     }
     return;
   }
@@ -171,8 +171,17 @@ function releaseLand(s: GameState, f: Facility) {
   else if (f.land.depositMinor) post(s, txId(s, `deposit-back:${f.id}`), 'cash', 'land_asset', f.land.depositMinor, `임대 보증금 반환 #${f.id}`);
 }
 
+/** 매각·폐기 불가 사유: 확장 공사 중, 접속한 시설이 있는 변전점 */
+export function removalBlocked(s: GameState, f: Facility): string | null {
+  if (f.expansion) return '모듈 확장 공사 중입니다';
+  if (f.type === 'substation' && s.facilities.some((x) => x.pointId === f.id)) return '이 변전점에 접속한 시설이 있습니다 (먼저 그 시설을 정리하세요)';
+  return null;
+}
+
 export function sellFacility(s: GameState, f: Facility) {
   if (f.status !== 'operating') return notify(s, 'error', '매각 거부: 운영 중인 시설만 매각할 수 있습니다');
+  const why = removalBlocked(s, f);
+  if (why) return notify(s, 'error', `매각 거부: ${why}`);
   const v = saleValue(f);
   post(s, txId(s, `sale:${f.id}`), 'cash', 'sale', v, `시설 매각 #${f.id}`);
   releaseLand(s, f);
@@ -182,6 +191,8 @@ export function sellFacility(s: GameState, f: Facility) {
 
 export function disposeFacility(s: GameState, f: Facility) {
   if (f.status !== 'operating') return notify(s, 'error', '폐기 거부: 건설 중인 시설은 취소하세요');
+  const why = removalBlocked(s, f);
+  if (why) return notify(s, 'error', `폐기 거부: ${why}`);
   const c = disposeCost(f);
   post(s, txId(s, `dispose:${f.id}`), 'disposal', 'cash', c, `시설 폐기 #${f.id}`);
   releaseLand(s, f);

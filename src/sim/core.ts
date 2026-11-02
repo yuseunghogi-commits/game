@@ -46,8 +46,9 @@ export function addCapital(s: GameState, amount: number, memo = '자본 투입')
   post(s, txId(s, 'capital'), 'cash', 'equity', amount, memo);
 }
 
-export function notify(s: GameState, level: Notice['level'], text: string) {
-  s.notices.push({ step: s.step, level, text });
+export function notify(s: GameState, level: Notice['level'], text: string, urgent = false) {
+  s.notices.push(urgent ? { step: s.step, level, text, urgent } : { step: s.step, level, text });
+  s.noticeSeq = (s.noticeSeq ?? 0) + 1;
   if (s.notices.length > 100) s.notices.splice(0, s.notices.length - 100);
 }
 

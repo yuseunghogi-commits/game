@@ -104,7 +104,7 @@ export const shockMult = (sh: { from: number; to: number; mult: number } | null,
 
 // ---------- 고장 ----------
 
-function repairCost(kind: 'facility' | 'line' | 'hub', capex: number): number {
+export function repairCost(kind: 'facility' | 'line' | 'hub', capex: number): number {
   if (kind === 'hub') return EVENTS.hubRepairMinor;
   return Math.round((capex * EVENTS.repairPpm[kind]) / PPM);
 }
@@ -118,7 +118,7 @@ function progressHealth(s: GameState, h: Health, name: string, onFail: () => { d
     const { days, cost } = onFail();
     post(s, `repair:${name}:${s.step}`, 'repair', 'cash', cost, `고장 복구: ${name}`);
     notify(s, 'error', `고장: ${name} — 자동 복구 ${days}일, 비용 ${(cost / 100).toLocaleString()} CR`);
-    return { s: 'failed', until: s.step + days * STEPS_PER_DAY };
+    return { s: 'failed', until: s.step + days * STEPS_PER_DAY, cost };
   }
   if ((h.s === 'failed' || h.s === 'inspection') && s.step >= h.until) {
     notify(s, 'info', `${h.s === 'failed' ? '복구 완료' : '점검 완료'}: ${name}`);
@@ -142,7 +142,8 @@ export function failuresDI(s: GameState) {
       f.health = { s: 'warning', failAt: s.step + lead * STEPS_PER_DAY };
       notify(s, 'warn', `점검 필요: ${facName(s, f)} — ${lead}일 안에 고장 예상`);
     }
-    f.health = progressHealth(s, f.health, facName(s, f), () => ({ days: days('facility'), cost: repairCost('facility', f.capexMinor) }));
+    // 핵분열 발전소는 복구 기간 2배 (별도 규칙, S-10 후속 확장)
+    f.health = progressHealth(s, f.health, facName(s, f), () => ({ days: days('facility') * (f.type === 'nuclear' ? 2 : 1), cost: repairCost('facility', f.capexMinor) }));
   }
   for (const l of s.lines) {
     if (l.status !== 'operating') continue;

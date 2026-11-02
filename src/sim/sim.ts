@@ -4,10 +4,11 @@
 
 import {
   DIFFICULTY, ENV, FACILITY_TYPES, HUB_BASE_KW, LICENSE, OBJECTIVES, RESEARCH, START_CASH_MINOR, STAGES,
-  generateRegions, type Multipliers, type ScenarioId,
+  REGION_COUNT, generateRegions, type Multipliers, type ScenarioId,
 } from './data';
 import { notify, post, record } from './core';
-import { applyCommand } from './commands';
+import { applyCommand, planDI } from './commands';
+import { advanceExpansions, emptyStats, statsDay } from './ops';
 import { contractsDay, offersDay, reliability } from './contracts';
 import { processDI } from './dispatch';
 import { envIndex, environmentDay, failuresDI, marketEventsDay } from './environment';
@@ -20,7 +21,7 @@ import { acquireLicense, newLease, rightsDay, updateRights } from './rights';
 import { STEPS_PER_DAY, STEPS_PER_DI, dayOf } from './units';
 import type { Build, Facility, GameState, Rules } from './types';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export interface NewGameOptions {
   seed?: number;
@@ -29,6 +30,7 @@ export interface NewGameOptions {
   multipliers?: Partial<Multipliers>;
   startCashMinor?: number;
   insolvency?: Rules['insolvency'];
+  regionCount?: number;
 }
 
 export function makeRules(o: NewGameOptions = {}): Rules {
@@ -36,19 +38,19 @@ export function makeRules(o: NewGameOptions = {}): Rules {
   const base = DIFFICULTY[preset === 'custom' ? 'standard' : preset].m;
   const m = { ...base, ...(o.multipliers ?? {}) };
   const startCashMinor = o.startCashMinor ?? Math.round(START_CASH_MINOR * m.startCash);
-  return { preset: o.multipliers || o.startCashMinor !== undefined ? 'custom' : preset, scenario: o.scenario ?? 'A', m, insolvency: o.insolvency ?? 'bailout', startCashMinor };
+  return { preset: o.multipliers || o.startCashMinor !== undefined ? 'custom' : preset, scenario: o.scenario ?? 'A', m, insolvency: o.insolvency ?? 'bailout', startCashMinor, regionCount: o.regionCount ?? REGION_COUNT };
 }
 
 /** 기록 분류 (Q55 B): 프리셋 난이도 + 기본 시나리오 + 게임 중 규칙 변경 없음 = 표준 규칙 */
 export function isStandardRecord(s: GameState): boolean {
-  return s.rules.preset !== 'custom' && s.rules.scenario !== 'custom';
+  return s.rules.preset !== 'custom' && s.rules.scenario !== 'custom' && (s.rules.regionCount ?? REGION_COUNT) === REGION_COUNT;
 }
 
 export function createGame(seedOrOpts: number | NewGameOptions = 20261101): GameState {
   const o: NewGameOptions = typeof seedOrOpts === 'number' ? { seed: seedOrOpts } : seedOrOpts;
   const seed = o.seed ?? 20261101;
   const rules = makeRules(o);
-  const regions = generateRegions(seed);
+  const regions = generateRegions(seed, rules.regionCount);
   const s: GameState = {
     schemaVersion: SCHEMA_VERSION, seed, step: 0, cash: 0, reserved: 0, rules, regions,
     regionState: regions.map((r) => {
@@ -67,6 +69,7 @@ export function createGame(seedOrOpts: number | NewGameOptions = 20261101): Game
     fuelMult: 1, nextFuelMult: 1, insolvency: 'normal', arrearsSince: 0, restructureUntil: 0, bailouts: 0, everBorrowed: false,
     reliability: { obligation: [0], delivered: [0] }, completedContracts: 0, objectivesDone: {},
     nextRegulationAt: 90 * STEPS_PER_DAY,
+    plan: [], planPaused: false, planBlocked: null, noticeSeq: 0,
   };
   post(s, 'init:capital', 'cash', 'equity', rules.startCashMinor, '초기 자본');
   setupScenario(s);
@@ -99,6 +102,7 @@ function setupScenario(s: GameState) {
       status: 'operating', stage: STAGES.length - 1, stageStep: 0, stageSteps: [0, 0, 0, 0, 0, 0], stageCosts: [0, 0, 0, 0, 0, spec.capexMinor],
       online: true, outputKw: 0, startDelay: 0, lastGenWh: 0, lastSoldWh: 0, health: { s: 'ok' }, energyWh: 0, socWh: 0, dischargeAtMinor: 0, chargeAtMinor: 0,
       lastStorageWh: 0, hubAddKw: 0, effPpm: 0, land: newLease(s, ri, 'thermal', spec.capKw), rightsOk: true,
+      pointId: 0, modules: 0, expansion: null, stats: emptyStats(),
     };
     s.facilities.push(f);
     post(s, `init:plant:${f.id}`, 'capex', 'cash', spec.capexMinor, '시작 시설 취득');
@@ -131,6 +135,7 @@ function advanceBuild(s: GameState, b: Build & { id: number; status: 'constructi
 
 function advanceConstruction(s: GameState) {
   for (const f of s.facilities) advanceBuild(s, f, 'f', `${s.regions[f.regionId].name} ${FACILITY_TYPES[f.type].name}`, () => { f.startDelay = FACILITY_TYPES[f.type].startDelayDI; });
+  advanceExpansions(s);
   for (const l of s.lines) advanceBuild(s, l, 'l', `${s.regions[l.a].name}–${s.regions[l.b].name} 송전선`, () => {});
 }
 
@@ -204,6 +209,7 @@ function processDayEnd(s: GameState) {
   insolvencyDay(s);
   automationDay(s, day);
   objectivesDay(s, day);
+  statsDay(s);
   const rel = s.reliability;
   rel.obligation.push(0); rel.delivered.push(0);
   if (rel.obligation.length > 30) { rel.obligation.shift(); rel.delivered.shift(); }
@@ -230,6 +236,7 @@ export function step(s: GameState) {
   if (s.step % STEPS_PER_DI === 0) {
     processDI(s);
     failuresDI(s); // 판정은 배분 뒤 → 효과는 다음 DI부터 (Baseline §3.6)
+    planDI(s); // 계획 건설: 정산 뒤 자금 기준으로 승인
   }
   if (s.step % STEPS_PER_DAY === 0) processDayEnd(s);
 }
@@ -242,14 +249,16 @@ void LICENSE;
 
 // ---------- 다시 내보내기 (UI·테스트용) ----------
 export { addCapital, availableCash, healthLabel, issue, ledgerCash, pendingCash } from './core';
-export { cancelRefund, buildCheck, lineCheck, underConstruction } from './commands';
+export { cancelRefund, buildCheck, lineCheck, underConstruction, planCheck, planCost } from './commands';
+export { expandCheck, expansionSpec, rushCheck, rushCost } from './ops';
+export { connectionPoints, bestPointFreeKw } from './hub';
 export { distanceKm, facilitySpec, lineSpec, neighbors } from './geo';
 export { hubCapacityKw, hubUsedKw } from './hub';
 export { solarPpm, windPpm } from './output';
-export { netWorth, creditLimit, loanBalance, saleValue, disposeCost, upcomingObligations, annuityPayment } from './finance';
+export { netWorth, creditLimit, loanBalance, saleValue, disposeCost, upcomingObligations, annuityPayment, removalBlocked } from './finance';
 export { licensePrice, licensesOf, quotaKw, quotaUsedKw, renewCost, canRenew, landBuyPrice, usageFeePerDay } from './rights';
 export { reliability, supplyHeadroomKw, activeContracts } from './contracts';
 export { envIndex, envPriceMinor } from './environment';
-export { mods, researchCost, canStart } from './research';
+export { mods, researchCost, canStart, has as hasResearch } from './research';
 export { recommendations } from './automation';
 export type * from './types';

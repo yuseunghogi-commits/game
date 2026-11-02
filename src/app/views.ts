@@ -49,7 +49,7 @@ export function clockText(step: number) {
 const SOLAR_SVG = `<svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="46" cy="16" r="7" fill="none" stroke="#e6c34a" stroke-width="2"/><g stroke="#e6c34a" stroke-width="2"><path d="M46 3v4M46 25v4M33 16h4M55 16h4"/></g><path d="M8 50l10-20h30l-10 20z" fill="#1d2a38" stroke="#4fd1e0" stroke-width="1.5"/><path d="M15 40h31M21 30l-6 20M31 30l-6 20M41 30l-6 20" stroke="#4fd1e0" stroke-width="1" opacity=".6"/><path d="M26 50v6M20 56h12" stroke="#8b95a1" stroke-width="2"/></svg>`;
 const LINE_SVG = `<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M14 56L22 10h4l8 46M50 56L42 10h-4l-8 46" fill="none" stroke="#8b95a1" stroke-width="2"/><path d="M14 18h16M34 18h16M16 30h12M36 30h12" stroke="#8b95a1" stroke-width="2"/><path d="M4 22q14 10 26-4t30 4" fill="none" stroke="#4fd1e0" stroke-width="1.6"/></svg>`;
 const CARD_IMG: Record<TypeId, string | null> = {
-  thermal: './assets/card_thermal.webp', wind: './assets/card_wind.webp', solar: null,
+  thermal: './assets/card_thermal.webp', wind: './assets/card_wind.webp', solar: null, nuclear: null,
   storage: './assets/card_storage.webp', substation: './assets/card_line.webp',
 };
 export const img = (t: TypeId) => (CARD_IMG[t] ? `<img src="${CARD_IMG[t]}" alt="">` : `<div class="ph">${SOLAR_SVG}</div>`);

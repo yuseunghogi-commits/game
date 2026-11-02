@@ -1,7 +1,7 @@
 // 저장·불러오기 (Baseline §29, §29.4). 스텝 경계에서만 호출된다.
 // 마이그레이션: 버전별 변환 함수 체인. 미래 버전은 읽기를 거부한다.
 
-import { HUB_BASE_KW } from './data';
+import { HUB_BASE_KW, REGION_COUNT } from './data';
 import { SCHEMA_VERSION, type GameState } from './sim';
 
 export function stateHash(s: unknown): string {
@@ -69,6 +69,28 @@ const MIGRATIONS: Record<number, (s: any) => any> = {
       lastDI: { contractWh: 0, ...s.lastDI },
       fuelMult: 1, nextFuelMult: 1, insolvency: 'normal', arrearsSince: 0, restructureUntil: 0, bailouts: 0, everBorrowed: false,
       reliability: { obligation: [0], delivered: [0] }, completedContracts: 0, objectivesDone: {}, nextRegulationAt: s.step + 90 * day,
+    };
+  },
+  // v3 → v4: 접속점(S-08), 모듈 확장, 시설 실적, 계획 건설, 긴급 알림, 지도 크기
+  3: (s) => {
+    const used = new Map<string, number>();
+    const subs = s.facilities.filter((f: any) => f.type === 'substation' && f.status === 'operating');
+    const facilities = s.facilities.map((f: any) => {
+      let pointId = 0;
+      if (f.type !== 'substation') {
+        // 기존 시설을 기본 접속점부터 채우고, 넘치면 변전점에 붙인다
+        const pts = [{ id: 0, cap: s.hubs[f.regionId].capKw }, ...subs.filter((x: any) => x.regionId === f.regionId).map((x: any) => ({ id: x.id, cap: x.hubAddKw }))];
+        const fit = pts.find((p) => (used.get(`${f.regionId}:${p.id}`) ?? 0) + f.capKw <= p.cap) ?? pts[0];
+        pointId = fit.id;
+        used.set(`${f.regionId}:${pointId}`, (used.get(`${f.regionId}:${pointId}`) ?? 0) + f.capKw);
+      }
+      return { ...f, pointId, modules: 0, expansion: null, stats: { cur: { genWh: 0, soldWh: 0, contractWh: 0, revMinor: 0, fuelMinor: 0, opexMinor: 0, upDI: 0, di: 0 }, days: [], life: { genWh: 0, revMinor: 0, costMinor: 0, days: 0 } } };
+    });
+    return {
+      ...s, schemaVersion: 4, facilities,
+      contracts: s.contracts.map((c: any) => ({ ...c, alertAt: -1 })),
+      rules: { ...s.rules, regionCount: s.regions.length ?? REGION_COUNT },
+      plan: [], planPaused: false, planBlocked: null, noticeSeq: s.notices.length,
     };
   },
 };

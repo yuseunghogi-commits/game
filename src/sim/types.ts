@@ -12,7 +12,7 @@ export interface LedgerEntry { id: string; step: number; debit: Account; credit:
 export type Health =
   | { s: 'ok' }
   | { s: 'warning'; failAt: number }
-  | { s: 'failed'; until: number }
+  | { s: 'failed'; until: number; rushed?: boolean; cost?: number }
   | { s: 'inspection'; until: number };
 
 export interface Build { stage: number; stageStep: number; stageSteps: number[]; stageCosts: number[] }
@@ -28,6 +28,13 @@ export interface Land {
   state: RightState;
   purchaseMinor: number;
 }
+
+/** 시설 실적 하루치 (화면의 시설 상세용) */
+export interface FacDay { genWh: number; soldWh: number; contractWh: number; revMinor: number; fuelMinor: number; opexMinor: number; upDI: number; di: number }
+export interface FacStats { cur: FacDay; days: FacDay[]; life: { genWh: number; revMinor: number; costMinor: number; days: number } }
+
+/** 모듈 확장 공사 (Q47) */
+export interface Expansion { addKw: number; addEnergyWh: number; addFixedMinor: number; costMinor: number; startStep: number; until: number }
 
 export interface Facility extends Build {
   id: number;
@@ -54,6 +61,11 @@ export interface Facility extends Build {
   land: Land;
   /** 권리(사업권·토지) 문제로 운영 불가 */
   rightsOk: boolean;
+  /** 접속점 (S-08): 0 = 지역 허브 기본 접속점, 그 외 = 변전소 시설 ID. 변전소 자신은 0 */
+  pointId: number;
+  modules: number;
+  expansion: Expansion | null;
+  stats: FacStats;
 }
 
 export interface Line extends Build {
@@ -125,6 +137,8 @@ export interface Contract extends ContractOffer {
   lastObligationWh: number;
   lastDeliveredWh: number;
   done: boolean;
+  /** 핵심 부하 정전 긴급 알림 마지막 시각 (중복 방지) */
+  alertAt: number;
 }
 
 export interface ResearchState { done: string[]; active: { id: string; investedMinor: number; days: number; dailyBudgetMinor: number }[] }
@@ -159,6 +173,7 @@ export interface Rules {
   m: Multipliers;
   insolvency: 'bailout' | 'liquidation' | 'none';
   startCashMinor: number;
+  regionCount: number;
 }
 
 export interface RegionState { refSupplyKw: number; demandKw: number; priceMinor: number; soldWh: number; capWh: number }
@@ -186,9 +201,21 @@ export type Command =
   | { kind: 'setAutomation'; key: 'autoRenew' | 'autoInspect' | 'autoStorage'; on: boolean }
   | { kind: 'setAutomationBudget'; dailyBudgetMinor: number }
   | { kind: 'bailout' }
-  | { kind: 'lock'; key: string; days: number | null };
+  | { kind: 'lock'; key: string; days: number | null }
+  | { kind: 'expand'; facilityId: number }
+  | { kind: 'rushRepair'; target: 'facility' | 'line' | 'hub'; id: number }
+  | { kind: 'planAdd'; item: PlanCmd }
+  | { kind: 'planRemove'; id: number }
+  | { kind: 'planMove'; id: number; dir: -1 | 1 }
+  | { kind: 'planClear' }
+  | { kind: 'planPause'; paused: boolean };
 
-export interface Notice { step: number; level: 'info' | 'warn' | 'error'; text: string }
+/** 계획 건설 (Q32 C): 조건이 맞는 순서대로 자동 승인되는 건설 대기열 */
+export type PlanCmd = Extract<Command, { kind: 'build' }> | Extract<Command, { kind: 'buildLine' }>;
+export interface PlanItem { id: number; cmd: PlanCmd }
+
+/** urgent: 긴급 등급 (S-21: 핵심 부하 정전·대출 연체·사업권 정지·회생불능) → 자동 일시정지 대상 */
+export interface Notice { step: number; level: 'info' | 'warn' | 'error'; text: string; urgent?: boolean }
 export interface DayAcc { revenue: number; cost: number; kind: 'market' | 'contract' }
 export interface DIStats { genWh: number; dischargeWh: number; deliveredWh: number; contractWh: number; lineLossWh: number; chargeWh: number; curtailWh: number; storageLossWh: number }
 
@@ -233,4 +260,10 @@ export interface GameState {
   completedContracts: number;
   objectivesDone: Record<string, number>;
   nextRegulationAt: number;
+  plan: PlanItem[];
+  planPaused: boolean;
+  /** 계획 맨 앞 항목이 막힌 이유 (표시용) */
+  planBlocked: string | null;
+  /** 지금까지 생긴 알림 수 (화면이 새 알림을 찾는 기준) */
+  noticeSeq: number;
 }

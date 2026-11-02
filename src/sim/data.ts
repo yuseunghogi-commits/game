@@ -4,8 +4,8 @@
 import { heightAt, moistureAt, SEA_LEVEL } from '../world/terrain';
 import { PPM } from './units';
 
-export type TypeId = 'thermal' | 'solar' | 'wind' | 'storage' | 'substation';
-export type GenTypeId = 'thermal' | 'solar' | 'wind';
+export type TypeId = 'thermal' | 'solar' | 'wind' | 'nuclear' | 'storage' | 'substation';
+export type GenTypeId = 'thermal' | 'solar' | 'wind' | 'nuclear';
 export type SizeId = 'small' | 'medium' | 'large';
 
 export interface FacilityTypeDef {
@@ -51,6 +51,12 @@ export const FACILITY_TYPES: Record<TypeId, FacilityTypeDef> = {
     id: 'solar', name: '태양광 발전소', baseCapKw: 20_000, capexMinor: 520_000_00,
     fixedMinorPerDay: 1_600_00, fuelMinorPerMWh: 0, minOutputPpm: 0,
     rampPpmPerDI: PPM, startDelayDI: 0, buildFactor: 0.5, dispatchable: false, kind: 'gen',
+  },
+  // 후속 확장 (S-10에서 MVP 제외 → 연구 'gen3'로 해금). 별도 규칙: 긴 기동 지연, 높은 최소 출력, 느린 램프, 큰 폐기 비용, 긴 복구.
+  nuclear: {
+    id: 'nuclear', name: '핵분열 발전소', baseCapKw: 60_000, capexMinor: 9_000_000_00,
+    fixedMinorPerDay: 11_000_00, fuelMinorPerMWh: 9_00, minOutputPpm: 800_000,
+    rampPpmPerDI: 30_000, startDelayDI: 24, buildFactor: 2.0, dispatchable: true, kind: 'gen',
   },
   storage: {
     id: 'storage', name: '배터리 저장시설', baseCapKw: 20_000, capexMinor: 700_000_00,
@@ -155,6 +161,15 @@ export interface RegionDef {
 }
 
 const REGION_NAMES = ['아우렐', '바스티온', '세룰레아', '드라바', '에스커', '펜마크', '오린', '카스텔', '루멘', '베리스', '토르바', '니발'];
+const SYL_A = ['카', '로', '미', '세', '바', '테', '누', '아', '헬', '도', '피', '라', '소', '키', '벨', '마'];
+const SYL_B = ['렌', '디아', '스', '모', '르', '탄', '네', '실', '고', '반', '리온', '크'];
+
+/** 지역 이름: 처음 12개는 고정, 이후는 음절 조합 (결정적, 중복 없음) */
+export function regionName(id: number): string {
+  if (id < REGION_NAMES.length) return REGION_NAMES[id];
+  const k = id - REGION_NAMES.length;
+  return SYL_A[k % SYL_A.length] + SYL_B[Math.floor(k / SYL_A.length) % SYL_B.length] + (k >= SYL_A.length * SYL_B.length ? String(Math.floor(k / (SYL_A.length * SYL_B.length)) + 1) : '');
+}
 
 const BASE_SHAPE = [
   0.72, 0.68, 0.66, 0.65, 0.67, 0.74, 0.86, 0.98, 1.06, 1.1, 1.12, 1.13,
@@ -175,7 +190,7 @@ export const REGION_COUNT = 12;
 export function generateRegions(seed: number, count = REGION_COUNT): RegionDef[] {
   const rnd = lcg(seed * 7919 + 17);
   const candidates: { lat: number; lon: number; h: number }[] = [];
-  const N = 1500;
+  const N = count <= 12 ? 1500 : count * 60;
   const golden = Math.PI * (3 - Math.sqrt(5));
   for (let i = 0; i < N; i++) {
     const y = 1 - (2 * (i + 0.5)) / N;
@@ -209,10 +224,10 @@ export function generateRegions(seed: number, count = REGION_COUNT): RegionDef[]
     const tilt = rnd() * 0.08 - 0.04;
     return {
       id,
-      name: REGION_NAMES[id % REGION_NAMES.length],
+      name: regionName(id),
       lat: Math.round(p.lat * 100) / 100,
       lon: Math.round(p.lon * 100) / 100,
-      demandBaseKw: 300_000 + Math.floor(rnd() * 12) * 100_000,
+      demandBaseKw: Math.round((300_000 + Math.floor(rnd() * 12) * 100_000) * (count <= 12 ? 1 : Math.max(0.35, Math.sqrt(12 / count))) / 10_000) * 10_000,
       shapePpm: BASE_SHAPE.map((v, h) => Math.round((v + tilt * Math.sin((h / 24) * Math.PI * 2)) * PPM)),
       refSupplyPpm: 950_000 + Math.floor(rnd() * 15) * 10_000,
       pBaseMinor: (90 + Math.floor(rnd() * 26)) * 100,
@@ -259,7 +274,16 @@ export const LICENSE = {
   perMwFee: { GEN: 120_00, STO: 60_00, TRN: 0, RET: 0 } as Record<LicenseType, number>,
 };
 /** 시설 종류 → 필요한 사업권 */
-export const REQUIRED_LICENSE: Record<TypeId, LicenseType> = { thermal: 'GEN', solar: 'GEN', wind: 'GEN', storage: 'STO', substation: 'TRN' };
+export const REQUIRED_LICENSE: Record<TypeId, LicenseType> = { thermal: 'GEN', solar: 'GEN', wind: 'GEN', nuclear: 'GEN', storage: 'STO', substation: 'TRN' };
+
+/** 모듈 확장 (Q47 B 제한적 모듈 확장, S-09: 공사 기간 = 본 시설의 30%). 같은 부지·접속점을 쓰므로 새로 짓는 것보다 싸다. */
+export const MODULES = { max: 2, capShare: 0.5, costShare: 0.55, fixedShare: 0.4, timeShare: 0.3 };
+
+/** 긴급 복구 (복구 우선순위): 남은 복구 기간을 절반으로, 추가 비용 = 기본 복구비 × 0.6. 고장마다 한 번. */
+export const RUSH_REPAIR = { timeShare: 0.5, costShare: 0.6 };
+
+/** 지도 크기 (행성 지역 수). 12가 표준 기록 기준. 96은 Baseline 목표 규모. */
+export const MAP_SIZES = [12, 24, 48, 96] as const;
 
 /** 토지 (Baseline §9, 결정 S-19). 시설 부지마다 임대. 임대료 = 지역 기준 × 부지 MW. */
 export const LAND = {
@@ -296,7 +320,7 @@ export const INSOLVENCY = {
 export const DISPOSAL = {
   saleShareOk: 0.7,
   saleShareFailed: 0.4,
-  disposeCostPpm: { thermal: 100_000, solar: 50_000, wind: 50_000, storage: 50_000, substation: 30_000 } as Record<TypeId, number>,
+  disposeCostPpm: { thermal: 100_000, solar: 50_000, wind: 50_000, nuclear: 300_000, storage: 50_000, substation: 30_000 } as Record<TypeId, number>,
 };
 
 /** 계약 (Baseline §14.9, 결정 S-04): PPA는 지역 인도·판매 한도 포함, 직접 공급은 별도 고객 부하 */
@@ -311,11 +335,12 @@ export const CONTRACT = {
   reliabilityDays: 30,
 };
 
-/** 연구 (Baseline §19, 결정 S-10: 원자력 계열 제외) */
+/** 연구 (Baseline §19). S-10: 원자력 계열은 MVP 제외 → 후속 확장 노드 gen3로 둔다 */
 export interface ResearchNode { id: string; branch: string; name: string; tier: 1 | 2 | 3; requires?: string; costMinor: number; minDays: number; effect: string }
 export const RESEARCH: ResearchNode[] = [
   { id: 'gen1', branch: '발전', name: '연소 효율', tier: 1, costMinor: 150_000_00, minDays: 10, effect: '연료비 ×0.95' },
   { id: 'gen2', branch: '발전', name: '출력 유연성', tier: 2, requires: 'gen1', costMinor: 400_000_00, minDays: 20, effect: '열발전 램프 ×1.5, 최소 출력 −10%p' },
+  { id: 'gen3', branch: '발전', name: '핵분열 발전', tier: 3, requires: 'gen2', costMinor: 1_200_000_00, minDays: 30, effect: '핵분열 발전소 건설 해금 (기저 출력, 저연료비, 긴 건설)' },
   { id: 'tx1', branch: '송전', name: '저손실 도체', tier: 1, costMinor: 150_000_00, minDays: 10, effect: '신규 송전선 손실 ×0.9' },
   { id: 'tx2', branch: '송전', name: '고용량 선로', tier: 2, requires: 'tx1', costMinor: 400_000_00, minDays: 20, effect: '신규 송전선 용량 ×1.2' },
   { id: 'tx3', branch: '송전', name: '신속 복구', tier: 3, requires: 'tx2', costMinor: 900_000_00, minDays: 30, effect: '복구 기간 ×0.7' },
@@ -332,7 +357,7 @@ export const BASE_CONCURRENT_BUILDS = 3;
 
 /** 환경 (Baseline §22, Q21): 30일 이동 합계 지표 */
 export const ENV = {
-  impactPpmPerMWh: { thermal: PPM, solar: 50_000, wind: 50_000, storage: 0, substation: 0 } as Record<TypeId, number>,
+  impactPpmPerMWh: { thermal: PPM, solar: 50_000, wind: 50_000, nuclear: 30_000, storage: 0, substation: 0 } as Record<TypeId, number>,
   priceMinorPerUnit: 8_00,
   /** 지역 기준치 = 기준 수요 MW × 이 값 (단위/30일) */
   thresholdPerMw: 100,

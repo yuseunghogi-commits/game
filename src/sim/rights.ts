@@ -49,7 +49,7 @@ export function quotaKw(s: GameState, regionId: number, type: LicenseType, state
 }
 
 export function quotaUsedKw(s: GameState, regionId: number, type: LicenseType) {
-  return s.facilities.filter((f) => f.regionId === regionId && REQUIRED_LICENSE[f.type] === type).reduce((a, f) => a + f.capKw, 0);
+  return s.facilities.filter((f) => f.regionId === regionId && REQUIRED_LICENSE[f.type] === type).reduce((a, f) => a + f.capKw + (f.expansion?.addKw ?? 0), 0);
 }
 
 /** 신규 건설 가능 여부 (유예 중인 사업권으로는 신규 건설 불가) */
@@ -153,7 +153,7 @@ function transition(s: GameState, expiresAt: number, state: License['state'], na
     if (LICENSE.alertDays.includes(daysLeft) && !autoHandled) notify(s, 'warn', `${name} 만료 ${daysLeft}일 전`);
     if (s.step >= expiresAt) { notify(s, 'warn', `${name} 만료 — 유예 ${LICENSE.graceDays}일 (신규 건설 불가)`); return 'grace'; }
   } else if (state === 'grace' && s.step >= expiresAt + LICENSE.graceDays * STEPS_PER_DAY) {
-    notify(s, 'error', `${name} 유예 종료 — 관련 시설이 정지됩니다 (시설은 삭제되지 않음)`);
+    notify(s, 'error', `${name} 유예 종료 — 관련 시설이 정지됩니다 (시설은 삭제되지 않음)`, true);
     return 'expired';
   }
   return state;
@@ -193,12 +193,12 @@ export function updateRights(s: GameState) {
     if (licOk) quotaLeft.set(key, left - need);
     const landOk = f.land.mode === 'own' || f.land.state !== 'expired';
     const ok = licOk && landOk;
-    if (f.rightsOk && !ok && f.status === 'operating') notify(s, 'error', `권리 상실로 정지: ${s.regions[f.regionId].name} ${FACILITY_TYPES[f.type].name} #${f.id}`);
+    if (f.rightsOk && !ok && f.status === 'operating') notify(s, 'error', `권리 상실로 정지: ${s.regions[f.regionId].name} ${FACILITY_TYPES[f.type].name} #${f.id}`, true);
     f.rightsOk = ok;
   }
   for (const l of s.lines) {
     const ok = licensesOf(s, l.a, 'TRN').length > 0 && licensesOf(s, l.b, 'TRN').length > 0;
-    if (l.rightsOk && !ok && l.status === 'operating') notify(s, 'error', `송전 사업권 상실로 선로 정지: #${l.id}`);
+    if (l.rightsOk && !ok && l.status === 'operating') notify(s, 'error', `송전 사업권 상실로 선로 정지: #${l.id}`, true);
     l.rightsOk = ok;
   }
 }

@@ -6,11 +6,12 @@ import { acceptOffer } from './contracts';
 import { inspectCost, thermalBlocked } from './environment';
 import { bailout, disposeFacility, repayLoan, sellFacility, takeLoan } from './finance';
 import { facilitySpec, lineSpec, neighbors } from './geo';
-import { hubCapacityKw, hubUsedKw } from './hub';
-import { mods, startResearch } from './research';
+import { pickPoint } from './hub';
+import { emptyStats, rushRepair, startExpansion } from './ops';
+import { has, mods, startResearch } from './research';
 import { acquireLicense, buyLand, canBuildRights, licensesOf, newLease, renewLease, renewLicense, sellLand, updateRights } from './rights';
 import { STEPS_PER_DAY, roundHalfEven, splitByWeights } from './units';
-import type { Build, Command, Facility, GameState, Line } from './types';
+import type { Build, Command, Facility, GameState, Line, PlanCmd } from './types';
 
 function newBuild(capex: number, days: number): Build {
   return {
@@ -35,7 +36,7 @@ export function cancelRefund(f: Build): { releaseReserve: number; cashRefund: nu
 }
 
 export function underConstruction(s: GameState) {
-  return s.facilities.filter((f) => f.status === 'construction').length + s.lines.filter((l) => l.status === 'construction').length;
+  return s.facilities.filter((f) => f.status === 'construction' || f.expansion).length + s.lines.filter((l) => l.status === 'construction').length;
 }
 
 /** 건설 가능 여부와 거부 사유 (UI 미리보기와 실제 검증이 같은 함수를 쓴다) */
@@ -44,9 +45,10 @@ export function buildCheck(s: GameState, regionId: number, type: Facility['type'
   const def = FACILITY_TYPES[type];
   return discretionaryBlocked(s)
     ?? (underConstruction(s) >= mods(s).concurrent ? `동시 건설은 ${mods(s).concurrent}건까지 (연구로 늘릴 수 있음)` : null)
+    ?? (type === 'nuclear' && !has(s, 'gen3') ? '연구 필요: 핵분열 발전 (발전 분기 3단계)' : null)
     ?? (type === 'thermal' && thermalBlocked(s, regionId) ? '환경 규제: 이 지역은 환경 지표가 1.0을 넘어 신규 열발전이 금지됩니다' : null)
     ?? canBuildRights(s, regionId, type, def.kind === 'substation' ? 0 : spec.capKw)
-    ?? (def.kind !== 'substation' && hubUsedKw(s, regionId) + spec.capKw > hubCapacityKw(s, regionId) ? '접속 용량 부족 — 변전소를 지으세요' : null)
+    ?? (def.kind !== 'substation' && pickPoint(s, regionId, spec.capKw) === null ? '접속 용량 부족 — 변전소를 지으세요 (한 접속점에 들어가야 합니다)' : null)
     ?? (availableCash(s) < spec.capexMinor + newLease(s, regionId, type, spec.capKw).depositMinor ? '사용 가능 자금 부족' : null);
 }
 
@@ -82,6 +84,7 @@ export function applyCommand(s: GameState, cmd: Command, auto?: string) {
         dischargeAtMinor: Math.round(region.pBaseMinor * 1.1), chargeAtMinor: Math.round(region.pBaseMinor * 0.95),
         lastStorageWh: 0, hubAddKw: spec.hubAddKw, effPpm: STORAGE_EFF_PPM + mods(s).effAddPpm,
         land: newLease(s, cmd.regionId, cmd.type, spec.capKw), rightsOk: true,
+        pointId: def.kind === 'substation' ? 0 : pickPoint(s, cmd.regionId, capKw) ?? 0, modules: 0, expansion: null, stats: emptyStats(),
       };
       s.facilities.push(f);
       s.reserved += spec.capexMinor;
@@ -210,7 +213,50 @@ export function applyCommand(s: GameState, cmd: Command, auto?: string) {
     case 'setAutomation': { s.automation[cmd.key] = cmd.on; s.automation.failures = {}; return; }
     case 'setAutomationBudget': { s.automation.dailyBudgetMinor = Math.max(0, cmd.dailyBudgetMinor); return; }
     case 'bailout': return bailout(s);
+    case 'expand': {
+      const f = fac(s, cmd.facilityId);
+      if (!f) return notify(s, 'error', '확장 거부: 시설 없음');
+      return startExpansion(s, f, who);
+    }
+    case 'rushRepair': return rushRepair(s, cmd.target, cmd.id, who);
+    case 'planAdd': {
+      if (s.plan.length >= 30) return notify(s, 'error', '계획은 30건까지 담을 수 있습니다');
+      s.plan.push({ id: s.nextId++, cmd: cmd.item });
+      return;
+    }
+    case 'planRemove': { s.plan = s.plan.filter((p) => p.id !== cmd.id); return; }
+    case 'planMove': {
+      const i = s.plan.findIndex((p) => p.id === cmd.id);
+      const j = i + cmd.dir;
+      if (i < 0 || j < 0 || j >= s.plan.length) return;
+      [s.plan[i], s.plan[j]] = [s.plan[j], s.plan[i]];
+      return;
+    }
+    case 'planClear': { s.plan = []; s.planBlocked = null; return; }
+    case 'planPause': { s.planPaused = cmd.paused; return; }
   }
+}
+
+export function planCheck(s: GameState, c: PlanCmd): string | null {
+  return c.kind === 'build' ? buildCheck(s, c.regionId, c.type, c.size) : lineCheck(s, c.a, c.b, c.size);
+}
+
+export function planCost(s: GameState, c: PlanCmd): number {
+  return c.kind === 'build' ? facilitySpec(s, c.type, c.size).capexMinor : lineSpec(s, c.a, c.b, c.size).capexMinor;
+}
+
+/** 계획 건설 (Q32 C): DI마다 맨 앞부터 조건(자금·사업권·접속·동시 건설)이 맞는 항목을 승인한다.
+ *  순서를 지키기 위해 맨 앞 항목이 막히면 멈추고 사유를 표시한다. */
+export function planDI(s: GameState) {
+  if (s.planPaused || s.plan.length === 0) { s.planBlocked = null; return; }
+  while (s.plan.length) {
+    const head = s.plan[0];
+    const why = planCheck(s, head.cmd);
+    if (why) { s.planBlocked = why; return; }
+    s.plan.shift();
+    applyCommand(s, head.cmd, '계획');
+  }
+  s.planBlocked = null;
 }
 
 export { REQUIRED_LICENSE };

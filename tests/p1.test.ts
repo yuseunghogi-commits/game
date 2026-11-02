@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  addCapital, advance, createGame, hubCapacityKw, issue, ledgerCash, neighbors, pendingCash, step, type GameState,
+  addCapital, advance, createGame, hubCapacityKw, issue, ledgerCash, neighbors, pendingCash, step, SCHEMA_VERSION, type GameState,
 } from '../src/sim/sim';
 import { EVENTS, HUB_BASE_KW, generateRegions, specOf } from '../src/sim/data';
 import { deserialize, serialize, stateHash } from '../src/sim/save';
@@ -190,7 +190,7 @@ describe('P1 결정론·저장', () => {
       dayAcc: {}, lastPostedDay: 7, dayStartCash: 1_500_000_00 - spec.capexMinor, history: [], notices: [],
     };
     const m = deserialize(JSON.stringify({ schemaVersion: 1, hash: stateHash(v1), state: v1 }));
-    expect(m.schemaVersion).toBe(3);
+    expect(m.schemaVersion).toBe(SCHEMA_VERSION);
     expect(m.licenses.length).toBeGreaterThan(0);
     expect(m.cash).toBe(ledgerCash(m) + pendingCash(m));
     advance(m, STEPS_PER_DAY * 3);
