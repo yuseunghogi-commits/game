@@ -24,6 +24,10 @@ npm run build      # 타입 검사 + 배포용 빌드 (dist/)
   npm run desktop:build   # src-tauri/target/release/bundle/ 에 설치 파일 생성
   npm run desktop:dev     # 개발 모드 창
   ```
+- **주의 (cargo로 직접 빌드할 때)**: `npm run desktop:build`(= `tauri build`)를 쓰지 않고 `cargo build --release`만 하면 화면 파일이 exe에 들어가지 않아 `localhost` 연결 오류가 난다. 반드시 `--features tauri/custom-protocol`을 붙인다.
+  ```bash
+  npm run build && cd src-tauri && cargo build --release --target x86_64-pc-windows-gnu --features tauri/custom-protocol
+  ```
 
 ## 조작
 | 조작 | 방법 |
