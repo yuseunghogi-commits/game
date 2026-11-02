@@ -6,13 +6,13 @@ import type { GameState } from '../sim/sim';
 import { latLonToVec } from '../world/terrain';
 import { envIndex } from '../sim/environment';
 import { STEPS_PER_DAY } from '../sim/units';
-
-const TYPE_COLOR: Record<string, number> = { thermal: 0xf2b248, solar: 0x4fd1e0, wind: 0xdfe6ee, storage: 0x6ccb8b, substation: 0x8b95a1 };
+import { QUALITY, type Quality } from './settings';
+import { buildFacilityModel, setModelState, spinRotors } from './models';
 
 export type Overlay = 'none' | 'price' | 'env' | 'mine';
 
 export interface Globe {
-  update(s: GameState, selected: number | null, overlay?: Overlay): void;
+  update(s: GameState, selected: number | null, overlay?: Overlay, selectedFacility?: number | null): void;
   dispose(): void;
   focus(lat: number, lon: number): void;
   labels: HTMLElement;
@@ -28,9 +28,11 @@ export async function createGlobe(
   s: GameState,
   onProgress: (p: number) => void,
   onPick: (regionId: number) => void,
+  opts: { quality?: Quality; onPickFacility?: (facilityId: number) => void } = {},
 ): Promise<Globe> {
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  const Q = QUALITY[opts.quality ?? 'high'];
+  const renderer = new THREE.WebGLRenderer({ antialias: Q.antialias, alpha: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, Q.pixelRatio));
   renderer.setSize(host.clientWidth, host.clientHeight);
   renderer.setClearColor(0x000000, 0);
   host.appendChild(renderer.domElement);
@@ -46,7 +48,7 @@ export async function createGlobe(
   controls.rotateSpeed = 0.5;
 
   // ---- 텍스처 생성 (워커) ----
-  const W = 2048, H = 1024;
+  const W = Q.tex, H = Q.tex / 2;
   const tex = await new Promise<{ day: Uint8ClampedArray; night: Uint8ClampedArray }>((resolve) => {
     const worker = new Worker(new URL('./planetTexture.worker.ts', import.meta.url), { type: 'module' });
     worker.onmessage = (e) => {
@@ -95,7 +97,7 @@ export async function createGlobe(
       }`,
   });
   // 경도 0이 +Z가 되도록 SphereGeometry UV를 맞춘다 (u=0.5 ↔ lon 0).
-  const planet = new THREE.Mesh(new THREE.SphereGeometry(1, 128, 96), planetMat);
+  const planet = new THREE.Mesh(new THREE.SphereGeometry(1, Q.segments, Math.round(Q.segments * 0.75)), planetMat);
   planet.rotation.y = -Math.PI / 2;
   scene.add(planet);
 
@@ -118,6 +120,7 @@ export async function createGlobe(
     new THREE.MeshLambertMaterial({ map: cloudTex, transparent: true, opacity: 0.55, depthWrite: false }),
   );
   clouds.rotation.y = -Math.PI / 2;
+  clouds.visible = Q.clouds;
   scene.add(clouds);
   const sun = new THREE.DirectionalLight(0xffffff, 2.2);
   scene.add(sun);
@@ -148,37 +151,47 @@ export async function createGlobe(
     return el;
   });
 
-  // 시설 표식 (지역 중심 주변 작은 기둥)
+  // 시설 모형 (지역 중심 주변에 배치, 유형별 저폴리 모형)
   const facGroup = new THREE.Group();
   scene.add(facGroup);
-  const facGeo = new THREE.CylinderGeometry(0.009, 0.012, 0.05, 10);
-  facGeo.translate(0, 0.025, 0);
-  facGroup.renderOrder = 2;
-  const facMeshes = new Map<number, THREE.Mesh>();
+  const facMeshes = new Map<number, { g: THREE.Group; type: string; size: string; modules: number }>();
+  const regionPx = Math.min(1, Math.sqrt(12 / s.regions.length)); // 지역이 많으면 배치 반경을 줄인다
 
-  function placeFacility(id: number, regionLat: number, regionLon: number, idx: number) {
+  function placeFacility(f: GameState['facilities'][number], regionLat: number, regionLon: number, idx: number) {
     const ang = idx * 2.399963 + 0.6;
-    const rad = 2.2 + Math.sqrt(idx) * 1.1;
+    const rad = (3.6 + Math.sqrt(idx) * 2.4) * regionPx;
     const lat = regionLat + Math.sin(ang) * rad;
     const lon = regionLon + (Math.cos(ang) * rad) / Math.max(0.3, Math.cos((regionLat * Math.PI) / 180));
-    const p = vec(lat, lon, 1.002);
-    const m = new THREE.Mesh(facGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true }));
-    m.renderOrder = 2;
-    m.position.copy(p);
-    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), p.clone().normalize());
-    facGroup.add(m);
-    facMeshes.set(id, m);
-    return m;
+    const p = vec(lat, lon, 1.001);
+    const g = buildFacilityModel(f.type, f.size, f.modules);
+    g.position.copy(p);
+    g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), p.clone().normalize());
+    g.rotateY(((f.id * 137) % 360) * (Math.PI / 180));
+    g.userData.facId = f.id;
+    g.scale.multiplyScalar(regionPx < 1 ? 0.6 + 0.4 * regionPx : 1);
+    facGroup.add(g);
+    const rec = { g, type: f.type, size: f.size, modules: f.modules };
+    facMeshes.set(f.id, rec);
+    return rec;
   }
 
-  // 클릭으로 지역 선택 (표식 근처)
+  // 클릭: 시설 모형 → 시설 상세, 그 외 → 가까운 지역 선택
   const ray = new THREE.Raycaster();
+  let downAt = { x: 0, y: 0 };
+  renderer.domElement.addEventListener('pointerdown', (ev) => { downAt = { x: ev.clientX, y: ev.clientY }; });
   renderer.domElement.addEventListener('pointerup', (ev) => {
     if ((ev as PointerEvent).button !== 0) return;
+    if (Math.hypot(ev.clientX - downAt.x, ev.clientY - downAt.y) > 6) return; // 끌기(회전)는 클릭이 아님
     const rect = renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
     ray.setFromCamera(ndc, camera);
     const hit = ray.intersectObject(planet)[0];
+    const fh = ray.intersectObject(facGroup, true)[0];
+    if (fh && (!hit || fh.distance <= hit.distance + 0.01) && opts.onPickFacility) {
+      let o: THREE.Object3D | null = fh.object;
+      while (o && o.userData.facId === undefined) o = o.parent;
+      if (o) { opts.onPickFacility(o.userData.facId as number); return; }
+    }
     if (!hit) return;
     let best = -1, bestD = 0.12;
     s.regions.forEach((r) => {
@@ -200,6 +213,8 @@ export async function createGlobe(
   let state = s;
   let selectedId: number | null = null;
   let overlay: Overlay = 'none';
+  let selectedFac: number | null = null;
+  let lastTime = 0;
   const tmpColor = new THREE.Color();
   const envOf = (i: number) => envIndex(state, i);
   const tmp = new THREE.Vector3();
@@ -257,8 +272,10 @@ export async function createGlobe(
     }
     controls.update();
 
-    // 라벨 위치 (뒷면이면 숨김)
+    // 라벨 위치 (뒷면이면 숨김). 지역이 많으면 가까이 볼 때나 내 지역만 이름을 띄운다.
     const camDir = camera.position.clone().normalize();
+    const crowded = state.regions.length > 24 && camera.position.length() > 3.3;
+    const present = crowded ? new Set([...state.facilities.map((f) => f.regionId), ...state.licenses.map((l) => l.regionId)]) : null;
     state.regions.forEach((r, i) => {
       const p = vec(r.lat, r.lon, 1.01);
       const facing = p.clone().normalize().dot(camDir);
@@ -267,8 +284,9 @@ export async function createGlobe(
       const x = (tmp.x * 0.5 + 0.5) * host.clientWidth;
       const y = (-tmp.y * 0.5 + 0.5) * host.clientHeight;
       el.style.transform = `translate(${x}px, ${y}px)`;
-      el.style.opacity = facing > 0.15 ? '1' : '0';
-      el.style.pointerEvents = facing > 0.15 ? 'auto' : 'none';
+      const show = facing > 0.15 && (!present || present.has(r.id) || selectedId === r.id);
+      el.style.opacity = show ? '1' : '0';
+      el.style.pointerEvents = show ? 'auto' : 'none';
       el.classList.toggle('selected', selectedId === r.id);
       const mk = markers[i];
       const mat = mk.material as THREE.MeshBasicMaterial;
@@ -284,23 +302,24 @@ export async function createGlobe(
       mk.scale.setScalar(selectedId === r.id ? 1.6 * pulse : overlay === 'none' ? 1 : 0.8 + ov * 1.6);
     });
 
-    // 시설
+    // 시설 모형: 건설 중 = 반투명 골조, 정지 = 어둡게, 고장·전조 = 머리 위 표시등, 풍력 날개는 출력에 비례해 회전
     const perRegion = new Map<number, number>();
+    const dt = lastTime ? Math.min(100, time - lastTime) : 16;
+    lastTime = time;
+    const live = new Set<number>();
     for (const f of state.facilities) {
+      live.add(f.id);
       const idx = perRegion.get(f.regionId) ?? 0;
       perRegion.set(f.regionId, idx + 1);
       const r = state.regions[f.regionId];
-      const mesh = facMeshes.get(f.id) ?? placeFacility(f.id, r.lat, r.lon, idx);
-      const mat = mesh.material as THREE.MeshBasicMaterial;
-      mat.color.setHex(TYPE_COLOR[f.type]);
-      const building = f.status === 'construction';
-      mat.opacity = building ? 0.35 + 0.25 * Math.sin(time / 250) : f.online ? 1 : 0.4;
-      const sz = f.size === 'large' ? 1.6 : f.size === 'medium' ? 1.2 : 0.9;
-      mesh.scale.set(sz, building ? sz * 0.5 : sz * (0.6 + (f.outputKw / f.capKw) * 0.6), sz);
+      let rec = facMeshes.get(f.id);
+      if (rec && rec.modules !== f.modules) { facGroup.remove(rec.g); facMeshes.delete(f.id); rec = undefined; } // 모듈 추가 → 모형 교체
+      rec ??= placeFacility(f, r.lat, r.lon, idx);
+      const mode = f.status === 'construction' ? 'build' : !f.rightsOk || !f.online || f.health.s === 'failed' ? 'off' : 'on';
+      setModelState(rec.g, mode, f.health.s, time, f.id === selectedFac);
+      if (f.type === 'wind') spinRotors(rec.g, mode === 'on' ? (f.outputKw / Math.max(1, f.capKw)) * dt * 0.012 : 0);
     }
-    for (const [id, mesh] of facMeshes) {
-      if (!state.facilities.some((f) => f.id === id)) { facGroup.remove(mesh); facMeshes.delete(id); }
-    }
+    for (const [id, rec] of facMeshes) if (!live.has(id)) { facGroup.remove(rec.g); facMeshes.delete(id); }
 
     for (const l of state.lines) {
       const o = lineMeshes.get(l.id) ?? makeLine(l.id, l.a, l.b);
@@ -326,7 +345,7 @@ export async function createGlobe(
 
   return {
     labels,
-    update(next, selected, ov) { state = next; selectedId = selected; if (ov) overlay = ov; },
+    update(next, selected, ov, fac) { state = next; selectedId = selected; if (ov) overlay = ov; selectedFac = fac ?? null; },
     focus(lat, lon) { focusTarget = vec(lat, lon).normalize(); },
     dispose() { stopped = true; window.removeEventListener('resize', onResize); controls.dispose(); renderer.dispose(); },
   };

@@ -241,6 +241,15 @@ export function step(s: GameState) {
   if (s.step % STEPS_PER_DAY === 0) processDayEnd(s);
 }
 
+/** 대기 중인 명령을 지금 스텝 경계에서 적용한다 (일시정지 중 UI 반응용).
+ *  step()도 맨 앞에서 같은 일을 하므로, 미리 적용해도 결과는 같다. */
+export function flushCommands(s: GameState) {
+  if (!s.pending.length || s.insolvency === 'liquidated') return;
+  const cmds = s.pending.sort((a, b) => a.seq - b.seq);
+  s.pending = [];
+  for (const c of cmds) applyCommand(s, c.cmd, c.auto);
+}
+
 export function advance(s: GameState, steps: number) {
   for (let i = 0; i < steps; i++) step(s);
 }
