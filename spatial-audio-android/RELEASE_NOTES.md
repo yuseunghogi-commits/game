@@ -1,0 +1,22 @@
+## 🎧 3D 사운드 — 유튜브·게임 소리를 헤드폰용 3D 입체 음향으로
+
+아래 **Assets** 에서 기기에 맞는 파일을 받으세요.
+
+| 파일 | 기기 |
+|---|---|
+| **3DSound-Android.apk** | 안드로이드 폰 (Android 8 이상, 강력 3D 모드는 10 이상) |
+| **3DSound-Windows.zip** | Windows 노트북/PC (Java 포함, 설치 불필요) |
+| 3DSound-Mac-Linux.jar | Mac / Linux (Java 17 이상 필요) |
+
+### 📱 안드로이드
+1. APK 설치 (이전 버전이 있으면 덮어쓰기 — 안 되면 지우고 설치)
+2. 앱 → **🔑 강력 모드 권한 설정** → 안내대로 Shizuku 로 권한 받기 (처음 1번)
+3. **강력 3D 모드** 선택 → **3D 음향 켜기** → 소리 공유 창에서 **시작**
+
+### 💻 Windows
+1. 무료 [VB-CABLE](https://vb-audio.com/Cable/) 설치 (관리자 권한으로 실행 → Install → 재부팅)
+2. 작업표시줄 🔊 → 출력 장치 **CABLE Input**
+3. zip 압축 풀고 **3DSound.exe** → 입력 **CABLE Output**, 출력 **내 헤드폰** → ▶ 시작
+
+### 🎚 엔진
+HRTF 머리 모델(양 귀 시간차·머리 그림자·귓바퀴) + 가상 스피커 ±30°~±80° + 벽 반사음 + FDN 잔향
