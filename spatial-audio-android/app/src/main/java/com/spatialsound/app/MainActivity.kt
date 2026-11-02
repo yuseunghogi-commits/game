@@ -39,6 +39,10 @@ class MainActivity : Activity() {
     private lateinit var textStatus: TextView
     private lateinit var labelReverb: TextView
     private lateinit var labelWidth: TextView
+    private lateinit var headGroup: android.widget.LinearLayout
+    private lateinit var switchHead: Switch
+    private lateinit var switchHeadInvert: Switch
+    private lateinit var textHead: TextView
     private lateinit var seekWidth: SeekBar
     private lateinit var radioStrong: RadioButton
     private lateinit var radioBasic: RadioButton
@@ -67,6 +71,10 @@ class MainActivity : Activity() {
         textStatus = findViewById(R.id.textStatus)
         labelReverb = findViewById(R.id.labelReverb)
         labelWidth = findViewById(R.id.labelWidth)
+        headGroup = findViewById(R.id.headGroup)
+        switchHead = findViewById(R.id.switchHead)
+        switchHeadInvert = findViewById(R.id.switchHeadInvert)
+        textHead = findViewById(R.id.textHead)
         seekWidth = findViewById(R.id.seekWidth)
         radioStrong = findViewById(R.id.radioStrong)
         radioBasic = findViewById(R.id.radioBasic)
@@ -143,6 +151,9 @@ class MainActivity : Activity() {
         labelWidth.visibility = wv
         seekWidth.visibility = wv
         seekWidth.progress = settings.width
+        headGroup.visibility = wv
+        switchHead.isChecked = settings.headTracking
+        switchHeadInvert.isChecked = settings.headInvert
         spinnerPreset.setSelection(settings.presetIndex.coerceIn(0, SOUND_PRESETS.lastIndex))
         spinnerReverb.setSelection(settings.reverbPreset.coerceIn(0, REVERB_NAMES.lastIndex))
         seekVirtualizer.progress = settings.virtualizerStrength
@@ -189,6 +200,19 @@ class MainActivity : Activity() {
             if (!binding && checked && settings.strongMode) { commit(settings.copy(strongMode = false)); bindUi() }
         }
         findViewById<Button>(R.id.buttonDump).setOnClickListener { showDumpHelp() }
+        switchHead.setOnCheckedChangeListener { _, checked ->
+            if (binding) return@setOnCheckedChangeListener
+            commit(settings.copy(headTracking = checked))
+            if (checked && !HeadTracker.hasSensor(this)) showHeadHelp()
+        }
+        switchHeadInvert.setOnCheckedChangeListener { _, checked ->
+            if (!binding) commit(settings.copy(headInvert = checked))
+        }
+        textHead.setOnClickListener { showHeadHelp() }
+        findViewById<Button>(R.id.buttonRecenter).setOnClickListener {
+            Strong3DService.instance?.recenterHead()
+            Toast.makeText(this, "지금 보는 방향을 정면으로 맞췄습니다", Toast.LENGTH_SHORT).show()
+        }
 
         spinnerPreset.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(p: AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
@@ -285,7 +309,41 @@ class MainActivity : Activity() {
         textStatus.text = lines.joinToString("\n")
     }
 
+    private fun renderHead(s: EngineState.Snapshot) {
+        textHead.text = when {
+            !settings.headTracking -> "꺼짐 — 켜면 이어폰 센서로 머리 방향을 따라갑니다"
+            Build.VERSION.SDK_INT < 33 -> "⚠️ Android 13 이상에서만 지원됩니다"
+            !s.strongRunning -> "강력 3D 모드가 켜지면 시작됩니다"
+            s.headSensor.isNotEmpty() -> {
+                val yaw = s.headYaw.toInt()
+                val dir = when { yaw > 3 -> "오른쪽 ${yaw}°"; yaw < -3 -> "왼쪽 ${-yaw}°"; else -> "정면" }
+                "✅ 센서 연결됨 (${s.headSensor})\n현재 머리 방향: $dir"
+            }
+            else -> "⚠️ 이어폰 머리 센서를 찾지 못했습니다 (여기를 눌러 안내 보기)\n→ 이어폰이 'Android 헤드 트래킹'을 지원해야 합니다"
+        }
+    }
+
+    private fun showHeadHelp() {
+        AlertDialog.Builder(this)
+            .setTitle("헤드 트래킹 안내")
+            .setMessage(
+                "고개를 돌려도 소리가 공간의 같은 자리에 머물러, 진짜 스피커 앞에 있는 느낌을 줍니다.\n\n" +
+                "이어폰의 머리 방향 센서를 써야 해서, 이어폰이 Android 표준 헤드 트래킹을 지원해야 합니다 " +
+                "(Android 13+). 지금은 그 센서가 보이지 않습니다.\n\n" +
+                "해 볼 것:\n" +
+                "• 이어폰을 귀에 착용하고 연결된 상태인지 확인\n" +
+                "• 갤럭시 버즈: Galaxy Wearable 앱 → 이어버드 설정 → '360 오디오'/'헤드 트래킹' 켜기, " +
+                "버즈 소프트웨어 최신 업데이트\n" +
+                "• 설정 → 연결 → 블루투스 → 이어폰 ⚙️ → '공간 음향/헤드 트래킹' 항목이 있으면 켜기\n\n" +
+                "그래도 안 보이면 그 이어폰은 다른 앱에 센서를 공개하지 않는 모델입니다 " +
+                "(삼성 버즈는 삼성 자체 기능에만 센서를 쓰는 경우가 많습니다)."
+            )
+            .setPositiveButton("확인", null)
+            .show()
+    }
+
     private fun renderStrongStatus(s: EngineState.Snapshot, lines: MutableList<String>) {
+        renderHead(s)
         val dump = SessionMuter.hasDumpPermission(this)
         lines += if (dump) "🔑 원래 소리 음소거 권한: 있음" else "🔑 원래 소리 음소거 권한: 없음 → 위 '🔑 강력 모드 권한 설정' 버튼"
         when {

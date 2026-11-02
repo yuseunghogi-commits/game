@@ -114,6 +114,49 @@
             android:layout_height="wrap_content"
             android:max="100" />
 
+        <LinearLayout
+            android:id="@+id/headGroup"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="#FF1E1E2A"
+            android:orientation="vertical"
+            android:padding="10dp">
+
+            <Switch
+                android:id="@+id/switchHead"
+                style="@style/OptionSwitch"
+                android:text="🧭 헤드 트래킹 — 고개를 돌려도 소리가 제자리에" />
+
+            <TextView
+                android:id="@+id/textHead"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#FFAAAAC0"
+                android:textSize="13sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/buttonRecenter"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="정면 다시 맞추기" />
+
+                <Switch
+                    android:id="@+id/switchHeadInvert"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="방향 반대로"
+                    android:textColor="#FFDDDDEE" />
+            </LinearLayout>
+        </LinearLayout>
+
         <TextView
             android:id="@+id/labelSpace"
             style="@style/SliderLabel" />

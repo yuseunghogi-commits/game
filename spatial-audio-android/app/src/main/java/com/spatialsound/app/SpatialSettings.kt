@@ -23,6 +23,10 @@ data class SpatialSettings(
     val strongMode: Boolean = false,
     /** 강력 모드: 좌우 넓이 0..100 (가상 스피커 각도 ±30°~±70° + 좌우 차이 강조) */
     val width: Int = 55,
+    /** 강력 모드: 헤드 트래킹 (이어폰 센서로 고개를 돌려도 소리 위치 고정) */
+    val headTracking: Boolean = false,
+    /** 헤드 트래킹 방향이 반대로 느껴질 때 */
+    val headInvert: Boolean = false,
 ) {
     fun save(context: Context) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
@@ -36,6 +40,8 @@ data class SpatialSettings(
             .putInt("preset", presetIndex)
             .putBoolean("strongMode", strongMode)
             .putInt("width", width)
+            .putBoolean("headTracking", headTracking)
+            .putBoolean("headInvert", headInvert)
             .apply()
     }
 
@@ -56,6 +62,8 @@ data class SpatialSettings(
                 presetIndex = p.getInt("preset", d.presetIndex),
                 strongMode = p.getBoolean("strongMode", d.strongMode),
                 width = p.getInt("width", d.width),
+                headTracking = p.getBoolean("headTracking", d.headTracking),
+                headInvert = p.getBoolean("headInvert", d.headInvert),
             )
         }
     }

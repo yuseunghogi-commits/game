@@ -40,6 +40,17 @@ class BinauralProcessor(private val fs: Int) {
         pending = s
     }
 
+    /**
+     * 헤드 트래킹: 머리가 정면에서 돌아간 각도(도, 오른쪽 +).
+     * 가상 스피커/반사음을 반대로 돌려서 소리가 공간에 고정돼 들리게 한다. 아무 스레드에서나 설정 가능.
+     */
+    @Volatile var headYawDeg = 0.0
+
+    private var appliedYaw = 0.0
+    private var oldSources: Array<Src>? = null
+    private var fadePos = 0
+    private val fadeLen = samples(0.03)
+
     // --- 입력 지연선 ---------------------------------------------------------
     private val size = 1 shl 15 // 48kHz 기준 680ms
     private val mask = size - 1
@@ -117,7 +128,11 @@ class BinauralProcessor(private val fs: Int) {
 
     /** 방위각(도, 0=정면, +=오른쪽)에 음원 하나 배치 */
     private fun place(input: Int, azDeg: Double, delaySec: Double, gain: Double, cutoffHz: Double, pinna: Boolean): Src {
-        val az = azDeg / 180.0 * PI
+        // 머리가 오른쪽으로 돌면 소리는 머리 기준으로 왼쪽으로 이동
+        var rel = (azDeg - appliedYaw) % 360.0
+        if (rel > 180) rel -= 360.0
+        if (rel < -180) rel += 360.0
+        val az = rel / 180.0 * PI
         // 오른쪽 귀는 +90°, 왼쪽 귀는 -90° 방향
         val thR = angleBetween(az, PI / 2)
         val thL = angleBetween(az, -PI / 2)
@@ -141,6 +156,16 @@ class BinauralProcessor(private val fs: Int) {
         var d = abs(a - b) % (2 * PI)
         if (d > PI) d = 2 * PI - d
         return d
+    }
+
+    /** 음원 배치를 새로 만들고, 이전 배치에서 30ms 동안 부드럽게 넘어간다 (딸깍 소리 방지) */
+    private fun rebuildWithFade() {
+        val old = sources
+        rebuild()
+        if (old.isNotEmpty()) {
+            oldSources = old
+            fadePos = 0
+        }
     }
 
     private fun rebuild() {
@@ -260,7 +285,13 @@ class BinauralProcessor(private val fs: Int) {
             bass = s.bassStrength / 1000f
             width = s.width / 100f
             roomIdx = s.reverbPreset
-            rebuild()
+            rebuildWithFade()
+        }
+        // 헤드 트래킹: 1.5° 이상 움직였고 이전 전환이 끝났으면 새 각도로
+        val yaw = headYawDeg
+        if (oldSources == null && abs(yaw - appliedYaw) >= 1.5) {
+            appliedYaw = yaw
+            rebuildWithFade()
         }
         if (bypass) return
 
@@ -290,6 +321,20 @@ class BinauralProcessor(private val fs: Int) {
                 val b = when (src.input) { 0 -> bufL; 1 -> bufR; else -> bufS }
                 outL += src.gainL * ear(src.left, b, src.baseDelay, src.lpCoef)
                 outR += src.gainR * ear(src.right, b, src.baseDelay, src.lpCoef)
+            }
+            val olds = oldSources
+            if (olds != null) {
+                var oL = 0f
+                var oR = 0f
+                for (src in olds) {
+                    val b = when (src.input) { 0 -> bufL; 1 -> bufR; else -> bufS }
+                    oL += src.gainL * ear(src.left, b, src.baseDelay, src.lpCoef)
+                    oR += src.gainR * ear(src.right, b, src.baseDelay, src.lpCoef)
+                }
+                val t = fadePos.toFloat() / fadeLen
+                outL = oL + (outL - oL) * t
+                outR = oR + (outR - oR) * t
+                if (++fadePos >= fadeLen) oldSources = null
             }
 
             // 잔향: 왼쪽 소리의 잔향은 주로 왼쪽 귀에, 오른쪽은 오른쪽에 (반대쪽은 REV_CROSS 만큼)

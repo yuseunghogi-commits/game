@@ -50,6 +50,40 @@ class Strong3DService : Service() {
     private var muter: SessionMuter? = null
 
     private var processor: BinauralProcessor? = null
+    private var headTracker: HeadTracker? = null
+    private var headTick = 0
+
+    /** 센서 각도를 오디오 엔진에 계속 전달 (50Hz) */
+    private val headPump = object : Runnable {
+        override fun run() {
+            val t = headTracker ?: return
+            processor?.headYawDeg = t.yawDeg
+            // 화면 표시는 10Hz 면 충분
+            if (++headTick % 5 == 0) EngineState.update { it.copy(headYaw = t.yawDeg) }
+            main.postDelayed(this, 20)
+        }
+    }
+
+    private fun updateHeadTracking() {
+        if (settings.headTracking) {
+            val t = headTracker ?: HeadTracker(this, main) { publishState() }.also {
+                headTracker = it
+                it.start()
+                main.post(headPump)
+            }
+            t.invert = settings.headInvert
+        } else {
+            headTracker?.stop()
+            headTracker = null
+            main.removeCallbacks(headPump)
+            processor?.headYawDeg = 0.0
+        }
+        publishState()
+    }
+
+    fun recenterHead() {
+        headTracker?.recenter()
+    }
     private var settings = SpatialSettings()
     private var headphones = false
     private var headphoneName = ""
@@ -154,6 +188,7 @@ class Strong3DService : Service() {
         projection = p
 
         settings = SpatialSettings.load(this)
+        updateHeadTracking()
         audioManager.registerAudioDeviceCallback(deviceCallback, main)
         refreshDevices()
 
@@ -282,6 +317,8 @@ class Strong3DService : Service() {
         runCatching { record?.stop() } // 블로킹 read 깨우기
         worker?.join(500)
         worker = null
+        headTracker?.stop(); headTracker = null
+        main.removeCallbacks(headPump)
         runCatching { audioManager.unregisterAudioPlaybackCallback(playbackCallback) }
         muterHandler?.removeCallbacksAndMessages(null)
         val m = muter
@@ -293,7 +330,7 @@ class Strong3DService : Service() {
         runCatching { audioManager.unregisterAudioDeviceCallback(deviceCallback) }
         projection?.let { runCatching { it.unregisterCallback(projectionCallback); it.stop() } }
         projection = null
-        EngineState.update { it.copy(strongRunning = false, mutedApps = emptyList(), restrictedApps = emptySet()) }
+        EngineState.update { it.copy(strongRunning = false, mutedApps = emptyList(), restrictedApps = emptySet(), headTrackingOn = false, headSensor = "", headYaw = 0.0) }
         super.onDestroy()
     }
 
@@ -304,6 +341,7 @@ class Strong3DService : Service() {
     fun applySettings(s: SpatialSettings) {
         settings = s
         processor?.setParams(s)
+        updateHeadTracking()
         updateBypass()
         updateNotification()
     }
@@ -331,6 +369,8 @@ class Strong3DService : Service() {
                 dumpGranted = SessionMuter.hasDumpPermission(this),
                 mutedApps = m?.mutedPackages ?: emptyList(),
                 restrictedApps = m?.restrictedPackages ?: emptySet(),
+                headTrackingOn = headTracker != null,
+                headSensor = if (headTracker?.available == true) headTracker?.sensorName.orEmpty() else "",
             )
         }
     }

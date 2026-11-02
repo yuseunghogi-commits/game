@@ -21,6 +21,10 @@ object EngineState {
         val mutedApps: List<String> = emptyList(),
         /** 캡처를 막아 둔 앱 (강력 모드 적용 불가) */
         val restrictedApps: Set<String> = emptySet(),
+        // --- 헤드 트래킹 ---
+        val headTrackingOn: Boolean = false,
+        val headSensor: String = "",
+        val headYaw: Double = 0.0,
     )
 
     @Volatile
