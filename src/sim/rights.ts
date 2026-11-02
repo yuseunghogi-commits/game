@@ -133,10 +133,11 @@ export function sellLand(s: GameState, f: Facility) {
 
 // ---------- 매일: 수수료·임대료, 상태 전이, 알림, 운영 가능 판정 ----------
 
-function transition(s: GameState, expiresAt: number, state: License['state'], name: string): License['state'] {
+function transition(s: GameState, expiresAt: number, state: License['state'], name: string, autoHandled = false): License['state'] {
   const daysLeft = Math.ceil((expiresAt - s.step) / STEPS_PER_DAY);
   if (state === 'active') {
-    if (LICENSE.alertDays.includes(daysLeft)) notify(s, 'warn', `${name} 만료 ${daysLeft}일 전`);
+    // 자동 갱신이 처리할 항목은 만료 예정 알림을 생략한다 (알림 과부하 방지)
+    if (LICENSE.alertDays.includes(daysLeft) && !autoHandled) notify(s, 'warn', `${name} 만료 ${daysLeft}일 전`);
     if (s.step >= expiresAt) { notify(s, 'warn', `${name} 만료 — 유예 ${LICENSE.graceDays}일 (신규 건설 불가)`); return 'grace'; }
   } else if (state === 'grace' && s.step >= expiresAt + LICENSE.graceDays * STEPS_PER_DAY) {
     notify(s, 'error', `${name} 유예 종료 — 관련 시설이 정지됩니다 (시설은 삭제되지 않음)`);
@@ -147,12 +148,12 @@ function transition(s: GameState, expiresAt: number, state: License['state'], na
 
 export function rightsDay(s: GameState, day: number) {
   for (const l of s.licenses) {
-    l.state = transition(s, l.expiresAt, l.state, `${s.regions[l.regionId].name} ${LICENSE_NAMES[l.type]}`);
+    l.state = transition(s, l.expiresAt, l.state, `${s.regions[l.regionId].name} ${LICENSE_NAMES[l.type]}`, s.automation.autoRenew && l.autoRenew);
     if (l.state !== 'expired') post(s, `D${day}:fee:${l.id}`, 'license', 'cash', l.feePerDayMinor, `사업권 수수료 #${l.id}`);
   }
   for (const f of s.facilities) {
     if (f.land.mode === 'lease') {
-      f.land.state = transition(s, f.land.expiresAt, f.land.state, `${s.regions[f.regionId].name} 시설 #${f.id} 토지 임대`);
+      f.land.state = transition(s, f.land.expiresAt, f.land.state, `${s.regions[f.regionId].name} 시설 #${f.id} 토지 임대`, s.automation.autoRenew);
       if (f.land.state !== 'expired') post(s, `D${day}:rent:${f.id}`, 'land', 'cash', f.land.rentPerDayMinor, `토지 임대료 #${f.id}`);
     }
   }

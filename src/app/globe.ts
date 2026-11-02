@@ -4,12 +4,16 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { GameState } from '../sim/sim';
 import { latLonToVec } from '../world/terrain';
+import { envIndex } from '../sim/environment';
 import { STEPS_PER_DAY } from '../sim/units';
 
 const TYPE_COLOR: Record<string, number> = { thermal: 0xf2b248, solar: 0x4fd1e0, wind: 0xdfe6ee, storage: 0x6ccb8b, substation: 0x8b95a1 };
 
+export type Overlay = 'none' | 'price' | 'env' | 'mine';
+
 export interface Globe {
-  update(s: GameState, selected: number | null): void;
+  update(s: GameState, selected: number | null, overlay?: Overlay): void;
+  dispose(): void;
   focus(lat: number, lon: number): void;
   labels: HTMLElement;
 }
@@ -192,8 +196,12 @@ export async function createGlobe(
   window.addEventListener('resize', onResize);
 
   let focusTarget: THREE.Vector3 | null = null;
+  let stopped = false;
   let state = s;
   let selectedId: number | null = null;
+  let overlay: Overlay = 'none';
+  const tmpColor = new THREE.Color();
+  const envOf = (i: number) => envIndex(state, i);
   const tmp = new THREE.Vector3();
 
   // 송전선: 대원 호 위의 튜브. 흐름 방향으로 움직이는 빛, 색 = 상태·이용률
@@ -233,6 +241,7 @@ export async function createGlobe(
   }
 
   function render(time: number) {
+    if (stopped) return;
     // 태양 방향: 게임 시각 12:00에 경도 0이 정오
     const m = (state.step % STEPS_PER_DAY) / STEPS_PER_DAY;
     const sunLon = 180 - m * 360;
@@ -262,9 +271,17 @@ export async function createGlobe(
       el.style.pointerEvents = facing > 0.15 ? 'auto' : 'none';
       el.classList.toggle('selected', selectedId === r.id);
       const mk = markers[i];
-      (mk.material as THREE.MeshBasicMaterial).color.setHex(selectedId === r.id ? 0xf2b248 : 0x4fd1e0);
+      const mat = mk.material as THREE.MeshBasicMaterial;
+      // 오버레이: 지역 표식의 색·크기로 값을 보여준다 (Baseline §27.4)
+      let ov = 0;
+      if (overlay === 'price') { const ps = state.regionState.map((x) => x.priceMinor); const lo = Math.min(...ps), hi = Math.max(...ps); ov = (state.regionState[i].priceMinor - lo) / Math.max(1, hi - lo); }
+      else if (overlay === 'env') ov = Math.min(1, envOf(i));
+      else if (overlay === 'mine') { const caps = state.regions.map((_, j) => state.facilities.filter((f) => f.regionId === j && f.status === 'operating').reduce((a, f) => a + f.capKw, 0)); const hi = Math.max(1, ...caps); ov = caps[i] / hi; }
+      if (selectedId === r.id) mat.color.setHex(0xf2b248);
+      else if (overlay === 'none') mat.color.setHex(0x4fd1e0);
+      else mat.color.copy(tmpColor.setHex(0x4fd1e0)).lerp(new THREE.Color(overlay === 'env' ? 0xe5604d : overlay === 'mine' ? 0x6ccb8b : 0xf2b248), ov);
       const pulse = 1 + 0.25 * Math.sin(time / 300 + i);
-      mk.scale.setScalar(selectedId === r.id ? 1.6 * pulse : 1);
+      mk.scale.setScalar(selectedId === r.id ? 1.6 * pulse : overlay === 'none' ? 1 : 0.8 + ov * 1.6);
     });
 
     // 시설
@@ -309,7 +326,8 @@ export async function createGlobe(
 
   return {
     labels,
-    update(next, selected) { state = next; selectedId = selected; },
+    update(next, selected, ov) { state = next; selectedId = selected; if (ov) overlay = ov; },
     focus(lat, lon) { focusTarget = vec(lat, lon).normalize(); },
+    dispose() { stopped = true; window.removeEventListener('resize', onResize); controls.dispose(); renderer.dispose(); },
   };
 }

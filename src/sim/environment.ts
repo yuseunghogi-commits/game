@@ -80,19 +80,22 @@ export function marketEventsDay(s: GameState, day: number) {
   const perDay = s.rules.m.events / 120;
   s.regionDyn.forEach((dyn, ri) => {
     const name = s.regions[ri].name;
-    if (dyn.demandShock && s.step >= dyn.demandShock.to) { dyn.demandShock = null; notify(s, 'info', `${name} 수요 정상화`); }
-    if (dyn.supplyShock && s.step >= dyn.supplyShock.to) { dyn.supplyShock = null; notify(s, 'info', `${name} 공급 정상화`); }
+    // 내가 진출하지 않은 지역의 사건은 가격에만 반영하고 알리지 않는다 (알림 과부하 방지, Baseline §28.4)
+    const mine = s.facilities.some((f) => f.regionId === ri) || s.contracts.some((c) => !c.done && c.regionId === ri) || s.lines.some((l) => l.a === ri || l.b === ri);
+    const tell = (level: 'info' | 'warn', text: string) => { if (mine) notify(s, level, text); };
+    if (dyn.demandShock && s.step >= dyn.demandShock.to) { dyn.demandShock = null; tell('info', `${name} 수요 정상화`); }
+    if (dyn.supplyShock && s.step >= dyn.supplyShock.to) { dyn.supplyShock = null; tell('info', `${name} 공급 정상화`); }
     if (!dyn.demandShock && rand(s) < E.demandShockPerYear * perDay) {
       const mult = 1 + (E.demandShockMin + rand(s) * (E.demandShockMax - E.demandShockMin) - 1) * vol;
       const from = s.step + E.leadDays * STEPS_PER_DAY;
       dyn.demandShock = { from, to: from + randInt(s, ...E.demandShockDays) * STEPS_PER_DAY, mult };
-      notify(s, 'warn', `${name} 수요 급변 예상 (${E.leadDays}일 후, ×${mult.toFixed(2)})`);
+      tell('warn', `${name} 수요 급변 예상 (${E.leadDays}일 후, ×${mult.toFixed(2)})`);
     }
     if (!dyn.supplyShock && rand(s) < E.supplyShockPerYear * perDay) {
       const mult = E.supplyShockMin + rand(s) * (E.supplyShockMax - E.supplyShockMin);
       const from = s.step + STEPS_PER_DAY;
       dyn.supplyShock = { from, to: from + randInt(s, ...E.supplyShockDays) * STEPS_PER_DAY, mult };
-      notify(s, 'warn', `${name} 기존 전력망 공급 충격 예고 (내일부터, 공급 ×${mult.toFixed(2)}) — 가격 급등 예상`);
+      tell('warn', `${name} 기존 전력망 공급 충격 예고 (내일부터, 공급 ×${mult.toFixed(2)}) — 가격 급등 예상`);
     }
   });
 }

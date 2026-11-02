@@ -74,7 +74,7 @@ export function automationDay(s: GameState, day: number) {
 
 // ---------- 추천 (읽기 전용, 설명 포함: Baseline §20.8) ----------
 
-export interface Recommendation { id: string; title: string; reason: string; effect: string; costMinor: number; cmd: Command | null; priority: number }
+export interface Recommendation { id: string; title: string; reason: string; effect: string; costMinor: number; cmd: Command | null; priority: number; view?: string; region?: number }
 
 export function recommendations(s: GameState): Recommendation[] {
   const out: Recommendation[] = [];
@@ -104,11 +104,11 @@ export function recommendations(s: GameState): Recommendation[] {
       if (s.lines.some((l) => (l.a === ri && l.b === j) || (l.a === j && l.b === ri))) continue;
       const spec = lineSpec(s, ri, j, 'small');
       const gain = s.regionState[j].priceMinor * (1 - spec.lossPpm / 1e6) - s.regionState[ri].priceMinor;
-      if (gain > 0) out.push({ id: `line${ri}-${j}`, title: `${s.regions[ri].name} → ${s.regions[j].name} 송전선`, reason: `지금 이웃 가격이 손실(${(spec.lossPpm / 1e4).toFixed(1)}%)을 빼고도 ${(gain / 100).toFixed(1)} CR/MWh 높음`, effect: '시간대 차이를 이용한 판매', costMinor: spec.capexMinor, cmd: null, priority: 30 });
+      if (gain > 0) out.push({ id: `line${ri}-${j}`, title: `${s.regions[ri].name} → ${s.regions[j].name} 송전선`, reason: `지금 이웃 가격이 손실(${(spec.lossPpm / 1e4).toFixed(1)}%)을 빼고도 ${(gain / 100).toFixed(1)} CR/MWh 높음`, effect: '시간대 차이를 이용한 판매', costMinor: spec.capexMinor, cmd: null, priority: 30, view: 'region', region: ri });
     }
   });
   if (s.insolvency === 'arrears' || s.insolvency === 'restructuring') {
-    out.push({ id: 'loan', title: '대출로 유동성 확보', reason: '연체 상태', effect: `한도 ${(creditLimit(s) / 100).toLocaleString()} CR`, costMinor: 0, cmd: null, priority: 99 });
+    out.push({ id: 'loan', title: '대출로 유동성 확보', reason: '연체 상태', effect: `한도 ${(creditLimit(s) / 100).toLocaleString()} CR`, costMinor: 0, cmd: null, priority: 99, view: 'finance' });
   }
   return out.sort((a, b) => b.priority - a.priority);
 }
