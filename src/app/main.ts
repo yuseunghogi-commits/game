@@ -350,6 +350,8 @@ async function maybeAutosave() {
 }
 
 // ---- 시작 ----
+if (DEV) (window as unknown as { __pg: unknown }).__pg = { state: () => state, ui, notify: (t: string) => notify(state, 'error', t, true) };
+
 async function main() {
   await migrateLegacy();
   ng.hasSave = latestSlot() !== null;

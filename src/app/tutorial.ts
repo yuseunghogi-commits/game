@@ -34,11 +34,15 @@ export function tutorialHtml(step: number): string {
 }
 
 /** 렌더 뒤 호출: 목표 요소 강조 */
+let scrolledFor = -1;
 export function highlight(step: number | null) {
   document.querySelectorAll('.tut-hl').forEach((e) => e.classList.remove('tut-hl'));
   if (step === null) return;
   const sel = STEPS[step]?.target;
   if (!sel) return;
   const el = document.querySelector(sel);
-  if (el) el.classList.add('tut-hl');
+  if (!el) return;
+  el.classList.add('tut-hl');
+  // 단계가 바뀔 때 한 번만 화면 안으로 스크롤 (사용자 스크롤과 싸우지 않도록)
+  if (scrolledFor !== step) { scrolledFor = step; el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
 }

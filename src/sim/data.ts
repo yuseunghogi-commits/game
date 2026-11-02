@@ -54,8 +54,8 @@ export const FACILITY_TYPES: Record<TypeId, FacilityTypeDef> = {
   },
   // 후속 확장 (S-10에서 MVP 제외 → 연구 'gen3'로 해금). 별도 규칙: 긴 기동 지연, 높은 최소 출력, 느린 램프, 큰 폐기 비용, 긴 복구.
   nuclear: {
-    id: 'nuclear', name: '핵분열 발전소', baseCapKw: 60_000, capexMinor: 9_000_000_00,
-    fixedMinorPerDay: 11_000_00, fuelMinorPerMWh: 9_00, minOutputPpm: 800_000,
+    id: 'nuclear', name: '핵분열 발전소', baseCapKw: 60_000, capexMinor: 10_000_000_00,
+    fixedMinorPerDay: 13_000_00, fuelMinorPerMWh: 9_00, minOutputPpm: 800_000,
     rampPpmPerDI: 30_000, startDelayDI: 24, buildFactor: 2.0, dispatchable: true, kind: 'gen',
   },
   storage: {
@@ -271,7 +271,7 @@ export const LICENSE = {
     RET: { small: { quotaKw: 0, price: 200_000_00, fee: 3_000_00 }, medium: { quotaKw: 0, price: 200_000_00, fee: 3_000_00 }, large: { quotaKw: 0, price: 200_000_00, fee: 3_000_00 } },
   } as Record<LicenseType, Record<SizeId, { quotaKw: number; price: number; fee: number }>>,
   /** 사용 MW당 일 수수료 (minor) — 발전·저장만 */
-  perMwFee: { GEN: 120_00, STO: 60_00, TRN: 0, RET: 0 } as Record<LicenseType, number>,
+  perMwFee: { GEN: 45_00, STO: 25_00, TRN: 0, RET: 0 } as Record<LicenseType, number>,
 };
 /** 시설 종류 → 필요한 사업권 */
 export const REQUIRED_LICENSE: Record<TypeId, LicenseType> = { thermal: 'GEN', solar: 'GEN', wind: 'GEN', nuclear: 'GEN', storage: 'STO', substation: 'TRN' };
