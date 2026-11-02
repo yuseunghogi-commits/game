@@ -8,6 +8,10 @@
 | **3DSound-Windows.zip** | Windows 노트북/PC (Java 포함, 설치 불필요) |
 | 3DSound-Mac-Linux.jar | Mac / Linux (Java 17 이상 필요) |
 
+> ℹ️ **Shizuku**(폰)와 **VB-CABLE**(PC)는 다른 회사 프로그램이라 여기 포함되지 않습니다. 처음 한 번만 아래 링크에서 설치하세요.
+> - Shizuku: [Play 스토어](https://play.google.com/store/apps/details?id=moe.shizuku.privileged.api)
+> - VB-CABLE: [vb-audio.com/Cable](https://vb-audio.com/Cable/)
+
 ### 📱 안드로이드
 1. APK 설치 (이전 버전이 있으면 덮어쓰기 — 안 되면 지우고 설치)
 2. 앱 → **🔑 강력 모드 권한 설정** → 안내대로 Shizuku 로 권한 받기 (처음 1번)
