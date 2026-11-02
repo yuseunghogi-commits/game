@@ -40,6 +40,14 @@ class MainActivity : Activity() {
     private lateinit var labelReverb: TextView
     private lateinit var labelWidth: TextView
     private lateinit var headGroup: android.widget.LinearLayout
+    private lateinit var layoutGroup: android.widget.LinearLayout
+    private lateinit var speakerLayout: SpeakerLayoutView
+    private lateinit var seekFront: SeekBar
+    private lateinit var seekRearAngle: SeekBar
+    private lateinit var seekRearLevel: SeekBar
+    private lateinit var labelFront: TextView
+    private lateinit var labelRearAngle: TextView
+    private lateinit var labelRearLevel: TextView
     private lateinit var switchHead: Switch
     private lateinit var switchHeadInvert: Switch
     private lateinit var textHead: TextView
@@ -72,6 +80,14 @@ class MainActivity : Activity() {
         labelReverb = findViewById(R.id.labelReverb)
         labelWidth = findViewById(R.id.labelWidth)
         headGroup = findViewById(R.id.headGroup)
+        layoutGroup = findViewById(R.id.layoutGroup)
+        speakerLayout = findViewById(R.id.speakerLayout)
+        seekFront = findViewById(R.id.seekFront)
+        seekRearAngle = findViewById(R.id.seekRearAngle)
+        seekRearLevel = findViewById(R.id.seekRearLevel)
+        labelFront = findViewById(R.id.labelFront)
+        labelRearAngle = findViewById(R.id.labelRearAngle)
+        labelRearLevel = findViewById(R.id.labelRearLevel)
         switchHead = findViewById(R.id.switchHead)
         switchHeadInvert = findViewById(R.id.switchHeadInvert)
         textHead = findViewById(R.id.textHead)
@@ -152,6 +168,12 @@ class MainActivity : Activity() {
         seekWidth.visibility = wv
         seekWidth.progress = settings.width
         headGroup.visibility = wv
+        layoutGroup.visibility = wv
+        seekFront.progress = settings.frontAngle
+        seekRearAngle.progress = settings.rearAngle - 90
+        seekRearLevel.progress = settings.rearLevel
+        speakerLayout.setAngles(settings.frontAngle, settings.rearAngle)
+        speakerLayout.rearLevel = settings.rearLevel.toFloat()
         switchHead.isChecked = settings.headTracking
         switchHeadInvert.isChecked = settings.headInvert
         spinnerPreset.setSelection(settings.presetIndex.coerceIn(0, SOUND_PRESETS.lastIndex))
@@ -168,7 +190,10 @@ class MainActivity : Activity() {
         labelVirtualizer.text = "3D 서라운드 강도: ${settings.virtualizerStrength / 10}%"
         labelSpace.text = if (settings.strongMode) "방 울림 (벽 반사음): ${settings.spaceEq}%"
         else "공간감 EQ (넓이·공기감): ${settings.spaceEq}%"
-        labelWidth.text = "좌우 넓이 (가상 스피커 ±${30 + settings.width * 55 / 100}°): ${settings.width}%"
+        labelWidth.text = "좌우 분리 (반대쪽 귀로 새는 소리 줄이기): ${settings.width}%"
+        labelFront.text = "앞 스피커 각도: ±${settings.frontAngle}° (작을수록 정면)"
+        labelRearAngle.text = "뒤 스피커 각도: ±${settings.rearAngle}° (90°=옆, 180°=바로 뒤)"
+        labelRearLevel.text = "뒤 스피커 양: ${settings.rearLevel}% (0이면 전부 앞에서)"
         labelBass.text = "저음 보강: ${settings.bassStrength / 10}%"
         labelReverb.text = if (settings.strongMode) "잔향 (공간 크기)"
         else "잔향 (공간 크기) — 기본 모드에선 세션을 알려주는 음악앱에서만 적용"
@@ -226,6 +251,9 @@ class MainActivity : Activity() {
                     spaceEq = p0.spaceEq,
                     reverbPreset = p0.reverb.toInt(),
                     width = p0.width,
+                    frontAngle = p0.front,
+                    rearAngle = p0.rearAngle,
+                    rearLevel = p0.rearLevel,
                 )
                 commit(next)
                 bindUi()
@@ -248,6 +276,35 @@ class MainActivity : Activity() {
         seekSpace.setOnSeekBarChangeListener(seekListener { v ->
             settings.copy(spaceEq = v, presetIndex = CUSTOM)
         })
+        seekFront.setOnSeekBarChangeListener(seekListener { v ->
+            speakerLayout.setAngles(v, settings.rearAngle)
+            settings.copy(frontAngle = v, presetIndex = CUSTOM)
+        })
+        seekRearAngle.setOnSeekBarChangeListener(seekListener { v ->
+            speakerLayout.setAngles(settings.frontAngle, v + 90)
+            settings.copy(rearAngle = v + 90, presetIndex = CUSTOM)
+        })
+        seekRearLevel.setOnSeekBarChangeListener(seekListener { v ->
+            speakerLayout.rearLevel = v.toFloat()
+            settings.copy(rearLevel = v, presetIndex = CUSTOM)
+        })
+        // 배치도에서 끌기: 움직이는 동안 바로 소리에 반영, 손 떼면 저장
+        speakerLayout.onChange = { f, r, done ->
+            settings = settings.copy(frontAngle = f, rearAngle = r, presetIndex = CUSTOM)
+            updateLabels()
+            binding = true
+            seekFront.progress = f
+            seekRearAngle.progress = r - 90
+            binding = false
+            if (done) {
+                commit(settings)
+                binding = true
+                spinnerPreset.setSelection(settings.presetIndex)
+                binding = false
+            } else {
+                Strong3DService.instance?.applySettings(settings)
+            }
+        }
         seekWidth.setOnSeekBarChangeListener(seekListener { v ->
             settings.copy(width = v, presetIndex = CUSTOM)
         })
@@ -310,6 +367,7 @@ class MainActivity : Activity() {
     }
 
     private fun renderHead(s: EngineState.Snapshot) {
+        speakerLayout.headYaw = s.headYaw.toFloat()
         textHead.text = when {
             !settings.headTracking -> "꺼짐 — 켜면 이어폰 센서로 머리 방향을 따라갑니다"
             Build.VERSION.SDK_INT < 33 -> "⚠️ Android 13 이상에서만 지원됩니다"

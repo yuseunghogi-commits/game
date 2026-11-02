@@ -35,6 +35,9 @@ class BinauralProcessor(private val fs: Int) {
     private var bass = 0.25f
     private var width = 0.55f   // 좌우 넓이
     private var roomIdx = 2
+    private var frontAngle = 50.0 // 앞 스피커 각도 (±도)
+    private var rearAngle = 120.0 // 뒤 스피커 각도 (±도)
+    private var rearLevel = 0.5   // 뒤 스피커 소리 양
 
     fun setParams(s: SpatialSettings) {
         pending = s
@@ -170,18 +173,20 @@ class BinauralProcessor(private val fs: Int) {
 
     private fun rebuild() {
         val room = ROOMS[roomIdx.coerceIn(0, ROOMS.lastIndex)]
-        val spk = 30.0 + 50.0 * width // 앞 스피커 각도 (±30° ~ ±80°)
-        contra = 0.30 - 0.25 * width  // 반대쪽 귀 누설: 넓이 0% → -10dB, 100% → -26dB 추가 감쇠
+        val spk = frontAngle          // 앞 스피커 각도 (사용자가 직접 배치)
+        contra = 0.30 - 0.25 * width  // 좌우 분리: 반대쪽 귀 누설 0% → -10dB, 100% → -26dB 추가 감쇠
         val list = mutableListOf<Src>()
 
         // 직접음: 앞 스피커
         list += place(0, -spk, 0.0, 1.0, 0.0, true)
         list += place(1, spk, 0.0, 1.0, 0.0, true)
-        // 뒤 서라운드 ±110°: 왼쪽 소리는 왼쪽 뒤에서만, 오른쪽은 오른쪽 뒤에서만 (좌우가 섞이지 않게)
+        // 뒤 서라운드 (±rearAngle): 왼쪽 소리는 왼쪽 뒤에서만, 오른쪽은 오른쪽 뒤에서만 (좌우가 섞이지 않게)
         // 7ms 지연으로 앞 스피커와 디코릴레이션 → 감싸는 느낌
-        val sur = 0.30 + 0.30 * width
-        list += place(0, -110.0, 0.007, sur, 7000.0, true)
-        list += place(1, 110.0, 0.007, sur, 7000.0, true)
+        val sur = rearLevel
+        if (sur > 0.001) {
+            list += place(0, -rearAngle, 0.007, sur, 7000.0, true)
+            list += place(1, rearAngle, 0.007, sur, 7000.0, true)
+        }
 
         // 방 반사음: 왼쪽 스피커 기준 (오른쪽은 좌우 대칭)
         if (early > 0.001f) {
@@ -285,6 +290,9 @@ class BinauralProcessor(private val fs: Int) {
             bass = s.bassStrength / 1000f
             width = s.width / 100f
             roomIdx = s.reverbPreset
+            frontAngle = s.frontAngle.toDouble().coerceIn(0.0, 90.0)
+            rearAngle = s.rearAngle.toDouble().coerceIn(90.0, 180.0)
+            rearLevel = s.rearLevel / 100.0
             rebuildWithFade()
         }
         // 헤드 트래킹: 1.5° 이상 움직였고 이전 전환이 끝났으면 새 각도로

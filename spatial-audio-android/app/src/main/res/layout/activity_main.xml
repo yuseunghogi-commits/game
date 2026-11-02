@@ -104,6 +104,54 @@
             android:layout_height="wrap_content"
             android:max="1000" />
 
+        <LinearLayout
+            android:id="@+id/layoutGroup"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                style="@style/SliderLabel"
+                android:text="🔊 스피커 배치 — 동그라미를 끌어서 소리 방향을 바꾸세요 (🟣 앞 / 🔵 뒤)" />
+
+            <com.spatialsound.app.SpeakerLayoutView
+                android:id="@+id/speakerLayout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:background="#FF1A1A24" />
+
+            <TextView
+                android:id="@+id/labelFront"
+                style="@style/SliderLabel" />
+
+            <SeekBar
+                android:id="@+id/seekFront"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="90" />
+
+            <TextView
+                android:id="@+id/labelRearAngle"
+                style="@style/SliderLabel" />
+
+            <SeekBar
+                android:id="@+id/seekRearAngle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="90" />
+
+            <TextView
+                android:id="@+id/labelRearLevel"
+                style="@style/SliderLabel" />
+
+            <SeekBar
+                android:id="@+id/seekRearLevel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100" />
+        </LinearLayout>
+
         <TextView
             android:id="@+id/labelWidth"
             style="@style/SliderLabel" />

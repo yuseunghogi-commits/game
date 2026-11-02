@@ -50,6 +50,10 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
     private val sWidth = slider(0, 100, settings.width)
     private val sRoom = slider(0, 100, settings.spaceEq)
     private val sBass = slider(0, 1000, settings.bassStrength)
+    private val sFront = slider(0, 90, settings.frontAngle)
+    private val sRearAngle = slider(90, 180, settings.rearAngle)
+    private val sRearLevel = slider(0, 100, settings.rearLevel)
+    private val lFront = JLabel(); private val lRearAngle = JLabel(); private val lRearLevel = JLabel()
     private val lStrength = JLabel(); private val lWidth = JLabel(); private val lRoom = JLabel(); private val lBass = JLabel()
     private val status = JLabel(" ")
 
@@ -85,6 +89,9 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         row(title("② 소리 조절"))
         row(JLabel("프리셋")); row(presetBox)
         row(lStrength); row(sStrength)
+        row(lFront); row(sFront)
+        row(lRearAngle); row(sRearAngle)
+        row(lRearLevel); row(sRearLevel)
         row(lWidth); row(sWidth)
         row(lRoom); row(sRoom)
         row(JLabel("잔향 (방 크기)")); row(reverbBox)
@@ -107,11 +114,12 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
                 val p = SOUND_PRESETS[i].s
                 sStrength.value = p.virtualizerStrength; sWidth.value = p.width; sRoom.value = p.spaceEq
                 sBass.value = p.bassStrength; reverbBox.selectedIndex = p.reverbPreset
+                sFront.value = p.frontAngle; sRearAngle.value = p.rearAngle; sRearLevel.value = p.rearLevel
                 applyingPreset = false
                 changed()
             }
         }
-        listOf(sStrength, sWidth, sRoom, sBass).forEach { s -> s.addChangeListener { changed() } }
+        listOf(sStrength, sWidth, sRoom, sBass, sFront, sRearAngle, sRearLevel).forEach { s -> s.addChangeListener { changed() } }
         reverbBox.addActionListener { changed() }
 
         pack()
@@ -125,6 +133,7 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         settings = SpatialSettings(
             virtualizerStrength = sStrength.value, bassStrength = sBass.value, spaceEq = sRoom.value,
             reverbPreset = reverbBox.selectedIndex, width = sWidth.value,
+            frontAngle = sFront.value, rearAngle = sRearAngle.value, rearLevel = sRearLevel.value,
         )
         if (!applyingPreset && presetBox.selectedIndex < SOUND_PRESETS.size &&
             SOUND_PRESETS[presetBox.selectedIndex].s != settings
@@ -138,7 +147,10 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
 
     private fun updateLabels() {
         lStrength.text = "3D 강도: ${sStrength.value / 10}%"
-        lWidth.text = "좌우 넓이 (가상 스피커 ±${30 + sWidth.value * 50 / 100}°): ${sWidth.value}%"
+        lWidth.text = "좌우 분리 (반대쪽 귀로 새는 소리 줄이기): ${sWidth.value}%"
+        lFront.text = "앞 스피커 각도: ±${sFront.value}° (작을수록 정면)"
+        lRearAngle.text = "뒤 스피커 각도: ±${sRearAngle.value}° (90°=옆, 180°=바로 뒤)"
+        lRearLevel.text = "뒤 스피커 양: ${sRearLevel.value}% (0이면 전부 앞에서)"
         lRoom.text = "방 울림 (벽 반사음): ${sRoom.value}%"
         lBass.text = "저음 보강: ${sBass.value / 10}%"
     }
@@ -226,12 +238,17 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         spaceEq = prefs.getInt("room", 45),
         reverbPreset = prefs.getInt("reverb", 2),
         width = prefs.getInt("width", 65),
+        frontAngle = prefs.getInt("front", 45),
+        rearAngle = prefs.getInt("rearAngle", 125),
+        rearLevel = prefs.getInt("rearLevel", 40),
     )
 
     private fun saveSettings() {
         prefs.putInt("strength", settings.virtualizerStrength); prefs.putInt("bass", settings.bassStrength)
         prefs.putInt("room", settings.spaceEq); prefs.putInt("reverb", settings.reverbPreset)
         prefs.putInt("width", settings.width)
+        prefs.putInt("front", settings.frontAngle); prefs.putInt("rearAngle", settings.rearAngle)
+        prefs.putInt("rearLevel", settings.rearLevel)
     }
 
     private fun pickFont(): Font {

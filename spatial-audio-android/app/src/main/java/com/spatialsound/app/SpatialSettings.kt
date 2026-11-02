@@ -23,6 +23,12 @@ data class SpatialSettings(
     val strongMode: Boolean = false,
     /** 강력 모드: 좌우 넓이 0..100 (가상 스피커 각도 ±30°~±70° + 좌우 차이 강조) */
     val width: Int = 55,
+    /** 강력 모드: 앞 스피커 각도 ±0~90° */
+    val frontAngle: Int = 50,
+    /** 강력 모드: 뒤 스피커 각도 ±90~180° */
+    val rearAngle: Int = 120,
+    /** 강력 모드: 뒤 스피커 소리 양 0..100 */
+    val rearLevel: Int = 45,
     /** 강력 모드: 헤드 트래킹 (이어폰 센서로 고개를 돌려도 소리 위치 고정) */
     val headTracking: Boolean = false,
     /** 헤드 트래킹 방향이 반대로 느껴질 때 */
@@ -41,6 +47,9 @@ data class SpatialSettings(
             .putBoolean("strongMode", strongMode)
             .putInt("width", width)
             .putBoolean("headTracking", headTracking)
+            .putInt("frontAngle", frontAngle)
+            .putInt("rearAngle", rearAngle)
+            .putInt("rearLevel", rearLevel)
             .putBoolean("headInvert", headInvert)
             .apply()
     }
@@ -63,6 +72,9 @@ data class SpatialSettings(
                 strongMode = p.getBoolean("strongMode", d.strongMode),
                 width = p.getInt("width", d.width),
                 headTracking = p.getBoolean("headTracking", d.headTracking),
+                frontAngle = p.getInt("frontAngle", d.frontAngle),
+                rearAngle = p.getInt("rearAngle", d.rearAngle),
+                rearLevel = p.getInt("rearLevel", d.rearLevel),
                 headInvert = p.getBoolean("headInvert", d.headInvert),
             )
         }
@@ -77,15 +89,19 @@ data class SoundPreset(
     val spaceEq: Int,
     val reverb: Short,
     val width: Int,
+    val front: Int = 50,
+    val rearAngle: Int = 120,
+    val rearLevel: Int = 45,
 )
 
 val SOUND_PRESETS = listOf(
     // 이름, 3D 강도, 저음, 방 울림/공간감, 잔향(방 크기), 좌우 넓이
-    SoundPreset("음악 (자연스러운 입체감)", 850, 250, 45, PresetReverb.PRESET_MEDIUMROOM, 65),
-    SoundPreset("영화관", 1000, 500, 60, PresetReverb.PRESET_LARGEROOM, 80),
-    SoundPreset("콘서트홀", 950, 300, 55, PresetReverb.PRESET_LARGEHALL, 60),
-    SoundPreset("게임 (발소리/방향감)", 1000, 200, 35, PresetReverb.PRESET_SMALLROOM, 95),
-    SoundPreset("보컬/팟캐스트", 650, 50, 30, PresetReverb.PRESET_SMALLROOM, 30),
+    // … 좌우 분리, 앞 스피커 각도, 뒤 스피커 각도, 뒤 스피커 양
+    SoundPreset("음악 (자연스러운 입체감)", 850, 250, 45, PresetReverb.PRESET_MEDIUMROOM, 65, 45, 125, 40),
+    SoundPreset("영화관", 1000, 500, 60, PresetReverb.PRESET_LARGEROOM, 80, 55, 115, 70),
+    SoundPreset("콘서트홀", 950, 300, 55, PresetReverb.PRESET_LARGEHALL, 60, 40, 135, 35),
+    SoundPreset("게임 (발소리/방향감)", 1000, 200, 35, PresetReverb.PRESET_SMALLROOM, 95, 60, 115, 60),
+    SoundPreset("보컬/팟캐스트", 650, 50, 30, PresetReverb.PRESET_SMALLROOM, 30, 35, 130, 15),
     SoundPreset("사용자 설정", -1, -1, -1, PresetReverb.PRESET_NONE, -1),
 )
 
