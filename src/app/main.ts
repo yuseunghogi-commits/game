@@ -83,6 +83,7 @@ function renderAll() {
   put($('overlay'), `<span class="k">지도</span>${(['none', 'price', 'env', 'mine'] as Overlay[]).map((o) => `<button data-overlay="${o}" class="${overlay === o ? 'on' : ''}">${{ none: '기본', price: '가격', env: '환경', mine: '내 설비' }[o]}</button>`).join('')}`);
   const modal = $('modal');
   modal.classList.toggle('show', showNewGame);
+  document.body.classList.toggle('title', showNewGame);
   if (showNewGame) put(modal, newGameView(ng));
   const m2 = $('modal2');
   m2.classList.toggle('show', ui.modal !== 'none');

@@ -357,3 +357,7 @@ button.link:hover { color: var(--energy); text-decoration: underline; text-under
 .notice.urgent { background: rgba(229, 96, 77, 0.08); }
 .notice.urgent .msg { font-weight: 600; }
 @media (max-width: 1100px) { #tutorial { width: calc(100% - 24px); min-width: 0; } }
+
+/* 타이틀(새 게임) 화면: 조작 패널을 숨기고 행성만 돌게 한다 */
+body.title #topbar, body.title #regions, body.title #detail, body.title #notices, body.title #overlay, body.title #tutorial { opacity: 0; pointer-events: none; }
+#topbar, #regions, #detail, #notices, #overlay { transition: opacity 0.4s; }
