@@ -41,6 +41,9 @@ data class SpatialSettings(
     val frontElev: Int = 0,
     /** 실측 엔진: 배경음 중 천장 스피커로 보낼 비율 0..100 */
     val heightLevel: Int = 25,
+    /** 천장 스피커 위치: 좌우 각도 ±20..160° (90 = 머리 옆 위), 높이 25..89° */
+    val topAngle: Int = 70,
+    val topElev: Int = 55,
     /** 헤드 트래킹: 고개를 위아래로 움직이는 것도 반영 */
     val headPitch: Boolean = true,
     /** 헤드폰 보정 프로필 (0 = 끔, n = HeadphoneEq.profiles[n-1]) */
@@ -73,6 +76,8 @@ data class SpatialSettings(
             .putInt("centerLevel", centerLevel)
             .putInt("frontElev", frontElev)
             .putInt("heightLevel", heightLevel)
+            .putInt("topAngle", topAngle)
+            .putInt("topElev", topElev)
             .putBoolean("headPitch", headPitch)
             .putBoolean("headInvert", headInvert)
             .apply()
@@ -108,6 +113,8 @@ data class SpatialSettings(
                 centerLevel = p.getInt("centerLevel", d.centerLevel),
                 frontElev = p.getInt("frontElev", d.frontElev),
                 heightLevel = p.getInt("heightLevel", d.heightLevel),
+                topAngle = p.getInt("topAngle", d.topAngle),
+                topElev = p.getInt("topElev", d.topElev),
                 headPitch = p.getBoolean("headPitch", d.headPitch),
                 headInvert = p.getBoolean("headInvert", d.headInvert),
             )
@@ -129,6 +136,8 @@ data class SoundPreset(
     val center: Int = 70,
     val height: Int = 25,
     val elev: Int = 0,
+    val topAngle: Int = 70,
+    val topElev: Int = 55,
 )
 
 val SOUND_PRESETS = listOf(
@@ -136,8 +145,8 @@ val SOUND_PRESETS = listOf(
     // … 좌우 분리, 앞 스피커 각도, 뒤 스피커 각도, 배경음 옆/뒤 비율, 가운데 스피커
     // …, 천장 스피커 비율, 앞 스피커 높이
     SoundPreset("음악 (자연스러운 입체감)", 850, 250, 45, PresetReverb.PRESET_MEDIUMROOM, 65, 45, 135, 45, 60, 25, 0),
-    SoundPreset("영화관", 1000, 500, 60, PresetReverb.PRESET_LARGEROOM, 80, 55, 130, 65, 85, 40, 10),
-    SoundPreset("콘서트홀", 950, 300, 55, PresetReverb.PRESET_LARGEHALL, 60, 40, 140, 55, 50, 35, 5),
+    SoundPreset("영화관", 1000, 500, 60, PresetReverb.PRESET_LARGEROOM, 80, 55, 130, 65, 85, 40, 5),
+    SoundPreset("콘서트홀", 950, 300, 55, PresetReverb.PRESET_LARGEHALL, 60, 40, 140, 55, 50, 35, 0),
     SoundPreset("게임 (발소리/방향감)", 1000, 200, 35, PresetReverb.PRESET_SMALLROOM, 95, 60, 130, 50, 70, 15, 0),
     SoundPreset("보컬/팟캐스트", 650, 50, 30, PresetReverb.PRESET_SMALLROOM, 30, 35, 140, 20, 90, 10, 0),
     SoundPreset("사용자 설정", -1, -1, -1, PresetReverb.PRESET_NONE, -1),

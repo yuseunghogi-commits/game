@@ -46,6 +46,9 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
     @Volatile var frontElev = 0.0
     /** 배경음 중 천장 스피커로 보낼 비율 (0..1) */
     @Volatile var heightLevel = 0.0
+    /** 천장 스피커 위치: 좌우 각도(±, 30=앞쪽…90=머리 옆 위…150=뒤쪽)와 높이(도) */
+    @Volatile var topAz = HEIGHT_AZ
+    @Volatile var topEl = HEIGHT_EL
 
     // 프레임마다 고정해서 쓰는 값 (프레임 도중 바뀌어도 한 프레임 안에서는 일관되게)
     private var yawF = 0.0
@@ -375,7 +378,7 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         addAmbience(t, surAmb, topAmb)
     }
 
-    /** 배경음 → 옆(±95°)·뒤(±rear)·천장(±70°, 위 55°) — 서로 다른 지연으로 디코릴레이션 */
+    /** 배경음 → 옆(±95°)·뒤(±rear)·천장(±topAz, 위 topEl) — 서로 다른 지연으로 디코릴레이션 */
     private fun addAmbience(t: Table, surAmb: Float, topAmb: Float) {
         if (surAmb > 0.0005f) {
             addSource(t, aLr, aLi, -SIDE_ANGLE, 0.0, SIDE_SHARE * surAmb, dSide)
@@ -384,8 +387,9 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
             addSource(t, aRr, aRi, rearAngle, 0.0, REAR_SHARE * surAmb, dRear)
         }
         if (topAmb > 0.0005f) {
-            addSource(t, aLr, aLi, -HEIGHT_AZ, HEIGHT_EL, topAmb, dTop)
-            addSource(t, aRr, aRi, HEIGHT_AZ, HEIGHT_EL, topAmb, dTop)
+            val az = topAz; val el = topEl
+            addSource(t, aLr, aLi, -az, el, topAmb, dTop)
+            addSource(t, aRr, aRi, az, el, topAmb, dTop)
         }
     }
 
@@ -449,7 +453,7 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         const val NB = RoomModel.BUSES
         val BUS_ANGLES = DoubleArray(NB) { it * 360.0 / NB }
         const val SIDE_ANGLE = 95.0
-        /** 천장 스피커: 좌우 ±70°, 위 55° */
+        /** 천장 스피커 기본 위치: 좌우 ±70°, 위 55° */
         const val HEIGHT_AZ = 70.0
         const val HEIGHT_EL = 55.0
         private val SIDE_SHARE = sqrt(0.6f)

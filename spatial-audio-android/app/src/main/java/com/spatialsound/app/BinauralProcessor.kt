@@ -86,6 +86,8 @@ class BinauralProcessor(private val fs: Int) {
     @Volatile var headPitchDeg = 0.0
     private var frontElev = 0.0
     private var heightLevel = 0.0
+    private var topAz = HrtfRenderer.HEIGHT_AZ
+    private var topEl = HrtfRenderer.HEIGHT_EL
 
     private var appliedYaw = 0.0
     private var oldSources: Array<Src>? = null
@@ -352,6 +354,8 @@ class BinauralProcessor(private val fs: Int) {
             centerLevel = s.centerLevel / 100.0
             frontElev = s.frontElev.toDouble().coerceIn(-30.0, 45.0)
             heightLevel = s.heightLevel / 100.0
+            topAz = s.topAngle.toDouble().coerceIn(20.0, 160.0)
+            topEl = s.topElev.toDouble().coerceIn(25.0, 89.0)
             earSize = s.earSize
             if (s.hpEq != hpEqIdx) {
                 hpEqIdx = s.hpEq
@@ -384,6 +388,8 @@ class BinauralProcessor(private val fs: Int) {
             it.centerLevel = centerLevel
             it.frontElev = frontElev
             it.heightLevel = heightLevel
+            it.topAz = topAz
+            it.topEl = topEl
             it.headPitch = headPitchDeg
             it.spread = spreadDeg
             it.headYaw = headYawDeg

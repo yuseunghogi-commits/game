@@ -338,7 +338,7 @@
   const N = 2048, WIN = 1024, HOP = 512, LATENCY = WIN, MAX_DELAY = 512;
   const BUS_ANGLES = Array.from({ length: BUSES }, (_, i) => i * 360 / BUSES);
   const SIDE_ANGLE = 95;
-  /** 천장 스피커: 좌우 ±70°, 위 55° */
+  /** 천장 스피커 기본 위치: 좌우 ±70°, 위 55° */
   const HEIGHT_AZ = 70, HEIGHT_EL = 55;
   const SIDE_SHARE = Math.sqrt(0.6), REAR_SHARE = Math.sqrt(0.4), SQRT2 = Math.SQRT2;
 
@@ -346,6 +346,7 @@
     constructor(fs, base, elev) {
       this.fs = fs; this.base = base; this.elev = elev || null;
       this.headPitch = 0; this.frontElev = 0; this.heightLevel = 0; this.yawF = 0; this.pitchF = 0; this.elevF = 0;
+      this.topAz = HEIGHT_AZ; this.topEl = HEIGHT_EL; // 천장 스피커 위치 (좌우 ±각도, 높이)
       this.specCache = new Map(); this.specTable = null; this.rowSpec = new Array(180).fill(null);
       this.mode = 'speakers'; this.frontAngle = 45; this.rearAngle = 135; this.rearLevel = 0.45;
       this.centerLevel = 0.7; this.spread = 90; this.headYaw = 0;
@@ -625,7 +626,7 @@
       this.addAmbience(t, surAmb, topAmb);
     }
 
-    /** 배경음 → 옆(±95°)·뒤(±rear)·천장(±70°, 위 55°) */
+    /** 배경음 → 옆(±95°)·뒤(±rear)·천장(±topAz, 위 topEl) */
     addAmbience(t, surAmb, topAmb) {
       const { aLr, aLi, aRr, aRi } = this;
       if (surAmb > 0.0005) {
@@ -635,8 +636,9 @@
         this.addSource(t, aRr, aRi, this.rearAngle, 0, REAR_SHARE * surAmb, this.dRear);
       }
       if (topAmb > 0.0005) {
-        this.addSource(t, aLr, aLi, -HEIGHT_AZ, HEIGHT_EL, topAmb, this.dTop);
-        this.addSource(t, aRr, aRi, HEIGHT_AZ, HEIGHT_EL, topAmb, this.dTop);
+        const az = this.topAz, el = this.topEl;
+        this.addSource(t, aLr, aLi, -az, el, topAmb, this.dTop);
+        this.addSource(t, aRr, aRi, az, el, topAmb, this.dTop);
       }
     }
 
@@ -690,7 +692,7 @@
   const DEFAULTS = {
     virtualizerStrength: 850, bassStrength: 250, spaceEq: 45, reverbPreset: 2, frontAngle: 45, rearAngle: 135,
     rearLevel: 45, centerLevel: 60, engineMode: 1, spread: 90, earSize: 2, hpEq: 0, enabled: true,
-    frontElev: 0, heightLevel: 25,
+    frontElev: 0, heightLevel: 25, topAngle: HEIGHT_AZ, topElev: HEIGHT_EL,
   };
 
   class Engine {
@@ -762,6 +764,8 @@
       rnd.centerLevel = p.centerLevel / 100;
       rnd.frontElev = Math.min(45, Math.max(-30, p.frontElev));
       rnd.heightLevel = p.heightLevel / 100;
+      rnd.topAz = Number.isFinite(p.topAngle) ? Math.min(160, Math.max(20, p.topAngle)) : HEIGHT_AZ;
+      rnd.topEl = Number.isFinite(p.topElev) ? Math.min(89, Math.max(25, p.topElev)) : HEIGHT_EL;
       rnd.spread = p.spread;
       rnd.setEarSize(p.earSize);
       if (p.hpEq !== this.hpEqIdx) {

@@ -250,6 +250,26 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:max="100" />
+
+            <TextView
+                android:id="@+id/labelTopAngle"
+                style="@style/SliderLabel" />
+
+            <SeekBar
+                android:id="@+id/seekTopAngle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="140" />
+
+            <TextView
+                android:id="@+id/labelTopElev"
+                style="@style/SliderLabel" />
+
+            <SeekBar
+                android:id="@+id/seekTopElev"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="55" />
         </LinearLayout>
 
         <TextView

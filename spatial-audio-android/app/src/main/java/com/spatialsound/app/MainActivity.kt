@@ -61,6 +61,10 @@ class MainActivity : Activity() {
     private lateinit var seekElev: SeekBar
     private lateinit var labelHeight: TextView
     private lateinit var seekHeight: SeekBar
+    private lateinit var labelTopAngle: TextView
+    private lateinit var seekTopAngle: SeekBar
+    private lateinit var labelTopElev: TextView
+    private lateinit var seekTopElev: SeekBar
     private lateinit var switchHeadPitch: Switch
     private lateinit var spinnerHeadSource: Spinner
     private lateinit var switchHeadInvert: Switch
@@ -119,6 +123,10 @@ class MainActivity : Activity() {
         seekElev = findViewById(R.id.seekElev)
         labelHeight = findViewById(R.id.labelHeight)
         seekHeight = findViewById(R.id.seekHeight)
+        labelTopAngle = findViewById(R.id.labelTopAngle)
+        seekTopAngle = findViewById(R.id.seekTopAngle)
+        labelTopElev = findViewById(R.id.labelTopElev)
+        seekTopElev = findViewById(R.id.seekTopElev)
         switchHeadPitch = findViewById(R.id.switchHeadPitch)
         spinnerHeadSource = findViewById(R.id.spinnerHeadSource)
         spinnerHeadSource.adapter = darkAdapter(HEAD_SOURCES)
@@ -224,11 +232,14 @@ class MainActivity : Activity() {
         seekCenter.progress = settings.centerLevel
         seekElev.progress = settings.frontElev + 20
         seekHeight.progress = settings.heightLevel
+        seekTopAngle.progress = settings.topAngle - SpeakerLayoutView.TOP_ANGLE_MIN
+        seekTopElev.progress = settings.topElev - SpeakerLayoutView.TOP_ELEV_MIN
+        speakerLayout.setTop(settings.topAngle, settings.topElev)
         switchHeadPitch.isChecked = settings.headPitch
         // 높이 기능은 실측 엔진(공간·정위)에서만
         val measured = settings.engineMode != 0
         val hv = if (measured) android.view.View.VISIBLE else android.view.View.GONE
-        labelElev.visibility = hv; seekElev.visibility = hv; labelHeight.visibility = hv; seekHeight.visibility = hv
+        for (v in listOf(labelElev, seekElev, labelHeight, seekHeight, labelTopAngle, seekTopAngle, labelTopElev, seekTopElev)) v.visibility = hv
         speakerLayout.heightLevel = if (measured) settings.heightLevel.toFloat() else 0f
         labelCenter.visibility = if (seven) android.view.View.VISIBLE else android.view.View.GONE
         seekCenter.visibility = labelCenter.visibility
@@ -265,6 +276,13 @@ class MainActivity : Activity() {
             else -> "귀 높이 (0°)"
         } + " — 영상 볼 때 화면 높이에 맞춰 보세요"
         labelHeight.text = "높이감 (천장 스피커): ${settings.heightLevel}% — 배경음 일부를 머리 위쪽에서"
+        val off = if (settings.heightLevel == 0) " · 높이감 0%라 지금은 꺼짐" else ""
+        labelTopAngle.text = "천장 스피커 방향: ±${settings.topAngle}° (" + when {
+            settings.topAngle < 60 -> "앞쪽 위"
+            settings.topAngle <= 120 -> "머리 옆 위"
+            else -> "뒤쪽 위"
+        } + ")$off"
+        labelTopElev.text = "천장 스피커 높이: 위 ${settings.topElev}° — 배치도의 ▲를 끌어도 됩니다 (안쪽일수록 높이)"
         labelBass.text = "저음 보강: ${settings.bassStrength / 10}%"
         labelReverb.text = if (settings.strongMode) "잔향 (공간 크기)"
         else "잔향 (공간 크기) — 기본 모드에선 세션을 알려주는 음악앱에서만 적용"
@@ -336,6 +354,8 @@ class MainActivity : Activity() {
                     centerLevel = p0.center,
                     heightLevel = p0.height,
                     frontElev = p0.elev,
+                    topAngle = p0.topAngle,
+                    topElev = p0.topElev,
                 )
                 commit(next)
                 bindUi()
@@ -396,6 +416,16 @@ class MainActivity : Activity() {
             speakerLayout.heightLevel = v.toFloat()
             settings.copy(heightLevel = v, presetIndex = CUSTOM)
         })
+        seekTopAngle.setOnSeekBarChangeListener(seekListener { v ->
+            val a = v + SpeakerLayoutView.TOP_ANGLE_MIN
+            speakerLayout.setTop(a, settings.topElev)
+            settings.copy(topAngle = a, presetIndex = CUSTOM)
+        })
+        seekTopElev.setOnSeekBarChangeListener(seekListener { v ->
+            val e = v + SpeakerLayoutView.TOP_ELEV_MIN
+            speakerLayout.setTop(settings.topAngle, e)
+            settings.copy(topElev = e, presetIndex = CUSTOM)
+        })
         switchHeadPitch.setOnCheckedChangeListener { _, checked ->
             if (!binding) commit(settings.copy(headPitch = checked))
         }
@@ -414,6 +444,23 @@ class MainActivity : Activity() {
             binding = true
             seekFront.progress = f
             seekRearAngle.progress = r - 90
+            binding = false
+            if (done) {
+                commit(settings)
+                binding = true
+                spinnerPreset.setSelection(settings.presetIndex)
+                binding = false
+            } else {
+                Strong3DService.instance?.applySettings(settings)
+            }
+        }
+        // 천장 스피커 끌기: 방향 = 좌우 각도, 머리 쪽으로 = 더 높이
+        speakerLayout.onTopChange = { a, e, done ->
+            settings = settings.copy(topAngle = a, topElev = e, presetIndex = CUSTOM)
+            updateLabels()
+            binding = true
+            seekTopAngle.progress = a - SpeakerLayoutView.TOP_ANGLE_MIN
+            seekTopElev.progress = e - SpeakerLayoutView.TOP_ELEV_MIN
             binding = false
             if (done) {
                 commit(settings)
