@@ -18,11 +18,19 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <!-- 원래 소리 음소거용 세션 탐색 (ADB로 1회 부여: pm grant ... DUMP) -->
     <uses-permission android:name="android.permission.DUMP" tools:ignore="ProtectedPermissions" />
+    <!-- 앱 하나로 권한 받기: 이 폰의 무선 디버깅(ADB)에 접속 + mDNS 로 포트 찾기 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- 앱 자동 업데이트 (GitHub 릴리스에서 받아 설치) -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
     <!-- 세션 UID → 앱 이름 표시 -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
 
     <queries>
-        <!-- Shizuku 설치 여부 확인/실행 -->
+        <!-- (선택) 이미 Shizuku 를 쓰는 경우 그쪽으로도 권한 받기 -->
         <package android:name="moe.shizuku.privileged.api" />
     </queries>
 
@@ -52,6 +60,21 @@
             android:name=".Strong3DService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+
+        <!-- 무선 디버깅 페어링 (코드 입력 알림 + 권한 부여) -->
+        <service
+            android:name=".AdbPairService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+
+        <!-- 업데이트 설치 상태 / 업데이트 완료 -->
+        <receiver
+            android:name=".UpdateReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <service
             android:name=".SpatialTileService"

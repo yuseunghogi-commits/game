@@ -71,7 +71,7 @@
             android:id="@+id/buttonDump"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="🔑 강력 모드 권한 설정 (PC 없이 Shizuku로)" />
+            android:text="🔑 강력 모드 권한 받기 (처음 1번, 앱 안에서 바로)" />
 
         <TextView
             android:id="@+id/textStatus"
@@ -470,6 +470,21 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="기기 내장 공간 음향 설정 열기" />
+
+        <TextView
+            style="@style/SectionTitle"
+            android:text="앱 업데이트" />
+
+        <Button
+            android:id="@+id/buttonUpdate"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🔄 업데이트 확인" />
+
+        <Switch
+            android:id="@+id/switchAutoUpdate"
+            style="@style/OptionSwitch"
+            android:text="새 버전 자동 확인 (앱을 열 때, 설정·권한은 유지)" />
 
         <TextView
             android:layout_width="match_parent"

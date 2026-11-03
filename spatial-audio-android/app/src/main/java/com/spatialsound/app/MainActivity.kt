@@ -209,6 +209,17 @@ class MainActivity : Activity() {
         // 알림/타일에서 끈 경우 반영
         settings = SpatialSettings.load(this)
         bindUi()
+        if (awaitingPair && SessionMuter.hasDumpPermission(this)) {
+            awaitingPair = false
+            AlertDialog.Builder(this)
+                .setTitle("설정 완료 ✅")
+                .setMessage("이제 강력 3D 모드를 쓸 수 있습니다.\n'3D 음향 켜기'를 누르고, 소리 공유 창에서 [시작]을 누르세요.\n\n권한은 앱을 지우기 전까지 유지됩니다 (재부팅·업데이트해도 OK).")
+                .setPositiveButton("확인", null)
+                .show()
+        }
+        // '설치 허용' 설정에서 돌아온 경우 업데이트 이어서, 아니면 6시간마다 새 버전 확인
+        AppUpdater.resumePending(this)
+        AppUpdater.maybeCheck(this)
     }
 
     override fun onStop() {
@@ -349,6 +360,14 @@ class MainActivity : Activity() {
             if (!binding && checked && settings.strongMode) { commit(settings.copy(strongMode = false)); bindUi() }
         }
         findViewById<Button>(R.id.buttonDump).setOnClickListener { showDumpHelp() }
+        findViewById<Button>(R.id.buttonUpdate).apply {
+            text = "🔄 업데이트 확인 (현재 v${AppUpdater.currentVersion(this@MainActivity)})"
+            setOnClickListener { AppUpdater.check(this@MainActivity, manual = true) }
+        }
+        findViewById<Switch>(R.id.switchAutoUpdate).apply {
+            isChecked = AppUpdater.autoCheckEnabled(this@MainActivity)
+            setOnCheckedChangeListener { _, on -> AppUpdater.setAutoCheck(this@MainActivity, on) }
+        }
         spinnerHeadSource.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(p: AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
                 if (binding || pos == settings.headSource) return
@@ -679,7 +698,7 @@ class MainActivity : Activity() {
     private fun renderStrongStatus(s: EngineState.Snapshot, lines: MutableList<String>) {
         renderHead(s)
         val dump = SessionMuter.hasDumpPermission(this)
-        lines += if (dump) "🔑 원래 소리 음소거 권한: 있음" else "🔑 원래 소리 음소거 권한: 없음 → 위 '🔑 강력 모드 권한 설정' 버튼"
+        lines += if (dump) "🔑 원래 소리 음소거 권한: 있음" else "🔑 원래 소리 음소거 권한: 없음 → 위 '🔑 강력 모드 권한 받기' 버튼 (처음 1번)"
         when {
             !settings.enabled -> lines += "⏸ 꺼져 있음"
             !s.strongRunning -> lines += "⏳ 시작 대기 중 (오디오 공유를 허용해야 시작됨)"
@@ -747,6 +766,11 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_NOTIF_PAIR) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) showDumpHelp()
+            else Toast.makeText(this, "알림을 허용해야 페어링 코드를 입력할 수 있어요", Toast.LENGTH_LONG).show()
+            return
+        }
         if (requestCode == REQ_BT) {
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
                 commit(settings.copy(headSource = 1))
@@ -767,7 +791,10 @@ class MainActivity : Activity() {
         }
     }
 
-    /** 강력 모드 권한 설정: Shizuku(PC 없이) 단계별 안내 + PC 명령어 대안 */
+    /**
+     * 강력 모드 권한(DUMP) 받기 — 앱 안에서 무선 디버깅 페어링으로 바로 (Shizuku·PC 불필요).
+     * 단계: 알림 허용 → 개발자 옵션 → (Wi-Fi) → 페어링 코드 입력은 알림에서.
+     */
     private fun showDumpHelp() {
         if (SessionMuter.hasDumpPermission(this)) {
             AlertDialog.Builder(this)
@@ -777,6 +804,119 @@ class MainActivity : Activity() {
                 .show()
             return
         }
+        // 이미 Shizuku 를 쓰고 있는 사람은 그쪽으로 (실행 중일 때만)
+        when (ShizukuHelper.state(this)) {
+            ShizukuHelper.State.READY -> { grantViaShizuku(); return }
+            ShizukuHelper.State.NO_PERMISSION -> { showShizukuHelp(); return }
+            else -> {}
+        }
+        if (!WirelessAdb.supported()) {
+            // Android 10 이하는 무선 디버깅이 없음 → PC 방법
+            showPcHelp()
+            return
+        }
+        if (needsNotificationPermission()) {
+            AlertDialog.Builder(this)
+                .setTitle("알림 허용이 필요해요")
+                .setMessage("페어링 코드(6자리)를 알림에서 입력합니다.\n다음 창에서 알림을 '허용'해 주세요.")
+                .setPositiveButton("계속") { _, _ ->
+                    requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIF_PAIR)
+                }
+                .setNegativeButton("닫기", null)
+                .show()
+            return
+        }
+        if (!getSystemService(android.app.NotificationManager::class.java).areNotificationsEnabled()) {
+            AlertDialog.Builder(this)
+                .setTitle("알림이 꺼져 있어요")
+                .setMessage("페어링 코드를 알림에서 입력하므로 이 앱의 알림을 켜 주세요.")
+                .setPositiveButton("알림 설정 열기") { _, _ ->
+                    runCatching {
+                        startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                            .putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
+                    }
+                }
+                .setNegativeButton("닫기", null)
+                .show()
+            return
+        }
+        if (!WirelessAdb.developerOptionsOn(this)) {
+            AlertDialog.Builder(this)
+                .setTitle("1/2 단계: 개발자 옵션 켜기 (처음 1번)")
+                .setMessage(
+                    "권한을 받으려면 휴대폰의 '개발자 옵션'이 켜져 있어야 합니다.\n\n" +
+                        "① [설정 열기] → '소프트웨어 정보' 누르기\n" +
+                        "② '빌드번호'를 7번 연속 누르기 (잠금 PIN 입력)\n" +
+                        "③ '개발자 모드를 켰습니다'가 나오면 이 앱으로 돌아와 이 버튼을 다시 누르세요"
+                )
+                .setPositiveButton("설정 열기") { _, _ ->
+                    runCatching { startActivity(Intent(Settings.ACTION_DEVICE_INFO_SETTINGS)) }
+                        .onFailure { startActivity(Intent(Settings.ACTION_SETTINGS)) }
+                }
+                .setNeutralButton("다른 방법") { _, _ -> showOtherWays() }
+                .setNegativeButton("닫기", null)
+                .show()
+            return
+        }
+        if (!WirelessAdb.wifiConnected(this)) {
+            AlertDialog.Builder(this)
+                .setTitle("Wi-Fi 연결이 필요해요")
+                .setMessage("무선 디버깅은 Wi-Fi에 연결된 상태에서만 켜집니다.\n(인터넷이 안 되는 Wi-Fi도 괜찮아요. 권한을 받은 뒤에는 Wi-Fi가 필요 없습니다.)")
+                .setPositiveButton("Wi-Fi 설정") { _, _ -> runCatching { startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)) } }
+                .setNeutralButton("그래도 계속") { _, _ -> showPairSteps() }
+                .setNegativeButton("닫기", null)
+                .show()
+            return
+        }
+        showPairSteps()
+    }
+
+    private fun showPairSteps() {
+        AlertDialog.Builder(this)
+            .setTitle("2/2 단계: 무선 디버깅 페어링 (처음 1번)")
+            .setMessage(
+                "PC나 다른 앱 없이 이 폰 안에서 바로 권한을 받습니다.\n\n" +
+                    "① [시작]을 누르면 개발자 옵션이 열립니다\n" +
+                    "② '무선 디버깅'을 켜고 → '무선 디버깅' 글자를 눌러 들어가기\n" +
+                    "③ '페어링 코드로 기기 페어링' 누르기 → 6자리 숫자가 보입니다\n" +
+                    "④ 그 화면 그대로 두고, 위에 뜨는 '3D 사운드' 알림의 [코드 입력]에 6자리 입력\n" +
+                    "   (알림이 안 보이면 상단바를 내리세요)\n" +
+                    "⑤ '✅ 권한 받기 완료' 알림이 뜨면 끝! 이 앱으로 돌아오세요\n\n" +
+                    "※ 이 과정 때문에 켠 무선 디버깅은 끝나면 자동으로 다시 꺼집니다.\n" +
+                    "※ 권한은 앱을 지우기 전까지 유지됩니다 (재부팅·업데이트해도 OK)."
+            )
+            .setPositiveButton("시작") { _, _ ->
+                AdbPairService.start(this)
+                awaitingPair = true
+                openWirelessDebugging()
+            }
+            .setNeutralButton("다른 방법") { _, _ -> showOtherWays() }
+            .setNegativeButton("닫기", null)
+            .show()
+    }
+
+    /** 개발자 옵션 열기 (가능하면 '무선 디버깅' 항목을 강조) */
+    private fun openWirelessDebugging() {
+        val key = "toggle_adb_wireless"
+        val i = Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+            .putExtra(":settings:fragment_args_key", key)
+            .putExtra(":settings:show_fragment_args", Bundle().apply { putString(":settings:fragment_args_key", key) })
+        runCatching { startActivity(i) }.onFailure {
+            runCatching { startActivity(Intent(Settings.ACTION_SETTINGS)) }
+        }
+    }
+
+    private fun showOtherWays() {
+        val items = arrayOf("PC로 하기 (USB 케이블 + adb 명령)", "Shizuku 앱으로 하기 (이미 쓰는 경우)")
+        AlertDialog.Builder(this)
+            .setTitle("다른 방법으로 권한 받기")
+            .setItems(items) { _, which -> if (which == 0) showPcHelp() else showShizukuHelp() }
+            .setNegativeButton("닫기", null)
+            .show()
+    }
+
+    /** (선택) Shizuku 로 권한 받기 — Shizuku 를 이미 쓰는 사람용 */
+    private fun showShizukuHelp() {
         val st = ShizukuHelper.state(this)
         val (step, msg) = when (st) {
             ShizukuHelper.State.NOT_INSTALLED -> "1/4 단계: Shizuku 설치" to
@@ -900,6 +1040,8 @@ class MainActivity : Activity() {
     }
 
     private var pendingProjection = false
+    /** 무선 디버깅 페어링을 시작했고 돌아오길 기다리는 중 */
+    private var awaitingPair = false
 
     companion object {
         private val CUSTOM = SOUND_PRESETS.lastIndex
@@ -922,6 +1064,7 @@ class MainActivity : Activity() {
         private const val REQ_RECORD = 11
         private const val REQ_SHIZUKU = 12
         private const val REQ_BT = 13
+        private const val REQ_NOTIF_PAIR = 14
         /** 헤드 트래킹 장치 (SpatialSettings.headSource 순서) */
         private val HEAD_SOURCES = listOf(
             "끄기",
