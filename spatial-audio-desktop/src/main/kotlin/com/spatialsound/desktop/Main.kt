@@ -37,6 +37,11 @@ fun main() {
         }
     }
     runCatching {
+        MainWindow::class.java.getResourceAsStream("/hrir_mit_elev.bin")?.use {
+            com.spatialsound.app.BinauralProcessor.elevBase = com.spatialsound.app.ElevationSet.load(it)
+        }
+    }
+    runCatching {
         MainWindow::class.java.getResourceAsStream("/headphone_eq.txt")?.use {
             com.spatialsound.app.HeadphoneEq.profiles = com.spatialsound.app.HeadphoneEq.parse(it)
         }
@@ -72,6 +77,9 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
     private val sRearLevel = slider(0, 100, settings.rearLevel)
     private val sCenter = slider(0, 100, settings.centerLevel)
     private val lCenter = JLabel()
+    private val sElev = slider(-20, 40, settings.frontElev)
+    private val sHeight = slider(0, 100, settings.heightLevel)
+    private val lElev = JLabel(); private val lHeight = JLabel()
     private val lFront = JLabel(); private val lRearAngle = JLabel(); private val lRearLevel = JLabel()
     private val lStrength = JLabel(); private val lWidth = JLabel(); private val lRoom = JLabel(); private val lBass = JLabel()
     private val status = JLabel(" ")
@@ -120,6 +128,8 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         row(lRearAngle); row(sRearAngle)
         row(lRearLevel); row(sRearLevel)
         row(lCenter); row(sCenter)
+        row(lElev); row(sElev)
+        row(lHeight); row(sHeight)
         row(lWidth); row(sWidth)
         row(lRoom); row(sRoom)
         row(JLabel("잔향 (방 크기)")); row(reverbBox)
@@ -147,11 +157,12 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
                 sBass.value = p.bassStrength; reverbBox.selectedIndex = p.reverbPreset
                 sFront.value = p.frontAngle; sRearAngle.value = p.rearAngle; sRearLevel.value = p.rearLevel
                 sCenter.value = p.centerLevel
+                sElev.value = p.frontElev; sHeight.value = p.heightLevel
                 applyingPreset = false
                 changed()
             }
         }
-        listOf(sStrength, sWidth, sRoom, sBass, sFront, sRearAngle, sRearLevel, sCenter).forEach { s -> s.addChangeListener { changed() } }
+        listOf(sStrength, sWidth, sRoom, sBass, sFront, sRearAngle, sRearLevel, sCenter, sElev, sHeight).forEach { s -> s.addChangeListener { changed() } }
         reverbBox.addActionListener { changed() }
         engineBox.selectedIndex = intArrayOf(1, 2, 0).indexOf(settings.engineMode).coerceAtLeast(0)
         earBox.selectedIndex = settings.earSize.coerceIn(0, 4)
@@ -182,7 +193,10 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
             spread = sSpread.value, earSize = earBox.selectedIndex.coerceAtLeast(0),
             hpEq = hpEqBox.selectedIndex.coerceAtLeast(0),
             centerLevel = sCenter.value,
+            frontElev = sElev.value, heightLevel = sHeight.value,
         )
+        val measured = settings.engineMode != 0
+        for (c in listOf(lElev, sElev, lHeight, sHeight)) c.isVisible = measured
         lCenter.isVisible = settings.engineMode == 1; sCenter.isVisible = lCenter.isVisible
         lSpread.isVisible = settings.engineMode == 2; sSpread.isVisible = lSpread.isVisible
         val soundOnly = settings.copy(engineMode = 1, spread = 90, earSize = 2, hpEq = 0)
@@ -208,6 +222,8 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         lRearLevel.text = if (classic) "뒤 스피커 양: ${sRearLevel.value}% (0이면 전부 앞에서)"
         else "배경음 옆/뒤 비율: ${sRearLevel.value}% (박수·관중·울림을 옆/뒤로)"
         lCenter.text = "가운데 스피커: ${sCenter.value}% (보컬·대사를 정면에)"
+        lElev.text = "앞 스피커 높이: " + when { sElev.value > 0 -> "위 ${sElev.value}°"; sElev.value < 0 -> "아래 ${-sElev.value}°"; else -> "귀 높이 (0°)" }
+        lHeight.text = "높이감 (천장 스피커): ${sHeight.value}%"
         lRoom.text = "방 울림 (벽 반사음): ${sRoom.value}%"
         lBass.text = "저음 보강: ${sBass.value / 10}%"
     }
@@ -299,6 +315,8 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         rearAngle = prefs.getInt("rearAngle", 135),
         rearLevel = prefs.getInt("rearLevel", 45),
         centerLevel = prefs.getInt("center", 70),
+        frontElev = prefs.getInt("elev", 0),
+        heightLevel = prefs.getInt("height", 25),
         engineMode = prefs.getInt("engine", 1),
         spread = prefs.getInt("spread", 90),
         earSize = prefs.getInt("ear", 2),
@@ -311,6 +329,7 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         prefs.putInt("width", settings.width)
         prefs.putInt("front", settings.frontAngle); prefs.putInt("rearAngle", settings.rearAngle)
         prefs.putInt("rearLevel", settings.rearLevel); prefs.putInt("center", settings.centerLevel)
+        prefs.putInt("elev", settings.frontElev); prefs.putInt("height", settings.heightLevel)
         prefs.putInt("engine", settings.engineMode); prefs.putInt("spread", settings.spread); prefs.putInt("ear", settings.earSize)
         prefs.putInt("hpEq", settings.hpEq)
     }

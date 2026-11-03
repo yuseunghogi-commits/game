@@ -59,8 +59,9 @@ class Strong3DService : Service() {
         override fun run() {
             val t = headTracker ?: return
             processor?.headYawDeg = t.yawDeg
+            processor?.headPitchDeg = if (settings.headPitch) t.pitchDeg else 0.0
             // 화면 표시는 10Hz 면 충분
-            if (++headTick % 5 == 0) EngineState.update { it.copy(headYaw = t.yawDeg) }
+            if (++headTick % 5 == 0) EngineState.update { it.copy(headYaw = t.yawDeg, headPitch = if (settings.headPitch) t.pitchDeg else 0.0) }
             main.postDelayed(this, 20)
         }
     }
@@ -72,6 +73,7 @@ class Strong3DService : Service() {
             headTracker = null
             main.removeCallbacks(headPump)
             processor?.headYawDeg = 0.0
+            processor?.headPitchDeg = 0.0
             headSourceId = want
             val t: HeadSource? = when (want) {
                 1 -> BudsHeadTracker(this) { publishState() }
@@ -452,10 +454,18 @@ class Strong3DService : Service() {
         /** 실측 HRIR + 헤드폰 보정 데이터를 한 번만 불러 둔다 */
         fun ensureAssets(context: Context) {
             ensureHrir(context)
+            ensureElevation(context)
             if (HeadphoneEq.profiles.isEmpty()) {
                 runCatching { context.assets.open("headphone_eq.txt").use { HeadphoneEq.profiles = HeadphoneEq.parse(it) } }
                     .onFailure { Log.e(TAG, "헤드폰 보정 데이터 로드 실패", it) }
             }
+        }
+
+        /** 높이(위아래) 데이터 — 계산 준비(prepare)는 렌더러를 만들 때 백그라운드에서 */
+        fun ensureElevation(context: Context) {
+            if (BinauralProcessor.elevBase != null) return
+            runCatching { context.assets.open("hrir_mit_elev.bin").use { BinauralProcessor.elevBase = ElevationSet.load(it) } }
+                .onFailure { Log.e(TAG, "높이 데이터 로드 실패", it) }
         }
 
         /** 실측 HRIR 을 앱 assets 에서 한 번만 불러 둔다 */

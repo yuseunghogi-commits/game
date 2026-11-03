@@ -138,6 +138,7 @@ a { color: var(--accent); }
           <span><i style="background:var(--center)"></i>가운데</span>
           <span><i style="background:var(--side)"></i>옆 (배경음)</span>
           <span><i style="background:var(--rear)"></i>뒤 (끌기)</span>
+          <span>▲ 천장 (높이감)</span>
         </div>
         <p class="note">좌우는 항상 대칭입니다. 앞 스피커를 위로 올리면 소리가 정면으로 모이고, 옆으로 내리면 넓어집니다.</p>
       </section>
@@ -180,6 +181,8 @@ a { color: var(--accent); }
           <div class="field"><label for="room">방 울림 (반사음) <span class="val" id="roomVal"></span></label><input type="range" id="room" min="0" max="100" step="1"></div>
           <div class="field"><label for="roomSize">방 크기 · 잔향 <span class="val" id="roomSizeVal"></span></label><select id="roomSize"></select></div>
           <div class="field"><label for="bass">저음 보강 <span class="val" id="bassVal"></span></label><input type="range" id="bass" min="0" max="1000" step="10"></div>
+          <div class="field"><label for="elev">앞 스피커 높이 <span class="val" id="elevVal"></span></label><input type="range" id="elev" min="-20" max="40" step="1"><small>영상 볼 때 화면 높이에 맞춰 보세요</small></div>
+          <div class="field"><label for="height">높이감 (천장 스피커) <span class="val" id="heightVal"></span></label><input type="range" id="height" min="0" max="100" step="1"><small>배경음 일부를 머리 위쪽에서</small></div>
         </div>
       </section>
 
@@ -197,11 +200,12 @@ a { color: var(--accent); }
   <footer>
     <p>아이패드는 앱이 유튜브 같은 다른 앱의 소리를 가져가지 못하게 막혀 있어서, 이 페이지는 아이패드에 저장된 파일만 처리합니다. 유튜브는 폰·노트북 앱으로 들으세요.</p>
     <p>소리가 안 나면: 아이패드 소리 크기와 무음 설정을 확인하고, 재생 중에는 사파리를 앞에 둔 채로 들으세요. 헤드폰 앱의 EQ 와 기기의 공간 음향은 꺼 두는 것이 좋습니다.</p>
-    <p>실측 HRTF: KEMAR HRTFs with low frequency correction — H. Wierstorf, M. Geier, S. Spors, V. Erbes (TU Berlin / Universität Rostock), <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>. 헤드폰 보정: <a href="https://github.com/jaakkopasanen/AutoEq" target="_blank" rel="noopener">AutoEq</a> (MIT), 측정 Rtings · oratory1990 · HypetheSonics.</p>
+    <p>실측 HRTF: KEMAR HRTFs with low frequency correction — H. Wierstorf, M. Geier, S. Spors, V. Erbes (TU Berlin / Universität Rostock), <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>. 헤드폰 보정: <a href="https://github.com/jaakkopasanen/AutoEq" target="_blank" rel="noopener">AutoEq</a> (MIT), 측정 Rtings · oratory1990 · HypetheSonics. 높이 단서: MIT KEMAR HRTF (W. Gardner, K. Martin, MIT Media Lab), mit-hrtf-lib (MIT).</p>
   </footer>
 </div>
 
 <script type="application/octet-stream" id="hrir-data">__HRIR_B64__</script>
+<script type="application/octet-stream" id="elev-data">__ELEV_B64__</script>
 <script type="text/plain" id="eq-data">__EQ_TEXT__</script>
 <script id="engine-src">
 /*ENGINE_SRC*/
@@ -211,7 +215,7 @@ class Spatial3DProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
     const o = options.processorOptions, E = globalThis.SpatialEngine;
-    this.engine = new E.Engine(sampleRate, E.loadHrir(o.hrir), E.parseEq(o.eqText));
+    this.engine = new E.Engine(sampleRate, E.loadHrir(o.hrir), E.parseEq(o.eqText), o.elev ? E.loadElevation(o.elev) : null);
     this.engine.setParams(o.params);
     this.zero = new Float32Array(128);
     this.port.onmessage = (e) => { if (e.data && e.data.params) this.engine.setParams(e.data.params); };
@@ -236,11 +240,11 @@ registerProcessor('spatial3d', Spatial3DProcessor);
   const ROOM_RT = ['잔향 없음', 'RT60 0.4초', 'RT60 0.7초', 'RT60 1.0초', 'RT60 1.6초', 'RT60 2.4초', 'RT60 1.5초'];
   // 안드로이드 앱과 같은 프리셋
   const PRESETS = [
-    { name: '음악 (자연스러운 입체감)', p: { virtualizerStrength: 850, bassStrength: 250, spaceEq: 45, reverbPreset: 2, frontAngle: 45, rearAngle: 135, rearLevel: 45, centerLevel: 60 } },
-    { name: '영화관', p: { virtualizerStrength: 1000, bassStrength: 500, spaceEq: 60, reverbPreset: 3, frontAngle: 55, rearAngle: 130, rearLevel: 65, centerLevel: 85 } },
-    { name: '콘서트홀', p: { virtualizerStrength: 950, bassStrength: 300, spaceEq: 55, reverbPreset: 5, frontAngle: 40, rearAngle: 140, rearLevel: 55, centerLevel: 50 } },
-    { name: '게임 (발소리·방향감)', p: { virtualizerStrength: 1000, bassStrength: 200, spaceEq: 35, reverbPreset: 1, frontAngle: 60, rearAngle: 130, rearLevel: 50, centerLevel: 70 } },
-    { name: '보컬·팟캐스트', p: { virtualizerStrength: 650, bassStrength: 50, spaceEq: 30, reverbPreset: 1, frontAngle: 35, rearAngle: 140, rearLevel: 20, centerLevel: 90 } },
+    { name: '음악 (자연스러운 입체감)', p: { virtualizerStrength: 850, bassStrength: 250, spaceEq: 45, reverbPreset: 2, frontAngle: 45, rearAngle: 135, rearLevel: 45, centerLevel: 60, heightLevel: 25, frontElev: 0 } },
+    { name: '영화관', p: { virtualizerStrength: 1000, bassStrength: 500, spaceEq: 60, reverbPreset: 3, frontAngle: 55, rearAngle: 130, rearLevel: 65, centerLevel: 85, heightLevel: 40, frontElev: 10 } },
+    { name: '콘서트홀', p: { virtualizerStrength: 950, bassStrength: 300, spaceEq: 55, reverbPreset: 5, frontAngle: 40, rearAngle: 140, rearLevel: 55, centerLevel: 50, heightLevel: 35, frontElev: 5 } },
+    { name: '게임 (발소리·방향감)', p: { virtualizerStrength: 1000, bassStrength: 200, spaceEq: 35, reverbPreset: 1, frontAngle: 60, rearAngle: 130, rearLevel: 50, centerLevel: 70, heightLevel: 15, frontElev: 0 } },
+    { name: '보컬·팟캐스트', p: { virtualizerStrength: 650, bassStrength: 50, spaceEq: 30, reverbPreset: 1, frontAngle: 35, rearAngle: 140, rearLevel: 20, centerLevel: 90, heightLevel: 10, frontElev: 0 } },
   ];
   const MODE_INFO = {
     1: '방 안의 가상 스피커 7개(앞 2·가운데·옆 2·뒤 2)로 들려줍니다. 보컬은 가운데, 박수·관중·울림은 옆과 뒤로 갑니다.',
@@ -249,10 +253,8 @@ registerProcessor('spatial3d', Spatial3DProcessor);
   const STORE = 'spatial3d-web-v1';
 
   // ── 데이터 ──
-  const b64 = $('hrir-data').textContent.trim();
-  const bin = atob(b64), bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  const hrirBuf = bytes.buffer;
+  const unb64 = (id) => { const s = atob($(id).textContent.trim()), b = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i); return b.buffer; };
+  const hrirBuf = unb64('hrir-data'), elevBuf = unb64('elev-data');
   const hrir = E.loadHrir(hrirBuf);
   const eqText = $('eq-data').textContent;
   const eqProfiles = E.parseEq(eqText);
@@ -260,6 +262,8 @@ registerProcessor('spatial3d', Spatial3DProcessor);
   // ── 설정 (이 기기에만 저장) ──
   let st = Object.assign({}, E.DEFAULTS, PRESETS[0].p, { hpEq: 1, presetIndex: 0, engineMode: 1, spread: 90, earSize: 2, enabled: true });
   try { const saved = JSON.parse(localStorage.getItem(STORE) || 'null'); if (saved) Object.assign(st, saved); } catch (e) { /* 저장소 없음 */ }
+  if (st.heightLevel === undefined) st.heightLevel = 25;
+  if (st.frontElev === undefined) st.frontElev = 0;
   const save = () => { try { localStorage.setItem(STORE, JSON.stringify(st)); } catch (e) { /* 무시 */ } };
 
   // ── 오디오 ──
@@ -269,6 +273,7 @@ registerProcessor('spatial3d', Spatial3DProcessor);
     virtualizerStrength: st.virtualizerStrength, bassStrength: st.bassStrength, spaceEq: st.spaceEq, reverbPreset: st.reverbPreset,
     frontAngle: st.frontAngle, rearAngle: st.rearAngle, rearLevel: st.rearLevel, centerLevel: st.centerLevel,
     engineMode: st.engineMode, spread: st.spread, earSize: st.earSize, hpEq: st.hpEq, enabled: st.enabled,
+    frontElev: st.frontElev, heightLevel: st.heightLevel,
   });
 
   async function ensureAudio() {
@@ -285,13 +290,13 @@ registerProcessor('spatial3d', Spatial3DProcessor);
         node = new AudioWorkletNode(ctx, 'spatial3d', {
           numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
           channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers',
-          processorOptions: { hrir: hrirBuf.slice(0), eqText, params: params() },
+          processorOptions: { hrir: hrirBuf.slice(0), elev: elevBuf.slice(0), eqText, params: params() },
         });
         sendParams = () => node.port.postMessage({ params: params() });
         how = '오디오 워크릿';
       } catch (err) {
         // 대체: 메인 스레드에서 처리 (조금 더 지연되지만 같은 소리)
-        mainEngine = new E.Engine(ctx.sampleRate, hrir, eqProfiles);
+        mainEngine = new E.Engine(ctx.sampleRate, hrir, eqProfiles, E.loadElevation(elevBuf));
         mainEngine.setParams(params());
         node = ctx.createScriptProcessor(2048, 2, 2);
         node.onaudioprocess = (ev) => {
@@ -420,6 +425,11 @@ registerProcessor('spatial3d', Spatial3DProcessor);
     el('text', { x, y: y + 4, 'text-anchor': 'middle', 'font-size': 11, fill: 'var(--muted)', 'font-family': 'var(--font-mono)' }).textContent = txt;
   }
   const beams = el('g', {});
+  // 천장 스피커 (±70°, 위 55°): 위에서 보면 머리 가까이 → 안쪽 원에 삼각형
+  const tops = [-70, 70].map((deg) => {
+    const [x, y] = pos(deg, RAD * 0.42);
+    return el('path', { d: `M ${x} ${y - 9} L ${x - 8} ${y + 6} L ${x + 8} ${y + 6} Z`, fill: 'var(--ink)' });
+  });
   const head = el('g', {});
   el('rect', { x: CX - 27, y: CY - 7, width: 8, height: 14, rx: 3, fill: 'var(--head)', opacity: 0.55 }, head);
   el('rect', { x: CX + 19, y: CY - 7, width: 8, height: 14, rx: 3, fill: 'var(--head)', opacity: 0.55 }, head);
@@ -448,6 +458,7 @@ registerProcessor('spatial3d', Spatial3DProcessor);
     place(spk.RL, -r, '−' + r + '°', 26); place(spk.RR, r, r + '°', 26);
     place(spk.C, 0); place(spk.SL, -95); place(spk.SR, 95);
     spk.C.g.style.display = spatial && st.centerLevel > 0 ? '' : 'none';
+    for (const tp of tops) { tp.style.display = st.heightLevel > 0 ? '' : 'none'; tp.setAttribute('opacity', (0.3 + 0.6 * st.heightLevel / 100).toFixed(2)); }
     spk.C.c.setAttribute('opacity', (0.35 + 0.65 * st.centerLevel / 100).toFixed(2));
     const amb = (0.3 + 0.7 * st.rearLevel / 100).toFixed(2);
     for (const k of ['SL', 'SR', 'RL', 'RR']) spk[k].c.setAttribute('opacity', amb);
@@ -492,6 +503,8 @@ registerProcessor('spatial3d', Spatial3DProcessor);
     ['room', 'spaceEq', (v) => v + '%'],
     ['bass', 'bassStrength', (v) => Math.round(v / 10) + '%'],
     ['spread', 'spread', (v) => '±' + v + '°'],
+    ['elev', 'frontElev', (v) => v > 0 ? '위 ' + v + '°' : v < 0 ? '아래 ' + (-v) + '°' : '귀 높이'],
+    ['height', 'heightLevel', (v) => v + '%'],
   ];
   function syncUi() {
     for (const [id, key, f] of sliders) { $(id).value = st[key]; $(id + 'Val').textContent = f(st[key]); }

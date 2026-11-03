@@ -57,6 +57,11 @@ class MainActivity : Activity() {
     private lateinit var labelRearLevel: TextView
     private lateinit var labelCenter: TextView
     private lateinit var seekCenter: SeekBar
+    private lateinit var labelElev: TextView
+    private lateinit var seekElev: SeekBar
+    private lateinit var labelHeight: TextView
+    private lateinit var seekHeight: SeekBar
+    private lateinit var switchHeadPitch: Switch
     private lateinit var spinnerHeadSource: Spinner
     private lateinit var switchHeadInvert: Switch
     private lateinit var textHead: TextView
@@ -110,6 +115,11 @@ class MainActivity : Activity() {
         labelRearLevel = findViewById(R.id.labelRearLevel)
         labelCenter = findViewById(R.id.labelCenter)
         seekCenter = findViewById(R.id.seekCenter)
+        labelElev = findViewById(R.id.labelElev)
+        seekElev = findViewById(R.id.seekElev)
+        labelHeight = findViewById(R.id.labelHeight)
+        seekHeight = findViewById(R.id.seekHeight)
+        switchHeadPitch = findViewById(R.id.switchHeadPitch)
         spinnerHeadSource = findViewById(R.id.spinnerHeadSource)
         spinnerHeadSource.adapter = darkAdapter(HEAD_SOURCES)
         switchHeadInvert = findViewById(R.id.switchHeadInvert)
@@ -212,6 +222,14 @@ class MainActivity : Activity() {
         speakerLayout.centerLevel = if (seven) settings.centerLevel.toFloat() else 0f
         speakerLayout.showSides = settings.engineMode != 0
         seekCenter.progress = settings.centerLevel
+        seekElev.progress = settings.frontElev + 20
+        seekHeight.progress = settings.heightLevel
+        switchHeadPitch.isChecked = settings.headPitch
+        // 높이 기능은 실측 엔진(공간·정위)에서만
+        val measured = settings.engineMode != 0
+        val hv = if (measured) android.view.View.VISIBLE else android.view.View.GONE
+        labelElev.visibility = hv; seekElev.visibility = hv; labelHeight.visibility = hv; seekHeight.visibility = hv
+        speakerLayout.heightLevel = if (measured) settings.heightLevel.toFloat() else 0f
         labelCenter.visibility = if (seven) android.view.View.VISIBLE else android.view.View.GONE
         seekCenter.visibility = labelCenter.visibility
         spinnerHeadSource.setSelection(settings.headSource.coerceIn(0, HEAD_SOURCES.lastIndex))
@@ -241,6 +259,12 @@ class MainActivity : Activity() {
         labelRearLevel.text = if (settings.engineMode == 0) "뒤 스피커 양: ${settings.rearLevel}% (0이면 전부 앞에서)"
         else "배경음 옆/뒤 비율: ${settings.rearLevel}% (박수·관중·울림을 옆/뒤 스피커로, 0이면 전부 앞에서)"
         labelCenter.text = "가운데 스피커: ${settings.centerLevel}% (보컬·대사를 정면에 단단하게, 0이면 가운데 스피커 없음)"
+        labelElev.text = "앞 스피커 높이: " + when {
+            settings.frontElev > 0 -> "위 ${settings.frontElev}°"
+            settings.frontElev < 0 -> "아래 ${-settings.frontElev}°"
+            else -> "귀 높이 (0°)"
+        } + " — 영상 볼 때 화면 높이에 맞춰 보세요"
+        labelHeight.text = "높이감 (천장 스피커): ${settings.heightLevel}% — 배경음 일부를 머리 위쪽에서"
         labelBass.text = "저음 보강: ${settings.bassStrength / 10}%"
         labelReverb.text = if (settings.strongMode) "잔향 (공간 크기)"
         else "잔향 (공간 크기) — 기본 모드에선 세션을 알려주는 음악앱에서만 적용"
@@ -310,6 +334,8 @@ class MainActivity : Activity() {
                     rearAngle = p0.rearAngle,
                     rearLevel = p0.rearLevel,
                     centerLevel = p0.center,
+                    heightLevel = p0.height,
+                    frontElev = p0.elev,
                 )
                 commit(next)
                 bindUi()
@@ -365,6 +391,14 @@ class MainActivity : Activity() {
             speakerLayout.setAngles(settings.frontAngle, v + 90)
             settings.copy(rearAngle = v + 90, presetIndex = CUSTOM)
         })
+        seekElev.setOnSeekBarChangeListener(seekListener { v -> settings.copy(frontElev = v - 20, presetIndex = CUSTOM) })
+        seekHeight.setOnSeekBarChangeListener(seekListener { v ->
+            speakerLayout.heightLevel = v.toFloat()
+            settings.copy(heightLevel = v, presetIndex = CUSTOM)
+        })
+        switchHeadPitch.setOnCheckedChangeListener { _, checked ->
+            if (!binding) commit(settings.copy(headPitch = checked))
+        }
         seekCenter.setOnSeekBarChangeListener(seekListener { v ->
             speakerLayout.centerLevel = v.toFloat()
             settings.copy(centerLevel = v, presetIndex = CUSTOM)
@@ -460,7 +494,9 @@ class MainActivity : Activity() {
             s.headSensor.isNotEmpty() -> {
                 val yaw = s.headYaw.toInt()
                 val dir = when { yaw > 3 -> "오른쪽 ${yaw}°"; yaw < -3 -> "왼쪽 ${-yaw}°"; else -> "정면" }
-                "✅ ${s.headSensor}\n현재 머리 방향: $dir"
+                val pitch = s.headPitch.toInt()
+                val up = when { pitch > 3 -> " · 위 ${pitch}°"; pitch < -3 -> " · 아래 ${-pitch}°"; else -> "" }
+                "✅ ${s.headSensor}\n현재 머리 방향: $dir$up"
             }
             else -> "⏳ ${s.headInfo.ifBlank { "연결 준비 중…" }}\n(여기를 누르면 안내)"
         }

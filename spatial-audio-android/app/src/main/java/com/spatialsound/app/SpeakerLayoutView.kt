@@ -36,6 +36,9 @@ class SpeakerLayoutView @JvmOverloads constructor(
     /** 옆 스피커(±95°) 표시 — 실측 엔진의 배경음 스피커 */
     var showSides = false
         set(v) { field = v; invalidate() }
+    /** 천장 스피커 양 (0 = 안 그림) — 위에서 본 그림이라 머리 가까이(안쪽 원)에 표시 */
+    var heightLevel = 0f
+        set(v) { field = v; invalidate() }
     /** 헤드 트래킹 중이면 머리를 돌려서 표시 */
     var headYaw = 0f
         set(v) { if (abs(field - v) > 0.5f) { field = v; invalidate() } }
@@ -54,6 +57,7 @@ class SpeakerLayoutView @JvmOverloads constructor(
     private val rear = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(0x5C, 0xC8, 0xFF) }
     private val center = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(0xFF, 0xD1, 0x5C) }
     private val sideP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(0x4F, 0xD1, 0xB0) }
+    private val topPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(0xF4, 0xF1, 0xFF) }
     private val beam = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 1.5f * dp }
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.rgb(0xCC, 0xCC, 0xDD); textSize = 12f * dp; textAlign = Paint.Align.CENTER
@@ -122,6 +126,20 @@ class SpeakerLayoutView @JvmOverloads constructor(
                 val (x, y) = pos(SIDE * s)
                 sideP.alpha = (80 + 175 * rearLevel / 100f).toInt()
                 c.drawCircle(x, y, 9 * dp, sideP)
+            }
+        }
+
+        // 천장 스피커 (±70°, 위 55°): 위에서 보면 머리 가까이에 있으므로 안쪽에 삼각형으로
+        if (heightLevel > 0f) {
+            topPaint.alpha = (90 + 165 * heightLevel / 100f).toInt()
+            for (s in listOf(1f, -1f)) {
+                val a = Math.toRadians((70f * s).toDouble())
+                val r = radius * 0.42f
+                val x = (cx + r * sin(a)).toFloat(); val y = (cy - r * cos(a)).toFloat()
+                val path = android.graphics.Path().apply {
+                    moveTo(x, y - 9 * dp); lineTo(x - 8 * dp, y + 6 * dp); lineTo(x + 8 * dp, y + 6 * dp); close()
+                }
+                c.drawPath(path, topPaint)
             }
         }
 

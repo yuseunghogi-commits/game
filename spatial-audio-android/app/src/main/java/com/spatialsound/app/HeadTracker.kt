@@ -37,6 +37,8 @@ class HeadTracker(
     var sensorName = ""
         private set
     override var invert = false
+    /** 표준 머리 센서는 기준 좌표가 기기마다 달라서 위아래는 쓰지 않음 */
+    override val pitchDeg: Double get() = 0.0
     override val activeName: String get() = if (available) sensorName else ""
     override val info: String get() = when {
         Build.VERSION.SDK_INT < 33 -> "Android 13 이상에서만 지원됩니다"

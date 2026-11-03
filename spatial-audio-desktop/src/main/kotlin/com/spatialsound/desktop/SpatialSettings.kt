@@ -15,16 +15,18 @@ data class SpatialSettings(
     val earSize: Int = 2,               // 귀 맞춤 0..4
     val hpEq: Int = 0,                  // 헤드폰 보정 (0 = 끔)
     val centerLevel: Int = 70,          // 공간 모드: 가운데 스피커 비율 0..100
+    val frontElev: Int = 0,             // 앞 스피커 높이 -20..40°
+    val heightLevel: Int = 25,          // 높이감 (천장 스피커) 0..100
 )
 
 data class SoundPreset(val name: String, val s: SpatialSettings)
 
 val SOUND_PRESETS = listOf(
-    SoundPreset("음악 (자연스러운 입체감)", SpatialSettings(850, 250, 45, 2, 65, 45, 135, 45, centerLevel = 60)),
-    SoundPreset("영화관", SpatialSettings(1000, 500, 60, 3, 80, 55, 130, 65, centerLevel = 85)),
-    SoundPreset("콘서트홀", SpatialSettings(950, 300, 55, 5, 60, 40, 140, 55, centerLevel = 50)),
-    SoundPreset("게임 (발소리/방향감)", SpatialSettings(1000, 200, 35, 1, 95, 60, 130, 50, centerLevel = 70)),
-    SoundPreset("보컬/팟캐스트", SpatialSettings(650, 50, 30, 1, 30, 35, 140, 20, centerLevel = 90)),
+    SoundPreset("음악 (자연스러운 입체감)", SpatialSettings(850, 250, 45, 2, 65, 45, 135, 45, centerLevel = 60, heightLevel = 25, frontElev = 0)),
+    SoundPreset("영화관", SpatialSettings(1000, 500, 60, 3, 80, 55, 130, 65, centerLevel = 85, heightLevel = 40, frontElev = 10)),
+    SoundPreset("콘서트홀", SpatialSettings(950, 300, 55, 5, 60, 40, 140, 55, centerLevel = 50, heightLevel = 35, frontElev = 5)),
+    SoundPreset("게임 (발소리/방향감)", SpatialSettings(1000, 200, 35, 1, 95, 60, 130, 50, centerLevel = 70, heightLevel = 15, frontElev = 0)),
+    SoundPreset("보컬/팟캐스트", SpatialSettings(650, 50, 30, 1, 30, 35, 140, 20, centerLevel = 90, heightLevel = 10, frontElev = 0)),
 )
 
 val REVERB_NAMES = listOf("없음", "작은 방", "중간 방", "큰 방", "중간 홀", "큰 홀", "플레이트")

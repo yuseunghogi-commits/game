@@ -230,6 +230,26 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:max="100" />
+
+            <TextView
+                android:id="@+id/labelElev"
+                style="@style/SliderLabel" />
+
+            <SeekBar
+                android:id="@+id/seekElev"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="60" />
+
+            <TextView
+                android:id="@+id/labelHeight"
+                style="@style/SliderLabel" />
+
+            <SeekBar
+                android:id="@+id/seekHeight"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100" />
         </LinearLayout>
 
         <TextView
@@ -291,6 +311,11 @@
                     android:text="방향 반대로"
                     android:textColor="#FFDDDDEE" />
             </LinearLayout>
+
+            <Switch
+                android:id="@+id/switchHeadPitch"
+                style="@style/OptionSwitch"
+                android:text="위아래 고개 움직임도 따라가기 (갤럭시 버즈)" />
         </LinearLayout>
 
         <TextView

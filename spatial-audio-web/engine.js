@@ -116,6 +116,102 @@
     return { fs: targetFs, taps: newTaps, dirs: set.dirs, step: set.step, data };
   }
 
+  // ─────────────────────────────── 높이 단서 (MIT KEMAR) ───────────────────────────────
+  /*
+   * MIT KEMAR HRTF (W. Gardner, K. Martin, MIT Media Lab) 확산음장 등화 compact 48kHz, 높이 -40°~+90° (ElevationSet.kt 와 동일).
+   * 수평은 기존 실측(2°)을 쓰고, 여기서는 "같은 좌우 각도 수평 방향 대비 위/아래에서 올 때 달라지는 주파수 모양"만 가져온다.
+   */
+  const MIT_N = 2048, MAX_ELEV_DB = 8, LN10_20 = 0.11512925;
+  function loadElevation(buffer) {
+    const dv = new DataView(buffer);
+    const magic = String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3));
+    if (magic !== 'HREL') throw new Error('높이 HRIR 파일 형식이 아닙니다');
+    const taps = dv.getInt32(12, true), count = dv.getInt32(16, true);
+    let off = 20;
+    const map = new Map();
+    for (let c = 0; c < count; c++) {
+      const el = dv.getInt16(off, true), az = dv.getInt16(off + 2, true); off += 4;
+      const l = new Float32Array(taps), r = new Float32Array(taps);
+      for (let t = 0; t < taps; t++) { l[t] = dv.getInt16(off, true) / 32768; off += 2; }
+      for (let t = 0; t < taps; t++) { r[t] = dv.getInt16(off, true) / 32768; off += 2; }
+      if (!map.has(el)) map.set(el, []);
+      map.get(el).push([az, [l, r]]);
+    }
+    const layers = [...map.keys()].sort((a, b) => a - b);
+    const az = layers.map(e => map.get(e).sort((a, b) => a[0] - b[0]).map(x => x[0]));
+    const hrir = layers.map(e => map.get(e).sort((a, b) => a[0] - b[0]).map(x => x[1]));
+    return new ElevationSet(layers, az, hrir);
+  }
+  class ElevationSet {
+    constructor(layers, az, hrir) { this.layers = layers; this.az = az; this.hrir = hrir; this.magDb = null; this.mitBins = MIT_N / 2 + 1; this.mapKey = 0; }
+    prepare() {
+      if (this.magDb) return;
+      const f = new Fft(MIT_N), re = new Float64Array(MIT_N), im = new Float64Array(MIT_N), raw = new Float64Array(this.mitBins);
+      this.magDb = this.hrir.map(layer => layer.map(pair => pair.map(h => {
+        re.fill(0); im.fill(0); re.set(h);
+        f.transform(re, im, false);
+        for (let k = 0; k < this.mitBins; k++) raw[k] = 10 * Math.log10(re[k] * re[k] + im[k] * im[k] + 1e-12);
+        return this.smooth(raw);
+      })));
+    }
+    smooth(db) {
+      const n = db.length, out = new Float32Array(n), cum = new Float64Array(n + 1), r = Math.pow(2, 1 / 6);
+      for (let k = 0; k < n; k++) cum[k + 1] = cum[k] + db[k];
+      for (let k = 0; k < n; k++) {
+        const lo = Math.max(0, Math.floor(k / r)), hi = Math.min(n - 1, Math.max(k, Math.trunc(k * r)));
+        out[k] = (cum[hi + 1] - cum[lo]) / (hi - lo + 1);
+      }
+      return out;
+    }
+    weights(azDeg, elDeg, ear) {
+      let a = azDeg, e2 = ear;
+      if (a < 0) { a = -a; e2 = 1 - ear; }
+      if (a > 180) a = 180;
+      const L = this.layers, el = Math.min(L[L.length - 1], Math.max(L[0], elDeg));
+      let li = 0;
+      while (li < L.length - 2 && L[li + 1] <= el) li++;
+      const l1 = Math.min(li + 1, L.length - 1);
+      const t = L[l1] === L[li] ? 0 : Math.min(1, Math.max(0, (el - L[li]) / (L[l1] - L[li])));
+      const out = [];
+      for (const [layer, lw] of [[li, 1 - t], [l1, t]]) {
+        const azs = this.az[layer];
+        if (azs.length === 1) { out.push([layer, 0, e2, lw]); continue; }
+        let j = 0;
+        while (j < azs.length - 2 && azs[j + 1] <= a) j++;
+        const u = Math.min(1, Math.max(0, (a - azs[j]) / (azs[j + 1] - azs[j])));
+        out.push([layer, j, e2, lw * (1 - u)], [layer, j + 1, e2, lw * u]);
+      }
+      return out;
+    }
+    dbAt(w, b) { let s = 0; for (const [li, ai, e, wt] of w) s += wt * this.magDb[li][ai][e][b]; return s; }
+    cueGain(azS, elS, azEq, ear, fs, n, out) {
+      if (!this.magDb) { out.fill(1); return; }
+      const bins = n / 2 + 1, key = fs * 100000 + n;
+      if (key !== this.mapKey) {
+        const mitHz = 48000 / MIT_N;
+        this.mapB0 = new Int32Array(bins); this.mapFr = new Float64Array(bins);
+        for (let k = 0; k < bins; k++) { const pos = (k * fs / n) / mitHz; this.mapB0[k] = Math.min(this.mitBins - 2, Math.trunc(pos)); this.mapFr[k] = Math.min(1, Math.max(0, pos - this.mapB0[k])); }
+        this.mapKey = key;
+      }
+      const wu = this.weights(azS, elS, ear), wf = this.weights(azEq, 0, ear);
+      const lo = 400 * n / fs, ramp = 800 * n / fs;
+      for (let k = 0; k < bins; k++) {
+        if (k < lo) { out[k] = 1; continue; }
+        const b0 = this.mapB0[k], fr = this.mapFr[k];
+        const up = this.dbAt(wu, b0) * (1 - fr) + this.dbAt(wu, b0 + 1) * fr;
+        const flat = this.dbAt(wf, b0) * (1 - fr) + this.dbAt(wf, b0 + 1) * fr;
+        let g = Math.min(MAX_ELEV_DB, Math.max(-MAX_ELEV_DB, up - flat));
+        if (k < ramp) g *= (k - lo) / (ramp - lo);
+        out[k] = Math.exp(g * LN10_20);
+      }
+    }
+  }
+  /** 같은 좌우 각도를 가진 수평 방위각 (위로 올라간 소리는 양 귀 차이가 줄어듦) */
+  function lateralAzimuth(x, y) {
+    const lat = Math.asin(Math.min(1, Math.max(-1, x))) * 180 / PI;
+    return y >= 0 ? lat : (lat >= 0 ? 180 - lat : -180 - lat);
+  }
+
   // ─────────────────────────────── 방 모델 ───────────────────────────────
   const BUSES = 8;
   const GEOS = [
@@ -241,11 +337,15 @@
   const N = 2048, WIN = 1024, HOP = 512, LATENCY = WIN, MAX_DELAY = 512;
   const BUS_ANGLES = Array.from({ length: BUSES }, (_, i) => i * 360 / BUSES);
   const SIDE_ANGLE = 95;
+  /** 천장 스피커: 좌우 ±70°, 위 55° */
+  const HEIGHT_AZ = 70, HEIGHT_EL = 55;
   const SIDE_SHARE = Math.sqrt(0.6), REAR_SHARE = Math.sqrt(0.4), SQRT2 = Math.SQRT2;
 
   class HrtfRenderer {
-    constructor(fs, base) {
-      this.fs = fs; this.base = base;
+    constructor(fs, base, elev) {
+      this.fs = fs; this.base = base; this.elev = elev || null;
+      this.headPitch = 0; this.frontElev = 0; this.heightLevel = 0; this.yawF = 0; this.pitchF = 0; this.elevF = 0;
+      this.specCache = new Map(); this.specTable = null; this.rowSpec = new Array(180).fill(null);
       this.mode = 'speakers'; this.frontAngle = 45; this.rearAngle = 135; this.rearLevel = 0.45;
       this.centerLevel = 0.7; this.spread = 90; this.headYaw = 0;
       this.fft = new Fft(N);
@@ -272,6 +372,8 @@
       this.phaseCache = new Map();
       this.dSide = Math.min(MAX_DELAY, Math.round(0.004 * fs));
       this.dRear = Math.min(MAX_DELAY, Math.round(0.009 * fs));
+      this.dTop = Math.min(MAX_DELAY, Math.round(0.006 * fs));
+      this.gainTmp = new Float64Array(this.bins);
       this.routedEnergy = [0, 0, 0];
     }
 
@@ -352,7 +454,7 @@
     }
 
     dirIndex(t, deg) {
-      let a = (deg - this.headYaw) % 360; if (a < 0) a += 360;
+      let a = (deg - this.yawF) % 360; if (a < 0) a += 360;
       return Math.round(a / t.step) % t.dirs;
     }
 
@@ -371,6 +473,7 @@
 
     frame() {
       const t = this.table;
+      this.yawF = this.headYaw; this.pitchF = this.headPitch; this.elevF = this.frontElev;
       this.fft2(this.inL, this.inR, this.xLr, this.xLi, this.xRr, this.xRi);
       let hasBus = false;
       outer: for (let b = 0; b < BUSES; b++) { const a = this.busIn[b]; for (let i = 0; i < WIN; i++) if (a[i] !== 0) { hasBus = true; break outer; } }
@@ -378,7 +481,7 @@
       this.yLr.fill(0); this.yLi.fill(0); this.yRr.fill(0); this.yRi.fill(0);
       this.analyse();
       if (this.mode === 'speakers') this.speakers(t); else this.localize(t);
-      if (hasBus) for (let b = 0; b < BUSES; b++) this.addSource(t, this.bR[b], this.bI[b], BUS_ANGLES[b], 1, 0);
+      if (hasBus) for (let b = 0; b < BUSES; b++) this.addSource(t, this.bR[b], this.bI[b], BUS_ANGLES[b], 0, 1, 0);
       const { yLr, yLi, yRr, yRi, zr, zi } = this;
       yLi[0] = 0; yRi[0] = 0; yLi[N / 2] = 0; yRi[N / 2] = 0;
       for (let k = 0; k <= N / 2; k++) { zr[k] = yLr[k] - yRi[k]; zi[k] = yLi[k] + yRr[k]; }
@@ -415,9 +518,46 @@
       }
     }
 
-    addSource(t, xr, xi, deg, g, delay) {
-      const d = this.dirIndex(t, deg);
-      const hLr = t.re[d][0], hLi = t.im[d][0], hRr = t.re[d][1], hRi = t.im[d][1];
+    /** 세계 방향 (방위 azW, 높이 elW) 의 두 귀 스펙트럼 — 머리 좌우·위아래 회전 반영, 수평 실측 × 높이 단서 (캐시) */
+    specFor(t, azW, elW) {
+      if (this.specTable !== t) { this.specCache.clear(); this.specTable = t; }
+      const a = azW * PI / 180, e = elW * PI / 180;
+      const x = Math.cos(e) * Math.sin(a), y = Math.cos(e) * Math.cos(a), z = Math.sin(e);
+      const ps = this.yawF * PI / 180, th = this.pitchF * PI / 180;
+      const x1 = x * Math.cos(ps) - y * Math.sin(ps), y1 = x * Math.sin(ps) + y * Math.cos(ps);
+      const y2 = y1 * Math.cos(th) + z * Math.sin(th), z2 = -y1 * Math.sin(th) + z * Math.cos(th);
+      const azH = Math.atan2(x1, y2) * 180 / PI, elH = Math.asin(Math.min(1, Math.max(-1, z2))) * 180 / PI;
+      const ai = Math.round((((azH % 360) + 360) % 360) / 2) % 180;
+      const ei = Math.min(36, Math.max(-36, Math.round(elH / 2.5)));
+      const key = ai * 100 + ei + 50;
+      const hit = this.specCache.get(key);
+      if (hit) { this.specCache.delete(key); this.specCache.set(key, hit); return hit; }
+      const azQ = ai * 2 > 180 ? ai * 2 - 360 : ai * 2, elQ = ei * 2.5;
+      const er = elQ * PI / 180, arr = azQ * PI / 180;
+      const azEq = lateralAzimuth(Math.cos(er) * Math.sin(arr), Math.cos(er) * Math.cos(arr));
+      const d = Math.round((((azEq % 360) + 360) % 360) / t.step) % t.dirs;
+      const sp = { lr: t.re[d][0].slice(), li: t.im[d][0].slice(), rr: t.re[d][1].slice(), ri: t.im[d][1].slice() };
+      if (this.elev && ei !== 0) {
+        const g = this.gainTmp, bins = this.bins;
+        this.elev.cueGain(azQ, elQ, azEq, 0, this.fs, N, g);
+        for (let k = 0; k < bins; k++) { sp.lr[k] *= g[k]; sp.li[k] *= g[k]; }
+        this.elev.cueGain(azQ, elQ, azEq, 1, this.fs, N, g);
+        for (let k = 0; k < bins; k++) { sp.rr[k] *= g[k]; sp.ri[k] *= g[k]; }
+      }
+      this.specCache.set(key, sp);
+      if (this.specCache.size > 600) this.specCache.delete(this.specCache.keys().next().value);
+      return sp;
+    }
+
+    addSource(t, xr, xi, deg, el, g, delay) {
+      let hLr, hLi, hRr, hRi;
+      if (el === 0 && this.pitchF === 0) {
+        const d = this.dirIndex(t, deg);
+        hLr = t.re[d][0]; hLi = t.im[d][0]; hRr = t.re[d][1]; hRi = t.im[d][1];
+      } else {
+        const sp = this.specFor(t, deg, el);
+        hLr = sp.lr; hLi = sp.li; hRr = sp.rr; hRi = sp.ri;
+      }
       const { yLr, yLi, yRr, yRi, bins } = this;
       if (delay === 0) {
         for (let k = 0; k < bins; k++) {
@@ -448,8 +588,9 @@
     }
 
     speakers(t) {
-      const cl = this.centerLevel, r = Math.min(1, Math.max(0, this.rearLevel));
-      const frontAmb = Math.sqrt(1 - r), surAmb = Math.sqrt(r);
+      const cl = this.centerLevel, r = Math.min(1, Math.max(0, this.rearLevel)), h = Math.min(1, Math.max(0, this.heightLevel));
+      // 배경음 에너지 나누기: 앞 (1-r)(1-h), 옆·뒤 r(1-h), 천장 h
+      const frontAmb = Math.sqrt((1 - r) * (1 - h)), surAmb = Math.sqrt(r * (1 - h)), topAmb = Math.sqrt(h);
       const { xLr, xLi, xRr, xRi, fLr, fLi, fRr, fRi, cRr, cIi, aLr, aLi, aRr, aRi, sLL, sRR, sLRr, sLRi, bins, lowBin } = this;
       for (let k = 0; k < bins; k++) {
         const lr = xLr[k], li = xLi[k], rr = xRr[k], ri = xRi[k];
@@ -474,23 +615,35 @@
         const alr = lr * ma, ali = li * ma, arr = rr * ma, ari = ri * ma;
         fLr[k] = flr + alr * frontAmb; fLi[k] = fli + ali * frontAmb;
         fRr[k] = frr + arr * frontAmb; fRi[k] = fri + ari * frontAmb;
-        aLr[k] = alr * surAmb; aLi[k] = ali * surAmb; aRr[k] = arr * surAmb; aRi[k] = ari * surAmb;
+        aLr[k] = alr; aLi[k] = ali; aRr[k] = arr; aRi[k] = ari;
       }
-      const f = this.frontAngle;
-      this.addSource(t, fLr, fLi, -f, 1, 0);
-      this.addSource(t, fRr, fRi, f, 1, 0);
-      if (cl > 0.001) this.addSource(t, cRr, cIi, 0, 1, 0);
-      if (r > 0.001) {
-        this.addSource(t, aLr, aLi, -SIDE_ANGLE, SIDE_SHARE, this.dSide);
-        this.addSource(t, aRr, aRi, SIDE_ANGLE, SIDE_SHARE, this.dSide);
-        this.addSource(t, aLr, aLi, -this.rearAngle, REAR_SHARE, this.dRear);
-        this.addSource(t, aRr, aRi, this.rearAngle, REAR_SHARE, this.dRear);
+      const f = this.frontAngle, ef = this.elevF;
+      this.addSource(t, fLr, fLi, -f, ef, 1, 0);
+      this.addSource(t, fRr, fRi, f, ef, 1, 0);
+      if (cl > 0.001) this.addSource(t, cRr, cIi, 0, ef, 1, 0);
+      this.addAmbience(t, surAmb, topAmb);
+    }
+
+    /** 배경음 → 옆(±95°)·뒤(±rear)·천장(±70°, 위 55°) */
+    addAmbience(t, surAmb, topAmb) {
+      const { aLr, aLi, aRr, aRi } = this;
+      if (surAmb > 0.0005) {
+        this.addSource(t, aLr, aLi, -SIDE_ANGLE, 0, SIDE_SHARE * surAmb, this.dSide);
+        this.addSource(t, aRr, aRi, SIDE_ANGLE, 0, SIDE_SHARE * surAmb, this.dSide);
+        this.addSource(t, aLr, aLi, -this.rearAngle, 0, REAR_SHARE * surAmb, this.dRear);
+        this.addSource(t, aRr, aRi, this.rearAngle, 0, REAR_SHARE * surAmb, this.dRear);
+      }
+      if (topAmb > 0.0005) {
+        this.addSource(t, aLr, aLi, -HEIGHT_AZ, HEIGHT_EL, topAmb, this.dTop);
+        this.addSource(t, aRr, aRi, HEIGHT_AZ, HEIGHT_EL, topAmb, this.dTop);
       }
     }
 
     localize(t) {
-      const spr = this.spread, r = Math.min(1, Math.max(0, this.rearLevel));
-      const frontAmb = Math.sqrt(1 - r), surAmb = Math.sqrt(r);
+      const spr = this.spread, r = Math.min(1, Math.max(0, this.rearLevel)), h = Math.min(1, Math.max(0, this.heightLevel));
+      const frontAmb = Math.sqrt((1 - r) * (1 - h)), surAmb = Math.sqrt(r * (1 - h)), topAmb = Math.sqrt(h);
+      const fast = this.elevF === 0 && this.pitchF === 0, row = this.rowSpec, ef = this.elevF;
+      if (!fast) row.fill(null);
       const { xLr, xLi, xRr, xRi, fLr, fLi, fRr, fRi, aLr, aLi, aRr, aRi, sLL, sRR, yLr, yLi, yRr, yRi, bins, lowBin } = this;
       for (let k = 0; k < bins; k++) {
         const lr = xLr[k], li = xLi[k], rr = xRr[k], ri = xRi[k];
@@ -503,21 +656,24 @@
         const tot = sLL[k] + sRR[k] + 1e-20;
         const pan = (sRR[k] - sLL[k]) / tot;
         const deg = k < lowBin ? 0 : spr * pan;
-        const d = this.dirIndex(t, deg);
-        const hL = t.re[d][0], hLi = t.im[d][0], hR = t.re[d][1], hRi = t.im[d][1];
+        let hL, hLi, hR, hRi;
+        if (fast) {
+          const d = this.dirIndex(t, deg);
+          hL = t.re[d][0]; hLi = t.im[d][0]; hR = t.re[d][1]; hRi = t.im[d][1];
+        } else {
+          const idx = Math.round((((deg % 360) + 360) % 360) / 2) % 180;
+          let sp = row[idx];
+          if (!sp) { sp = this.specFor(t, idx * 2, ef); row[idx] = sp; }
+          hL = sp.lr; hLi = sp.li; hR = sp.rr; hRi = sp.ri;
+        }
         yLr[k] += dr * hL[k] - di * hLi[k]; yLi[k] += dr * hLi[k] + di * hL[k];
         yRr[k] += dr * hR[k] - di * hRi[k]; yRi[k] += dr * hRi[k] + di * hR[k];
         fLr[k] = lr * ma * frontAmb; fLi[k] = li * ma * frontAmb; fRr[k] = rr * ma * frontAmb; fRi[k] = ri * ma * frontAmb;
-        aLr[k] = lr * ma * surAmb; aLi[k] = li * ma * surAmb; aRr[k] = rr * ma * surAmb; aRi[k] = ri * ma * surAmb;
+        aLr[k] = lr * ma; aLi[k] = li * ma; aRr[k] = rr * ma; aRi[k] = ri * ma;
       }
-      this.addSource(t, fLr, fLi, -this.frontAngle, 1, 0);
-      this.addSource(t, fRr, fRi, this.frontAngle, 1, 0);
-      if (r > 0.001) {
-        this.addSource(t, aLr, aLi, -SIDE_ANGLE, SIDE_SHARE, this.dSide);
-        this.addSource(t, aRr, aRi, SIDE_ANGLE, SIDE_SHARE, this.dSide);
-        this.addSource(t, aLr, aLi, -this.rearAngle, REAR_SHARE, this.dRear);
-        this.addSource(t, aRr, aRi, this.rearAngle, REAR_SHARE, this.dRear);
-      }
+      this.addSource(t, fLr, fLi, -this.frontAngle, ef, 1, 0);
+      this.addSource(t, fRr, fRi, this.frontAngle, ef, 1, 0);
+      this.addAmbience(t, surAmb, topAmb);
     }
   }
 
@@ -533,14 +689,16 @@
   const DEFAULTS = {
     virtualizerStrength: 850, bassStrength: 250, spaceEq: 45, reverbPreset: 2, frontAngle: 45, rearAngle: 135,
     rearLevel: 45, centerLevel: 60, engineMode: 1, spread: 90, earSize: 2, hpEq: 0, enabled: true,
+    frontElev: 0, heightLevel: 25,
   };
 
   class Engine {
-    /** @param eqProfiles parseEq() 결과 */
-    constructor(fs, hrirBase, eqProfiles) {
+    /** @param eqProfiles parseEq() 결과, @param elevBase loadElevation() 결과 (없으면 높이 기능 없이 동작) */
+    constructor(fs, hrirBase, eqProfiles, elevBase) {
       this.fs = fs;
       this.eqProfiles = eqProfiles || [];
-      this.renderer = new HrtfRenderer(fs, hrirBase);
+      if (elevBase) elevBase.prepare();
+      this.renderer = new HrtfRenderer(fs, hrirBase, elevBase || null);
       const size = this.size = 1 << 15; this.mask = size - 1;
       this.bufL = new Float32Array(size); this.bufR = new Float32Array(size); this.w = 0;
       this.bus = new Float32Array(BUSES); this.rOut = new Float32Array(2);
@@ -601,6 +759,8 @@
       rnd.rearAngle = Math.min(180, Math.max(90, p.rearAngle));
       rnd.rearLevel = p.rearLevel / 100;
       rnd.centerLevel = p.centerLevel / 100;
+      rnd.frontElev = Math.min(45, Math.max(-30, p.frontElev));
+      rnd.heightLevel = p.heightLevel / 100;
       rnd.spread = p.spread;
       rnd.setEarSize(p.earSize);
       if (p.hpEq !== this.hpEqIdx) {
@@ -777,7 +937,7 @@
   }
 
   G.SpatialEngine = {
-    Fft, loadHrir, adaptHrir, buildRoom, parseEq, EqChain, HrtfRenderer, Engine, renderEarTest, makeDemo,
+    Fft, loadHrir, adaptHrir, buildRoom, parseEq, EqChain, HrtfRenderer, Engine, renderEarTest, makeDemo, loadElevation, lateralAzimuth,
     EAR_FACTORS, EAR_NAMES, EAR_SEQUENCE, DEFAULTS, LATENCY, BUS_ANGLES, SIDE_ANGLE,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

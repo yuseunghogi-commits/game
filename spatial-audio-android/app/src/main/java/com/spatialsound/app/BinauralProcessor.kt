@@ -67,7 +67,8 @@ class BinauralProcessor(private val fs: Int) {
         val base = hrirBase ?: return
         rendererLoading = true
         Thread({
-            renderer = HrtfRenderer(fs, base)
+            val ev = elevBase?.also { it.prepare() }
+            renderer = HrtfRenderer(fs, base, ev)
             rendererLoading = false
         }, "hrtf-init").apply { isDaemon = true; start() }
     }
@@ -81,6 +82,10 @@ class BinauralProcessor(private val fs: Int) {
      * 가상 스피커/반사음을 반대로 돌려서 소리가 공간에 고정돼 들리게 한다. 아무 스레드에서나 설정 가능.
      */
     @Volatile var headYawDeg = 0.0
+    /** 헤드 트래킹 위아래 각도 (도, 위 +) — 실측 모드에서만 반영 */
+    @Volatile var headPitchDeg = 0.0
+    private var frontElev = 0.0
+    private var heightLevel = 0.0
 
     private var appliedYaw = 0.0
     private var oldSources: Array<Src>? = null
@@ -345,6 +350,8 @@ class BinauralProcessor(private val fs: Int) {
             engineMode = s.engineMode
             spreadDeg = s.spread.toDouble()
             centerLevel = s.centerLevel / 100.0
+            frontElev = s.frontElev.toDouble().coerceIn(-30.0, 45.0)
+            heightLevel = s.heightLevel / 100.0
             earSize = s.earSize
             if (s.hpEq != hpEqIdx) {
                 hpEqIdx = s.hpEq
@@ -375,6 +382,9 @@ class BinauralProcessor(private val fs: Int) {
             it.rearAngle = rearAngle
             it.rearLevel = rearLevel
             it.centerLevel = centerLevel
+            it.frontElev = frontElev
+            it.heightLevel = heightLevel
+            it.headPitch = headPitchDeg
             it.spread = spreadDeg
             it.headYaw = headYawDeg
         }
@@ -519,6 +529,8 @@ class BinauralProcessor(private val fs: Int) {
     companion object {
         /** 실측 HRIR 데이터 — 앱 시작 시 한 번 불러서 넣어 둔다 (없으면 실측 모드는 기본 모드로 동작) */
         @Volatile var hrirBase: HrirSet? = null
+        /** 높이(위아래) 단서 데이터 — 없으면 높이 기능만 빠지고 나머지는 그대로 동작 */
+        @Volatile var elevBase: ElevationSet? = null
 
         private const val PINNA_AMOUNT = 0.35f
         private const val FDN_N = 8

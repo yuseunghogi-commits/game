@@ -18,6 +18,8 @@ import java.util.UUID
 interface HeadSource {
     /** 정면 기준 머리 각도 (도, 오른쪽 +) */
     val yawDeg: Double
+    /** 머리 위아래 각도 (도, 위 +) — 지원하지 않으면 0 */
+    val pitchDeg: Double
     /** 실제로 머리 방향을 받고 있으면 기기 이름, 아니면 "" */
     val activeName: String
     /** 상태 설명 (화면 표시용) */
@@ -45,6 +47,9 @@ class BudsHeadTracker(private val context: Context, private val onChange: () -> 
 
     @Volatile override var yawDeg = 0.0
         private set
+    @Volatile override var pitchDeg = 0.0
+        private set
+    private var smoothedPitch = 0.0
     @Volatile override var activeName = ""
         private set
     @Volatile override var info = "준비 중"
@@ -80,6 +85,7 @@ class BudsHeadTracker(private val context: Context, private val onChange: () -> 
         thread?.interrupt()
         thread = null
         yawDeg = 0.0
+        pitchDeg = 0.0
         activeName = ""
     }
 
@@ -122,6 +128,7 @@ class BudsHeadTracker(private val context: Context, private val onChange: () -> 
                 socket = null
                 activeName = ""
                 yawDeg = 0.0
+                pitchDeg = 0.0
                 onChange()
             }
         }
@@ -184,13 +191,15 @@ class BudsHeadTracker(private val context: Context, private val onChange: () -> 
                 }
                 val q = normalize(raw)
                 if (recenterRequested || ref == null) {
-                    ref = q; recenterRequested = false; smoothed = 0.0
+                    ref = q; recenterRequested = false; smoothed = 0.0; smoothedPitch = 0.0
                 }
                 // + 왼쪽 → 엔진 규칙(+ 오른쪽)으로 뒤집기
                 var yaw = -headYaw(q, ref!!, lat)
                 if (invert) yaw = -yaw
                 smoothed += wrap(yaw - smoothed) * 0.5
                 yawDeg = wrap(smoothed)
+                smoothedPitch += (BudsProtocol.headPitch(q, ref!!, lat) - smoothedPitch) * 0.5
+                pitchDeg = smoothedPitch.coerceIn(-60.0, 60.0)
                 if (activeName != name) { activeName = name; setInfo("$name 헤드 트래킹 동작 중") }
             }
             DATA_WEAR_ON -> { recenterRequested = true; setInfo("$name 착용됨 — 지금 보는 방향을 정면으로 맞췄습니다") }

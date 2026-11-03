@@ -10,6 +10,7 @@
 - 예시 음원 (왼쪽→오른쪽 16단계 이동 + 음악) / 파일 열기 (오디오·영상)
 - 3D 켜짐 ↔ 원음 즉시 비교 (같은 시점으로 부드럽게 교차)
 - 엔진: 공간 모드(가상 스피커 7개 + 실측 방) / 정위 모드(방향 펼침)
+- 높이: 앞 스피커 높이(-20°~+40°), 높이감(천장 스피커) — MIT KEMAR 높이 데이터
 - 스피커 배치도: 앞·뒤 스피커를 끌어서 각도 조절
 - 헤드폰 보정 13개 모델 (기본: Bose QuietComfort Headphones 2023), 귀 맞춤 5단계 + 테스트음
 - 설정은 이 기기 브라우저에만 저장
@@ -27,3 +28,4 @@ python3 build.py            # → dist/3d-sound-player.html (엔진·HRIR·EQ �
 ## 데이터 출처
 - 실측 HRTF: KEMAR HRTFs with low frequency correction — H. Wierstorf, M. Geier, S. Spors, V. Erbes, CC BY 4.0
 - 헤드폰 보정: AutoEq (Jaakko Pasanen, MIT) — 측정 Rtings, oratory1990, HypetheSonics
+- 높이: MIT KEMAR HRTF (W. Gardner, K. Martin, MIT Media Lab), mit-hrtf-lib (MIT) 배열에서 추출
