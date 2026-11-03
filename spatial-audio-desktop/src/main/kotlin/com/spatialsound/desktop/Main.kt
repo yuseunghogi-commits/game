@@ -96,6 +96,12 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
     private val lFront = JLabel(); private val lRearAngle = JLabel(); private val lRearLevel = JLabel()
     private val lStrength = JLabel(); private val lWidth = JLabel(); private val lRoom = JLabel(); private val lBass = JLabel()
     private val status = JLabel(" ")
+    /** 새 버전 알림 (위쪽, 평소엔 숨김) */
+    private val updateBar = JPanel(BorderLayout(8, 0))
+    private val updateText = JLabel(" ")
+    private val updateBtn = JButton("지금 업데이트")
+    private var latest: Updater.Release? = null
+    private val autoUpdate = JCheckBox("새 버전 자동 확인", prefs.getBoolean("autoUpdate", true))
 
     init {
         defaultCloseOperation = WindowConstants.EXIT_ON_CLOSE
@@ -110,8 +116,18 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
             border = BorderFactory.createEmptyBorder(10, 0, 2, 0)
         }
 
+        updateBar.border = BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(Color(0xE4, 0xA2, 0x3E)), BorderFactory.createEmptyBorder(6, 8, 6, 8))
+        updateBar.add(updateText, BorderLayout.CENTER)
+        updateBar.add(updateBtn, BorderLayout.EAST)
+        updateBar.isVisible = false
+        row(updateBar)
         row(JLabel("3D 사운드").apply { this.font = this@MainWindow.font.deriveFont(Font.BOLD, 22f) })
         row(JLabel("<html>유튜브·게임·영화 소리를 헤드폰용 3D 입체 음향으로</html>"))
+        row(JButton("🌐 브라우저(유튜브 등) 소리만이라면 → 설치 없이 웹 앱으로").apply {
+            toolTipText = Updater.WEB_APP
+            addActionListener { Updater.browse(Updater.WEB_APP) }
+        })
 
         row(title("① 장치"))
         row(JLabel("입력 (가상 케이블: 'CABLE Output' 선택)"))
@@ -155,6 +171,15 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         row(lRoom); row(sRoom)
         row(JLabel("잔향 (방 크기)")); row(reverbBox)
         row(lBass); row(sBass)
+
+        row(title("앱 정보"))
+        val verRow = JPanel(BorderLayout(8, 0))
+        verRow.add(JLabel("3D 사운드 PC v${Updater.currentVersion}"), BorderLayout.WEST)
+        verRow.add(JButton("업데이트 확인").apply { addActionListener { checkUpdate(manual = true) } }, BorderLayout.EAST)
+        row(verRow)
+        row(autoUpdate)
+        autoUpdate.addActionListener { prefs.putBoolean("autoUpdate", autoUpdate.isSelected) }
+        updateBtn.addActionListener { latest?.let { offerUpdate(it) } }
 
         contentPane = javax.swing.JScrollPane(root).apply {
             border = null; verticalScrollBar.unitIncrement = 16
@@ -207,6 +232,108 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         size = Dimension(width + 24, minOf(height, (screenH * 0.85).toInt()))
         minimumSize = Dimension(460, 400)
         setLocationRelativeTo(null)
+
+        reportLastUpdate()
+        if (autoUpdate.isSelected) checkUpdate(manual = false)
+    }
+
+    // --- 업데이트 ---------------------------------------------------------
+
+    private fun checkUpdate(manual: Boolean) {
+        Thread {
+            val r = runCatching { Updater.fetchLatest() }
+            SwingUtilities.invokeLater {
+                val rel = r.getOrNull()
+                when {
+                    rel == null -> if (manual) JOptionPane.showMessageDialog(this, "업데이트 확인 실패 — 인터넷 연결을 확인하세요.\n(${r.exceptionOrNull()?.message})")
+                    !Updater.isNewer(rel.version, Updater.currentVersion) -> if (manual) JOptionPane.showMessageDialog(
+                        this, if (Updater.currentVersion == "dev") "개발용 실행이라 비교할 수 없습니다 (최신 v${rel.version})" else "최신 버전입니다 (v${Updater.currentVersion})")
+                    else -> {
+                        latest = rel
+                        updateText.text = "🆕 새 버전 v${rel.version} 이 나왔어요 (현재 v${Updater.currentVersion})"
+                        updateBar.isVisible = true
+                        revalidate()
+                        if (manual) offerUpdate(rel)
+                    }
+                }
+            }
+        }.apply { isDaemon = true }.start()
+    }
+
+    private fun offerUpdate(rel: Updater.Release) {
+        val auto = Updater.isWindows && Updater.appExe != null && rel.windowsZip != null
+        val notes = rel.notes.ifBlank { "변경 사항은 릴리스 페이지에서 볼 수 있습니다." }
+        val msg = "<html><body style='width:380px'><b>v${Updater.currentVersion} → v${rel.version}</b><br><br>" +
+            notes.replace("&", "&amp;").replace("<", "&lt;").replace("\n", "<br>") +
+            "<br><br>" + (if (auto) "[지금 업데이트]를 누르면 받아서 바꾼 뒤 자동으로 다시 켜집니다. 설정은 그대로입니다."
+            else "릴리스 페이지에서 새 파일을 받아 주세요.") + "</body></html>"
+        val options = if (auto) arrayOf("지금 업데이트", "릴리스 페이지", "나중에") else arrayOf("릴리스 페이지", "나중에")
+        val pick = JOptionPane.showOptionDialog(this, msg, "새 버전 v${rel.version}", JOptionPane.DEFAULT_OPTION,
+            JOptionPane.INFORMATION_MESSAGE, null, options, options[0])
+        when (options.getOrNull(pick)) {
+            "지금 업데이트" -> installWindows(rel)
+            "릴리스 페이지" -> Updater.browse(rel.page)
+        }
+    }
+
+    /** Windows 앱: zip 받기 → 풀기 → 앱 종료 후 교체·재실행 스크립트 */
+    private fun installWindows(rel: Updater.Release) {
+        val url = rel.windowsZip ?: return
+        val bar = javax.swing.JProgressBar(0, 1000)
+        val dlg = javax.swing.JDialog(this, "v${rel.version} 받는 중…", true)
+        dlg.contentPane = JPanel(BorderLayout()).apply {
+            border = BorderFactory.createEmptyBorder(16, 16, 16, 16)
+            add(JLabel("새 버전을 받는 중입니다 (끝나면 앱이 다시 켜집니다)"), BorderLayout.NORTH)
+            add(bar, BorderLayout.CENTER)
+        }
+        dlg.defaultCloseOperation = WindowConstants.DO_NOTHING_ON_CLOSE
+        dlg.pack(); dlg.setSize(maxOf(dlg.width, 380), dlg.height); dlg.setLocationRelativeTo(this)
+        Thread {
+            val r = runCatching {
+                val work = java.nio.file.Files.createTempDirectory("3dsound-update").toFile()
+                val zip = java.io.File(work, "update.zip").toPath()
+                Updater.download(url, zip) { d, t -> if (t > 0) SwingUtilities.invokeLater { bar.value = (d * 1000 / t).toInt() } }
+                val ex = java.io.File(work, "new")
+                Updater.unzip(zip, ex.toPath())
+                java.nio.file.Files.deleteIfExists(zip)
+                val newApp = java.io.File(ex, "3DSound")
+                require(java.io.File(newApp, "3DSound.exe").isFile && java.io.File(newApp, "app").isDirectory) { "받은 파일의 구성이 예상과 다릅니다" }
+                newApp to work
+            }
+            SwingUtilities.invokeLater {
+                dlg.dispose()
+                r.onSuccess { (newApp, work) ->
+                    engine?.stop(); engine = null
+                    val launched = runCatching { Updater.launchWindowsSwap(newApp, work) }
+                    if (launched.isSuccess) {
+                        dispose()
+                        System.exit(0)
+                    } else updateFailed(rel, launched.exceptionOrNull()?.message)
+                }.onFailure { updateFailed(rel, it.message) }
+            }
+        }.apply { isDaemon = true }.start()
+        dlg.isVisible = true
+    }
+
+    private fun updateFailed(rel: Updater.Release, why: String?) {
+        val pick = JOptionPane.showOptionDialog(this, "업데이트하지 못했습니다: ${why ?: "알 수 없는 오류"}\n릴리스 페이지에서 직접 받을 수 있습니다.",
+            "업데이트 실패", JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null, arrayOf("릴리스 페이지", "닫기"), "릴리스 페이지")
+        if (pick == 0) Updater.browse(rel.page)
+    }
+
+    /** 지난번 자동 업데이트 결과 알려 주기 (교체 스크립트가 남긴 파일) */
+    private fun reportLastUpdate() {
+        val f = Updater.resultFile
+        if (!f.isFile) return
+        val text = runCatching { f.readText().trim().trimStart('\uFEFF') }.getOrDefault("")
+        f.delete()
+        SwingUtilities.invokeLater {
+            if (text.startsWith("ok")) status.text = "✅ v${Updater.currentVersion} 로 업데이트됐습니다"
+            else JOptionPane.showMessageDialog(this,
+                "지난 업데이트에서 파일을 바꾸지 못했습니다 ($text).\n" +
+                    "앱 폴더에 쓸 수 없는 위치(예: Program Files)일 수 있습니다.\n" +
+                    "릴리스 페이지에서 zip 을 받아 다른 폴더(예: 바탕화면)에 풀어 쓰세요.")
+        }
     }
 
     private fun slider(min: Int, max: Int, v: Int) = JSlider(min, max, v)
@@ -339,7 +466,9 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
             <b>3.</b> 이 프로그램에서<br>
             &nbsp;&nbsp;&nbsp;입력 = <b>CABLE Output</b>, 출력 = <b>내 헤드폰</b> → [▶ 시작]<br><br>
             <b>끝낼 때:</b> 🔊 출력 장치를 다시 헤드폰으로 바꾸면 원래대로 돌아갑니다.<br><br>
-            <i>Mac: VB-CABLE 대신 무료 'BlackHole 2ch' 를 설치하고 같은 방식으로 쓰면 됩니다.</i>
+            <i>Mac: VB-CABLE 대신 무료 'BlackHole 2ch' 를 설치하고 같은 방식으로 쓰면 됩니다.</i><br><br>
+            <b>💡 유튜브처럼 브라우저 소리만이라면</b> VB-CABLE 없이 웹 앱으로 됩니다:<br>
+            &nbsp;&nbsp;&nbsp;크롬·엣지에서 ${Updater.WEB_APP} → [다른 탭 소리]
             </body></html>
             """.trimIndent(),
             "처음 설정 방법", JOptionPane.INFORMATION_MESSAGE,

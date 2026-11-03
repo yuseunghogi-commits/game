@@ -364,6 +364,7 @@ class MainActivity : Activity() {
             text = "🔄 업데이트 확인 (현재 v${AppUpdater.currentVersion(this@MainActivity)})"
             setOnClickListener { AppUpdater.check(this@MainActivity, manual = true) }
         }
+        findViewById<TextView>(R.id.textLicenses).setOnClickListener { showLicenses() }
         findViewById<Switch>(R.id.switchAutoUpdate).apply {
             isChecked = AppUpdater.autoCheckEnabled(this@MainActivity)
             setOnCheckedChangeListener { _, on -> AppUpdater.setAutoCheck(this@MainActivity, on) }
@@ -1008,6 +1009,23 @@ class MainActivity : Activity() {
                 Toast.makeText(this, "복사했습니다", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("닫기", null)
+            .show()
+    }
+
+    private fun showLicenses() {
+        val text = runCatching {
+            assets.open("open_source_licenses.txt").bufferedReader().use { it.readText() }
+        }.getOrDefault("라이선스 파일을 읽지 못했습니다.")
+        val tv = TextView(this).apply {
+            this.text = text
+            textSize = 12f
+            setTextIsSelectable(true)
+            setPadding(48, 24, 48, 24)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("오픈소스 라이선스")
+            .setView(android.widget.ScrollView(this).apply { addView(tv) })
+            .setPositiveButton("닫기", null)
             .show()
     }
 

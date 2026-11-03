@@ -20,13 +20,31 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
-      # 빌드마다 서명 키가 바뀌면 폰에서 덮어쓰기 업데이트가 안 되므로
-      # 디버그 서명 키를 캐시에 보관해 계속 같은 키로 서명한다.
+      # 서명 키를 항상 같게 (덮어쓰기 설치·앱 자동 업데이트에 필요)
+      # - 저장소 비밀값 APK_SIGNING_SECRET 이 있으면 그 값에서 항상 같은 키를 만든다 (영구)
+      # - 없으면 Actions 캐시에 보관한 키를 쓴다 (7일 넘게 빌드가 없으면 캐시가 지워질 수 있음)
       - name: Restore signing key
         uses: actions/cache@v4
         with:
-          path: ~/.android/debug.keystore
-          key: spatial-sound-debug-keystore-v1
+          path: ~/.spatial-sign
+          key: spatial-sound-signing-v2
+      - name: Prepare signing key
+        env:
+          APK_SIGNING_SECRET: ${{ secrets.APK_SIGNING_SECRET }}
+        run: |
+          if [ -n "$APK_SIGNING_SECRET" ]; then
+            python3 -m venv /tmp/signvenv && /tmp/signvenv/bin/pip -q install cryptography
+            /tmp/signvenv/bin/python ../.github/scripts/apk_signing_key.py "$HOME/.spatial-sign-secret/key.p12" spatialsound
+            echo "SPATIAL_SIGN_STORE=$HOME/.spatial-sign-secret/key.p12" >> "$GITHUB_ENV"
+          else
+            mkdir -p "$HOME/.spatial-sign"
+            if [ ! -f "$HOME/.spatial-sign/release.p12" ]; then
+              keytool -genkeypair -keystore "$HOME/.spatial-sign/release.p12" -storetype PKCS12 -alias spatialsound \
+                -keyalg RSA -keysize 2048 -validity 36500 -storepass spatialsound -keypass spatialsound -dname "CN=3DSound"
+              echo "::warning::새 서명 키를 만들었습니다 — 이전 빌드와 서명이 달라 한 번은 앱을 지우고 설치해야 합니다"
+            fi
+            echo "SPATIAL_SIGN_STORE=$HOME/.spatial-sign/release.p12" >> "$GITHUB_ENV"
+          fi
       - name: Build APK
         run: |
           chmod +x gradlew
@@ -38,6 +56,7 @@ jobs:
           ls -la "$APK"
           unzip -l "$APK" | grep -E "lib/|classes.*dex" || true
           AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | tail -1)
+          "$(dirname "$AAPT")/apksigner" verify --print-certs "$APK" | grep -E "SHA-256|DN" || true
           "$AAPT" dump badging "$APK" | grep -E "package:|uses-permission|sdkVersion" || true
           "$AAPT" dump xmltree --file AndroidManifest.xml "$APK" | grep -E "service|receiver|foregroundServiceType|E: action" -A1 | grep -E "A: android:name|foregroundServiceType" || true
           for c in io/github/muntashirakon/adb/AbsAdbConnectionManager org/conscrypt/OpenSSLProvider io/github/muntashirakon/crypto/spake2/Spake2Context com/spatialsound/app/AdbPairService; do

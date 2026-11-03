@@ -27,11 +27,24 @@ android {
         versionName = "2.0"
     }
 
+    // 서명 키: CI 가 SPATIAL_SIGN_STORE 로 항상 같은 키를 넘겨 준다 (덮어쓰기·자동 업데이트에 필요).
+    // 없으면(직접 빌드) 이 컴퓨터의 디버그 키.
+    val signStore = System.getenv("SPATIAL_SIGN_STORE")?.let { file(it) }?.takeIf { it.isFile }
+    signingConfigs {
+        create("stable") {
+            if (signStore != null) {
+                storeFile = signStore
+                storePassword = System.getenv("SPATIAL_SIGN_PASS") ?: "spatialsound"
+                keyAlias = "spatialsound"
+                keyPassword = System.getenv("SPATIAL_SIGN_PASS") ?: "spatialsound"
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            // 개인 사용용: 디버그 키로 서명해서 바로 설치 가능하게 함
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (signStore != null) signingConfigs.getByName("stable") else signingConfigs.getByName("debug")
         }
     }
 

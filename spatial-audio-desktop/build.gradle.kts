@@ -21,6 +21,16 @@ kotlin {
 }
 // 실측 HRIR 데이터도 안드로이드 assets 의 같은 파일을 사용
 sourceSets["main"].resources.srcDir("../spatial-audio-android/app/src/main/assets")
+
+// 앱 버전 = 저장소 맨 위 RELEASE_VERSION (업데이트 확인에 사용)
+val appVersion = rootProject.file("../RELEASE_VERSION").let { if (it.isFile) it.readText().trim() else "dev" }
+val writeVersion by tasks.registering {
+    val dir = layout.buildDirectory.dir("gen-res")
+    inputs.property("version", appVersion)
+    outputs.dir(dir)
+    doLast { dir.get().file("spatial-sound-version.txt").asFile.apply { parentFile.mkdirs(); writeText(appVersion) } }
+}
+sourceSets["main"].resources.srcDir(writeVersion)
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
     kotlinOptions.jvmTarget = "17"
 }

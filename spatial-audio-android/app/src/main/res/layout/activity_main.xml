@@ -490,8 +490,18 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:text="팁: 효과가 안 느껴지면 다른 이퀄라이저 앱(삼성 Dolby Atmos, Wavelet 등)을 끄고 다시 켜 보세요. 빠른 설정 패널에 '3D 사운드' 타일을 추가하면 한 번에 켜고 끌 수 있습니다."
+            android:text="팁: 효과가 안 느껴지면 다른 이퀄라이저 앱(삼성 Dolby Atmos, Wavelet 등)을 끄고 다시 켜 보세요. 빠른 설정 패널에 '3D 사운드' 타일을 추가하면 한 번에 켜고 끌 수 있습니다.\n\nPC 에서는 크롬·엣지로 yuseunghogi-commits.github.io/game 을 열면 설치 없이 유튜브 탭 소리를 3D 로 들을 수 있어요."
             android:textColor="#FF8888A0"
             android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/textLicenses"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:paddingVertical="10dp"
+            android:text="오픈소스 라이선스 보기"
+            android:textColor="#FFB39DFF"
+            android:textSize="13sp" />
     </LinearLayout>
 </ScrollView>

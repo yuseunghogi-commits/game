@@ -23,15 +23,36 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
-      # Android 빌드와 같은 서명 키 → 폰에서 덮어쓰기 업데이트 가능
-      - uses: actions/cache@v4
+      # 서명 키를 항상 같게 (덮어쓰기 설치·앱 자동 업데이트에 필요)
+      # - 저장소 비밀값 APK_SIGNING_SECRET 이 있으면 그 값에서 항상 같은 키를 만든다 (영구)
+      # - 없으면 Actions 캐시에 보관한 키를 쓴다 (7일 넘게 빌드가 없으면 캐시가 지워질 수 있음)
+      - name: Restore signing key
+        uses: actions/cache@v4
         with:
-          path: ~/.android/debug.keystore
-          key: spatial-sound-debug-keystore-v1
+          path: ~/.spatial-sign
+          key: spatial-sound-signing-v2
+      - name: Prepare signing key
+        env:
+          APK_SIGNING_SECRET: ${{ secrets.APK_SIGNING_SECRET }}
+        run: |
+          if [ -n "$APK_SIGNING_SECRET" ]; then
+            python3 -m venv /tmp/signvenv && /tmp/signvenv/bin/pip -q install cryptography
+            /tmp/signvenv/bin/python ../.github/scripts/apk_signing_key.py "$HOME/.spatial-sign-secret/key.p12" spatialsound
+            echo "SPATIAL_SIGN_STORE=$HOME/.spatial-sign-secret/key.p12" >> "$GITHUB_ENV"
+          else
+            mkdir -p "$HOME/.spatial-sign"
+            if [ ! -f "$HOME/.spatial-sign/release.p12" ]; then
+              keytool -genkeypair -keystore "$HOME/.spatial-sign/release.p12" -storetype PKCS12 -alias spatialsound \
+                -keyalg RSA -keysize 2048 -validity 36500 -storepass spatialsound -keypass spatialsound -dname "CN=3DSound"
+              echo "::warning::새 서명 키를 만들었습니다 — 이전 빌드와 서명이 달라 한 번은 앱을 지우고 설치해야 합니다"
+            fi
+            echo "SPATIAL_SIGN_STORE=$HOME/.spatial-sign/release.p12" >> "$GITHUB_ENV"
+          fi
       - run: |
           chmod +x gradlew
           ./gradlew --no-daemon assembleRelease
           cp app/build/outputs/apk/release/app-release.apk ../3DSound-Android.apk
+          "$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)/apksigner" verify --print-certs ../3DSound-Android.apk | grep -E "SHA-256" || true
       - uses: actions/upload-artifact@v4
         with:
           name: android
@@ -52,8 +73,9 @@ jobs:
       - run: ./gradlew.bat --no-daemon fatJar
       - shell: pwsh
         run: |
+          $ver = (Get-Content ../RELEASE_VERSION -Raw).Trim()
           jpackage --type app-image --name 3DSound --input build/libs --main-jar 3DSound.jar `
-            --main-class com.spatialsound.desktop.MainKt --dest dist --app-version 1.0.0 `
+            --main-class com.spatialsound.desktop.MainKt --dest dist --app-version $ver `
             --java-options "-Dfile.encoding=UTF-8"
           Copy-Item README.md dist/3DSound/
           Compress-Archive -Path dist/3DSound -DestinationPath ../3DSound-Windows.zip
