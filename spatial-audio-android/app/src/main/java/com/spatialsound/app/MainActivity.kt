@@ -55,6 +55,8 @@ class MainActivity : Activity() {
     private lateinit var labelFront: TextView
     private lateinit var labelRearAngle: TextView
     private lateinit var labelRearLevel: TextView
+    private lateinit var labelCenter: TextView
+    private lateinit var seekCenter: SeekBar
     private lateinit var switchHead: Switch
     private lateinit var switchHeadInvert: Switch
     private lateinit var textHead: TextView
@@ -106,6 +108,8 @@ class MainActivity : Activity() {
         labelFront = findViewById(R.id.labelFront)
         labelRearAngle = findViewById(R.id.labelRearAngle)
         labelRearLevel = findViewById(R.id.labelRearLevel)
+        labelCenter = findViewById(R.id.labelCenter)
+        seekCenter = findViewById(R.id.seekCenter)
         switchHead = findViewById(R.id.switchHead)
         switchHeadInvert = findViewById(R.id.switchHeadInvert)
         textHead = findViewById(R.id.textHead)
@@ -199,6 +203,13 @@ class MainActivity : Activity() {
         seekRearLevel.progress = settings.rearLevel
         speakerLayout.setAngles(settings.frontAngle, settings.rearAngle)
         speakerLayout.rearLevel = settings.rearLevel.toFloat()
+        // 공간 모드(실측)는 가운데·옆 스피커까지 7개
+        val seven = settings.engineMode == 1
+        speakerLayout.centerLevel = if (seven) settings.centerLevel.toFloat() else 0f
+        speakerLayout.showSides = settings.engineMode != 0
+        seekCenter.progress = settings.centerLevel
+        labelCenter.visibility = if (seven) android.view.View.VISIBLE else android.view.View.GONE
+        seekCenter.visibility = labelCenter.visibility
         switchHead.isChecked = settings.headTracking
         switchHeadInvert.isChecked = settings.headInvert
         spinnerPreset.setSelection(settings.presetIndex.coerceIn(0, SOUND_PRESETS.lastIndex))
@@ -223,7 +234,9 @@ class MainActivity : Activity() {
         } ?: "쓰는 헤드폰을 고르면 그 헤드폰 고유의 음색을 평평하게 보정해 3D 단서가 또렷해집니다." 
         labelFront.text = "앞 스피커 각도: ±${settings.frontAngle}° (작을수록 정면)"
         labelRearAngle.text = "뒤 스피커 각도: ±${settings.rearAngle}° (90°=옆, 180°=바로 뒤)"
-        labelRearLevel.text = "뒤 스피커 양: ${settings.rearLevel}% (0이면 전부 앞에서)"
+        labelRearLevel.text = if (settings.engineMode == 0) "뒤 스피커 양: ${settings.rearLevel}% (0이면 전부 앞에서)"
+        else "배경음 옆/뒤 비율: ${settings.rearLevel}% (박수·관중·울림을 옆/뒤 스피커로, 0이면 전부 앞에서)"
+        labelCenter.text = "가운데 스피커: ${settings.centerLevel}% (보컬·대사를 정면에 단단하게, 0이면 가운데 스피커 없음)"
         labelBass.text = "저음 보강: ${settings.bassStrength / 10}%"
         labelReverb.text = if (settings.strongMode) "잔향 (공간 크기)"
         else "잔향 (공간 크기) — 기본 모드에선 세션을 알려주는 음악앱에서만 적용"
@@ -284,6 +297,7 @@ class MainActivity : Activity() {
                     frontAngle = p0.front,
                     rearAngle = p0.rearAngle,
                     rearLevel = p0.rearLevel,
+                    centerLevel = p0.center,
                 )
                 commit(next)
                 bindUi()
@@ -338,6 +352,10 @@ class MainActivity : Activity() {
         seekRearAngle.setOnSeekBarChangeListener(seekListener { v ->
             speakerLayout.setAngles(settings.frontAngle, v + 90)
             settings.copy(rearAngle = v + 90, presetIndex = CUSTOM)
+        })
+        seekCenter.setOnSeekBarChangeListener(seekListener { v ->
+            speakerLayout.centerLevel = v.toFloat()
+            settings.copy(centerLevel = v, presetIndex = CUSTOM)
         })
         seekRearLevel.setOnSeekBarChangeListener(seekListener { v ->
             speakerLayout.rearLevel = v.toFloat()

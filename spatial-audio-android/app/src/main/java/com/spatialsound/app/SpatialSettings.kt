@@ -26,7 +26,7 @@ data class SpatialSettings(
     /** 강력 모드: 앞 스피커 각도 ±0~90° */
     val frontAngle: Int = 50,
     /** 강력 모드: 뒤 스피커 각도 ±90~180° */
-    val rearAngle: Int = 120,
+    val rearAngle: Int = 135,
     /** 강력 모드: 뒤 스피커 소리 양 0..100 */
     val rearLevel: Int = 45,
     /** 강력 모드 엔진: 0 = 기본(머리 모델), 1 = 공간(실측 HRTF), 2 = 정위(방향 또렷) */
@@ -112,16 +112,17 @@ data class SoundPreset(
     val front: Int = 50,
     val rearAngle: Int = 120,
     val rearLevel: Int = 45,
+    val center: Int = 70,
 )
 
 val SOUND_PRESETS = listOf(
     // 이름, 3D 강도, 저음, 방 울림/공간감, 잔향(방 크기), 좌우 넓이
-    // … 좌우 분리, 앞 스피커 각도, 뒤 스피커 각도, 뒤 스피커 양
-    SoundPreset("음악 (자연스러운 입체감)", 850, 250, 45, PresetReverb.PRESET_MEDIUMROOM, 65, 45, 125, 40),
-    SoundPreset("영화관", 1000, 500, 60, PresetReverb.PRESET_LARGEROOM, 80, 55, 115, 70),
-    SoundPreset("콘서트홀", 950, 300, 55, PresetReverb.PRESET_LARGEHALL, 60, 40, 135, 35),
-    SoundPreset("게임 (발소리/방향감)", 1000, 200, 35, PresetReverb.PRESET_SMALLROOM, 95, 60, 115, 60),
-    SoundPreset("보컬/팟캐스트", 650, 50, 30, PresetReverb.PRESET_SMALLROOM, 30, 35, 130, 15),
+    // … 좌우 분리, 앞 스피커 각도, 뒤 스피커 각도, 배경음 옆/뒤 비율, 가운데 스피커
+    SoundPreset("음악 (자연스러운 입체감)", 850, 250, 45, PresetReverb.PRESET_MEDIUMROOM, 65, 45, 135, 45, 60),
+    SoundPreset("영화관", 1000, 500, 60, PresetReverb.PRESET_LARGEROOM, 80, 55, 130, 65, 85),
+    SoundPreset("콘서트홀", 950, 300, 55, PresetReverb.PRESET_LARGEHALL, 60, 40, 140, 55, 50),
+    SoundPreset("게임 (발소리/방향감)", 1000, 200, 35, PresetReverb.PRESET_SMALLROOM, 95, 60, 130, 50, 70),
+    SoundPreset("보컬/팟캐스트", 650, 50, 30, PresetReverb.PRESET_SMALLROOM, 30, 35, 140, 20, 90),
     SoundPreset("사용자 설정", -1, -1, -1, PresetReverb.PRESET_NONE, -1),
 )
 

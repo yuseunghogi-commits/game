@@ -18,8 +18,9 @@ import kotlin.math.sin
 
 /**
  * 위에서 내려다본 가상 스피커 배치도.
- * 가운데가 내 머리(위쪽 = 정면), 보라색 = 앞 스피커, 하늘색 = 뒤 스피커.
- * 스피커를 손가락으로 끌면 각도가 바뀐다 (좌우는 항상 대칭).
+ * 가운데가 내 머리(위쪽 = 정면), 보라색 = 앞 스피커, 하늘색 = 뒤 스피커,
+ * 노란색 = 가운데 스피커, 청록색 = 옆 스피커(공간 모드 실측 엔진).
+ * 앞/뒤 스피커를 손가락으로 끌면 각도가 바뀐다 (좌우는 항상 대칭).
  */
 class SpeakerLayoutView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null,
@@ -28,6 +29,12 @@ class SpeakerLayoutView @JvmOverloads constructor(
     var frontAngle = 50f; private set
     var rearAngle = 120f; private set
     var rearLevel = 45f
+        set(v) { field = v; invalidate() }
+    /** 가운데 스피커 양 (0 = 안 그림) */
+    var centerLevel = 0f
+        set(v) { field = v; invalidate() }
+    /** 옆 스피커(±95°) 표시 — 실측 엔진의 배경음 스피커 */
+    var showSides = false
         set(v) { field = v; invalidate() }
     /** 헤드 트래킹 중이면 머리를 돌려서 표시 */
     var headYaw = 0f
@@ -45,12 +52,18 @@ class SpeakerLayoutView @JvmOverloads constructor(
     private val nose = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(0xDD, 0xDD, 0xEE) }
     private val front = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(0x9E, 0x8C, 0xFF) }
     private val rear = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(0x5C, 0xC8, 0xFF) }
+    private val center = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(0xFF, 0xD1, 0x5C) }
+    private val sideP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(0x4F, 0xD1, 0xB0) }
     private val beam = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 1.5f * dp }
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.rgb(0xCC, 0xCC, 0xDD); textSize = 12f * dp; textAlign = Paint.Align.CENTER
     }
 
     private var dragging = 0 // 0 없음, 1 앞, 2 뒤
+
+    companion object {
+        private const val SIDE = 95f // HrtfRenderer.SIDE_ANGLE
+    }
 
     fun setAngles(f: Int, r: Int) {
         frontAngle = f.toFloat(); rearAngle = r.toFloat(); invalidate()
@@ -96,6 +109,21 @@ class SpeakerLayoutView @JvmOverloads constructor(
         c.drawCircle(cx, cy, hr, headFill)
         c.drawCircle(cx, cy - hr + 5 * dp, 3.5f * dp, nose)
         c.restore()
+
+        // 가운데 / 옆 스피커 (끌 수 없음, 표시만)
+        if (centerLevel > 0f) {
+            val (x, y) = pos(0f)
+            center.alpha = (90 + 165 * centerLevel / 100f).toInt()
+            c.drawCircle(x, y, 11 * dp, center)
+            c.drawText("C", x, y - 16 * dp, text)
+        }
+        if (showSides) {
+            for (s in listOf(1f, -1f)) {
+                val (x, y) = pos(SIDE * s)
+                sideP.alpha = (80 + 175 * rearLevel / 100f).toInt()
+                c.drawCircle(x, y, 9 * dp, sideP)
+            }
+        }
 
         // 스피커
         val sr = 13 * dp
