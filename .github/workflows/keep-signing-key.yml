@@ -2,11 +2,15 @@ name: Keep APK signing key
 
 # APK 서명 키는 Actions 캐시에 보관되는데, 7일 동안 아무도 쓰지 않으면 GitHub 이 지운다.
 # 이 워크플로는 캐시를 한 번 읽기만 해서(몇 초) 보관 기간을 연장한다. 빌드는 하지 않는다.
-# - 주 2회 자동 실행(예약 실행은 기본 브랜치에서만 동작) + 수동/예약 작업에서 workflow_dispatch 로 실행
+# - 주 2회 자동 실행(예약 실행은 기본 브랜치에서만 동작) + 예약 작업에서 workflow_dispatch 로 실행
+# - 이 파일을 바꿔 푸시해도 한 번 실행 (워크플로 등록용)
 on:
   schedule:
     - cron: "23 19 * * 0,3"
   workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/keep-signing-key.yml"
 
 jobs:
   touch:
