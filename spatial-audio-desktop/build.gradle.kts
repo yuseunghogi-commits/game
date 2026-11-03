@@ -7,7 +7,7 @@ plugins {
 val sharedDir = layout.buildDirectory.dir("shared-src")
 val copyShared by tasks.registering(Copy::class) {
     from("../spatial-audio-android/app/src/main/java/com/spatialsound/app") {
-        include("BinauralProcessor.kt", "HrtfRenderer.kt", "HrirSet.kt", "Fft.kt")
+        include("BinauralProcessor.kt", "HrtfRenderer.kt", "HrirSet.kt", "Fft.kt", "HeadphoneEq.kt")
     }
     into(sharedDir.map { it.dir("com/spatialsound/app") })
 }

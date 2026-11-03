@@ -47,6 +47,14 @@ PC 측정 (스테레오 위치 → 들리는 방향): 기존 엔진은 중간 �
 
 **👂 귀 맞춤**: 사람마다 귀 모양이 달라 앞/뒤가 헷갈릴 수 있어서, 실측 데이터를 머리·귀 크기 5단계로 늘이거나 줄여 고를 수 있습니다 (주파수 스케일링). "귀 맞춤 테스트"에서 앞→뒤 소리를 들어 보고 가장 확실한 단계를 고르세요.
 
+### 🎧 헤드폰 보정
+3D 음향은 평평한 헤드폰을 가정하는데 실제 헤드폰은 모델마다 고유 음색(특히 2~10kHz 의 좁은 봉우리/골짜기)이 있어
+방향 단서를 흐립니다. 쓰는 헤드폰을 고르면 측정 데이터 기반 보정 EQ(바이쿼드 10개)를 마지막 단계에 겁니다.
+수록: Bose QuietComfort Headphones(2023)·QC Ultra·QC45·QC35 II, Sony WH-1000XM5/XM4·WF-1000XM5,
+Apple AirPods Max·Pro 2·4, Samsung Galaxy Buds3 Pro·Buds2 Pro·Buds FE.
+데이터: [AutoEq](https://github.com/jaakkopasanen/AutoEq) (Jaakko Pasanen, MIT License) 결과 —
+측정 출처 Rtings, oratory1990, HypetheSonics (`tools/build_hp_eq.py`).
+
 ### 데이터 출처 (CC BY 4.0)
 실측 HRTF: *KEMAR HRTFs with low frequency correction* — H. Wierstorf, M. Geier, S. Spors, V. Erbes
 (TU Berlin / Universität Rostock), https://github.com/spatialaudio/lf-corrected-kemar-hrtfs ,

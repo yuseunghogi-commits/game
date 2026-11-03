@@ -42,6 +42,8 @@ class MainActivity : Activity() {
     private lateinit var headGroup: android.widget.LinearLayout
     private lateinit var layoutGroup: android.widget.LinearLayout
     private lateinit var spinnerEngine: Spinner
+    private lateinit var spinnerHpEq: Spinner
+    private lateinit var textHpEq: TextView
     private lateinit var spinnerEar: Spinner
     private lateinit var seekSpread: SeekBar
     private lateinit var labelSpread: TextView
@@ -87,6 +89,10 @@ class MainActivity : Activity() {
         headGroup = findViewById(R.id.headGroup)
         layoutGroup = findViewById(R.id.layoutGroup)
         spinnerEngine = findViewById(R.id.spinnerEngine)
+        spinnerHpEq = findViewById(R.id.spinnerHpEq)
+        textHpEq = findViewById(R.id.textHpEq)
+        Strong3DService.ensureAssets(this)
+        spinnerHpEq.adapter = darkAdapter(HeadphoneEq.names())
         spinnerEar = findViewById(R.id.spinnerEar)
         seekSpread = findViewById(R.id.seekSpread)
         labelSpread = findViewById(R.id.labelSpread)
@@ -182,6 +188,7 @@ class MainActivity : Activity() {
         headGroup.visibility = wv
         layoutGroup.visibility = wv
         spinnerEngine.setSelection(engineToPos(settings.engineMode))
+        spinnerHpEq.setSelection(settings.hpEq.coerceIn(0, HeadphoneEq.profiles.size))
         spinnerEar.setSelection(settings.earSize.coerceIn(0, HrirSet.EAR_NAMES.lastIndex))
         seekSpread.progress = settings.spread - 30
         val loc = settings.engineMode == 2
@@ -211,6 +218,9 @@ class MainActivity : Activity() {
         labelWidth.text = "좌우 분리 (반대쪽 귀로 새는 소리 줄이기): ${settings.width}%"
         labelSpread.text = "방향 펼침: 스테레오 끝 = ±${settings.spread}° (클수록 좌우가 넓고 또렷)"
         textEngineInfo.text = ENGINE_INFO[engineToPos(settings.engineMode)]
+        textHpEq.text = HeadphoneEq.profiles.getOrNull(settings.hpEq - 1)?.let {
+            "측정: ${it.source} · 보정 필터 ${it.filters.size}개 (AutoEq). 헤드폰 앱의 EQ 는 꺼 두세요."
+        } ?: "쓰는 헤드폰을 고르면 그 헤드폰 고유의 음색을 평평하게 보정해 3D 단서가 또렷해집니다." 
         labelFront.text = "앞 스피커 각도: ±${settings.frontAngle}° (작을수록 정면)"
         labelRearAngle.text = "뒤 스피커 각도: ±${settings.rearAngle}° (90°=옆, 180°=바로 뒤)"
         labelRearLevel.text = "뒤 스피커 양: ${settings.rearLevel}% (0이면 전부 앞에서)"
@@ -302,6 +312,13 @@ class MainActivity : Activity() {
                 if (binding || mode == settings.engineMode) return
                 commit(settings.copy(engineMode = mode))
                 bindUi()
+            }
+            override fun onNothingSelected(p: AdapterView<*>?) {}
+        }
+        spinnerHpEq.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
+                if (binding || pos == settings.hpEq) return
+                commit(settings.copy(hpEq = pos))
             }
             override fun onNothingSelected(p: AdapterView<*>?) {}
         }

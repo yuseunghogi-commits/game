@@ -36,6 +36,11 @@ fun main() {
             com.spatialsound.app.BinauralProcessor.hrirBase = com.spatialsound.app.HrirSet.load(it)
         }
     }
+    runCatching {
+        MainWindow::class.java.getResourceAsStream("/headphone_eq.txt")?.use {
+            com.spatialsound.app.HeadphoneEq.profiles = com.spatialsound.app.HeadphoneEq.parse(it)
+        }
+    }
     SwingUtilities.invokeLater { MainWindow().isVisible = true }
 }
 
@@ -54,6 +59,8 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
     private val reverbBox = JComboBox(REVERB_NAMES.toTypedArray())
     private val engineBox = JComboBox(arrayOf("🏠 공간 모드 (실측 HRTF) — 추천", "🎯 정위 모드 — 방향 또렷 (게임·영화)", "기본 모드 (이전 엔진)"))
     private val earBox = JComboBox(com.spatialsound.app.HrirSet.EAR_NAMES.toTypedArray())
+    private val hpEqBox = JComboBox(com.spatialsound.app.HeadphoneEq.names().toTypedArray())
+    private val hpEqInfo = JLabel(" ")
     private val sSpread = slider(30, 120, settings.spread)
     private val lSpread = JLabel()
     private val sStrength = slider(0, 1000, settings.virtualizerStrength)
@@ -92,6 +99,9 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         devRow.add(JButton("장치 새로고침").apply { addActionListener { loadDevices() } }, BorderLayout.WEST)
         devRow.add(JButton("처음 설정 방법").apply { addActionListener { showHelp() } }, BorderLayout.EAST)
         row(devRow)
+        row(JLabel("🎧 헤드폰 보정 (쓰는 헤드폰을 고르세요 — 헤드폰 앱 EQ 는 끄기)"))
+        row(hpEqBox)
+        row(hpEqInfo)
         row(startBtn.apply { this.font = this@MainWindow.font.deriveFont(Font.BOLD, 16f); preferredSize = Dimension(10, 42) })
         row(enable3d)
         row(status)
@@ -142,6 +152,8 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         engineBox.selectedIndex = intArrayOf(1, 2, 0).indexOf(settings.engineMode).coerceAtLeast(0)
         earBox.selectedIndex = settings.earSize.coerceIn(0, 4)
         engineBox.addActionListener { changed() }
+        hpEqBox.selectedIndex = settings.hpEq.coerceIn(0, hpEqBox.itemCount - 1)
+        hpEqBox.addActionListener { changed() }
         earBox.addActionListener { changed() }
         sSpread.addChangeListener { changed() }
         lSpread.isVisible = settings.engineMode == 2; sSpread.isVisible = lSpread.isVisible
@@ -162,9 +174,10 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
             frontAngle = sFront.value, rearAngle = sRearAngle.value, rearLevel = sRearLevel.value,
             engineMode = intArrayOf(1, 2, 0)[engineBox.selectedIndex.coerceAtLeast(0)],
             spread = sSpread.value, earSize = earBox.selectedIndex.coerceAtLeast(0),
+            hpEq = hpEqBox.selectedIndex.coerceAtLeast(0),
         )
         lSpread.isVisible = settings.engineMode == 2; sSpread.isVisible = lSpread.isVisible
-        val soundOnly = settings.copy(engineMode = 1, spread = 90, earSize = 2)
+        val soundOnly = settings.copy(engineMode = 1, spread = 90, earSize = 2, hpEq = 0)
         if (!applyingPreset && presetBox.selectedIndex < SOUND_PRESETS.size &&
             SOUND_PRESETS[presetBox.selectedIndex].s != soundOnly
         ) {
@@ -178,6 +191,8 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
     private fun updateLabels() {
         lStrength.text = "3D 강도: ${sStrength.value / 10}%"
         lSpread.text = "방향 펼침: 스테레오 끝 = ±${sSpread.value}°"
+        hpEqInfo.text = com.spatialsound.app.HeadphoneEq.profiles.getOrNull(hpEqBox.selectedIndex - 1)
+            ?.let { "측정: ${it.source} · 필터 ${it.filters.size}개 (AutoEq)" } ?: " "
         lWidth.text = "좌우 분리 (반대쪽 귀로 새는 소리 줄이기): ${sWidth.value}%"
         lFront.text = "앞 스피커 각도: ±${sFront.value}° (작을수록 정면)"
         lRearAngle.text = "뒤 스피커 각도: ±${sRearAngle.value}° (90°=옆, 180°=바로 뒤)"
@@ -275,6 +290,7 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         engineMode = prefs.getInt("engine", 1),
         spread = prefs.getInt("spread", 90),
         earSize = prefs.getInt("ear", 2),
+        hpEq = prefs.getInt("hpEq", 0),
     )
 
     private fun saveSettings() {
@@ -284,6 +300,7 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         prefs.putInt("front", settings.frontAngle); prefs.putInt("rearAngle", settings.rearAngle)
         prefs.putInt("rearLevel", settings.rearLevel)
         prefs.putInt("engine", settings.engineMode); prefs.putInt("spread", settings.spread); prefs.putInt("ear", settings.earSize)
+        prefs.putInt("hpEq", settings.hpEq)
     }
 
     private fun pickFont(): Font {

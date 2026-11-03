@@ -41,6 +41,9 @@ class BinauralProcessor(private val fs: Int) {
     private var engineMode = 0    // 0 = 기본(모델), 1 = 공간(실측 HRTF), 2 = 정위
     private var spreadDeg = 90.0
     private var earSize = 2
+    /** 헤드폰 보정 (null = 끔) */
+    private var hpEq: HeadphoneEq.Chain? = null
+    private var hpEqIdx = 0
 
     // --- 실측 HRTF 렌더러 (모드 1, 2) ----------------------------------------
     @Volatile private var renderer: HrtfRenderer? = null
@@ -321,6 +324,10 @@ class BinauralProcessor(private val fs: Int) {
             engineMode = s.engineMode
             spreadDeg = s.spread.toDouble()
             earSize = s.earSize
+            if (s.hpEq != hpEqIdx) {
+                hpEqIdx = s.hpEq
+                hpEq = HeadphoneEq.profiles.getOrNull(s.hpEq - 1)?.let { HeadphoneEq.Chain(it, fs) }
+            }
             renderer?.setEarSize(earSize)
             ensureRenderer()
             rebuildWithFade()
@@ -352,6 +359,7 @@ class BinauralProcessor(private val fs: Int) {
 
         val srcs = sources
         val lat = latency
+        val eq = hpEq
         val wet = amount
         val dry = 1f - amount
         val gBass = 1.5f * bass
@@ -421,6 +429,12 @@ class BinauralProcessor(private val fs: Int) {
             lowR += aBass * (r - lowR)
             outL += gBass * lowL
             outR += gBass * lowR
+
+            // 헤드폰 보정 (헤드폰 고유 음색 상쇄)
+            eq?.let {
+                outL = it.process(outL, 0)
+                outR = it.process(outR, 1)
+            }
 
             // 리미터: 즉시 어택, 250ms 릴리즈
             val peak = maxOf(abs(outL), abs(outR))
