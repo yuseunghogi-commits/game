@@ -346,7 +346,7 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         )
     }
 
-    private fun loadSettings() = SpatialSettings(
+    private fun loadSettings() = migrateStrength(SpatialSettings(
         virtualizerStrength = prefs.getInt("strength", 1000),
         bassStrength = prefs.getInt("bass", 250),
         spaceEq = prefs.getInt("room", 45),
@@ -370,9 +370,22 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         spread = prefs.getInt("spread", 90),
         earSize = prefs.getInt("ear", 2),
         hpEq = prefs.getInt("hpEq", 0),
-    )
+    ))
+
+    /** v1.8: 프리셋 3D 강도 85/95/65% → 100/100/85% — 저장값이 예전 프리셋/기본값 그대로면 옮김 */
+    private fun migrateStrength(s: SpatialSettings): SpatialSettings {
+        if (prefs.getInt("ver", 0) >= 2 || prefs.get("strength", null) == null) return s
+        val preset = prefs.getInt("preset", 0)
+        val before = mapOf(0 to 850, 2 to 950, 4 to 650); val after = mapOf(0 to 1000, 2 to 1000, 4 to 850)
+        return when {
+            before[preset] == s.virtualizerStrength -> s.copy(virtualizerStrength = after.getValue(preset))
+            preset == SOUND_PRESETS.size && s.virtualizerStrength == 850 -> s.copy(virtualizerStrength = 1000)
+            else -> s
+        }
+    }
 
     private fun saveSettings() {
+        prefs.putInt("ver", 2)
         prefs.putInt("strength", settings.virtualizerStrength); prefs.putInt("bass", settings.bassStrength)
         prefs.putInt("room", settings.spaceEq); prefs.putInt("reverb", settings.reverbPreset)
         prefs.putInt("width", settings.width)

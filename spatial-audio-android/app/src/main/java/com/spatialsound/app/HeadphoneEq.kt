@@ -3,6 +3,7 @@ package com.spatialsound.app
 import java.io.InputStream
 import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -61,6 +62,8 @@ object HeadphoneEq {
         return out
     }
 
+    private const val MAKEUP_MAX_DB = 3.5
+
     /** 스테레오 바이쿼드 묶음 (RBJ 쿡북, 배정밀도 상태) */
     class Chain(profile: Profile, fs: Int) {
         private val n = profile.filters.size
@@ -69,7 +72,12 @@ object HeadphoneEq {
         // 전치 직접형 II 상태 [필터][채널]
         private val z1 = Array(n) { DoubleArray(2) }
         private val z2 = Array(n) { DoubleArray(2) }
-        private val pre = 10.0.pow(profile.preampDb / 20.0)
+        /**
+         * AutoEq 프리앰프(부스트로 깨지지 않게 미리 낮춘 볼륨)는 최대 3.5dB 까지 되돌림 — 그대로 두면 3D 를 켰을 때
+         * 원음보다 작게 들려서(Bose QC 2023: -3.6dB) 밋밋하게 느껴짐. 실제 최고점 -1dBFS 음원에서도 처리 후 최고점
+         * -0.9dBFS 로 여유가 있고, 넘는 순간은 끝단 리미터가 잡음 (측정상 리미터로 잃는 음량 0.0dB).
+         */
+        private val pre = 10.0.pow((profile.preampDb + min(-profile.preampDb, MAKEUP_MAX_DB)) / 20.0)
 
         init {
             for ((i, f) in profile.filters.withIndex()) {

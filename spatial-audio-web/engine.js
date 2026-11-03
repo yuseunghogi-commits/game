@@ -305,7 +305,8 @@
       this.b0 = new Float64Array(n); this.b1 = new Float64Array(n); this.b2 = new Float64Array(n);
       this.a1 = new Float64Array(n); this.a2 = new Float64Array(n);
       this.z1 = [new Float64Array(n), new Float64Array(n)]; this.z2 = [new Float64Array(n), new Float64Array(n)];
-      this.pre = Math.pow(10, profile.preampDb / 20);
+      // AutoEq 프리앰프는 최대 3.5dB 까지 되돌림 (3D 를 켜도 원음과 같은 크기로, 넘는 순간은 끝단 리미터가 잡음)
+      this.pre = Math.pow(10, (profile.preampDb + Math.min(-profile.preampDb, 3.5)) / 20);
       profile.filters.forEach((f, i) => {
         const fc = Math.min(f.fc, fs * 0.45);
         const a = Math.pow(10, f.gainDb / 40), w0 = 2 * PI * fc / fs, cw = Math.cos(w0);

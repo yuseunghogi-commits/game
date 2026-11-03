@@ -285,6 +285,13 @@ registerProcessor('spatial3d', Spatial3DProcessor);
   try { saved = JSON.parse(localStorage.getItem(STORE) || 'null'); if (saved) Object.assign(st, saved); } catch (e) { /* 저장소 없음 */ }
   if (st.heightLevel === undefined) st.heightLevel = 25;
   if (st.frontElev === undefined) st.frontElev = 0;
+  // v1.8: 프리셋 3D 강도 85/95/65% → 100/100/85% (원음 섞기 빗살 간섭 제거) — 예전 프리셋/기본값 그대로면 옮김
+  if (saved && !(saved.v >= 2)) {
+    const before = { 0: 850, 2: 950, 4: 650 }, after = { 0: 1000, 2: 1000, 4: 850 };
+    if (before[st.presetIndex] === st.virtualizerStrength) st.virtualizerStrength = after[st.presetIndex];
+    else if (st.presetIndex === -1 && st.virtualizerStrength === 850) st.virtualizerStrength = 1000;
+  }
+  st.v = 2;
   // v1.6 저장값(천장 한 쌍, 방향 20~160°) → 천장 앞/뒤 두 쌍으로
   if (saved && saved.topRearAngle === undefined) {
     if (st.topAngle > 90) { st.topRearAngle = st.topAngle; st.topRearElev = st.topElev; st.topAngle = 45; st.topElev = 45; }

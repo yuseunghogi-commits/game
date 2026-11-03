@@ -68,6 +68,7 @@ data class SpatialSettings(
             .putBoolean("enabled", enabled)
             .putBoolean("globalMode", globalMode)
             .putBoolean("headphonesOnly", headphonesOnly)
+            .putInt("settingsVersion", SETTINGS_VERSION)
             .putInt("virtualizer", virtualizerStrength)
             .putInt("bass", bassStrength)
             .putInt("spaceEq", spaceEq)
@@ -140,6 +141,24 @@ data class SpatialSettings(
                 headPitch = p.getBoolean("headPitch", d.headPitch),
                 headInvert = p.getBoolean("headInvert", d.headInvert),
             ).migrateTop(legacyTop = p.contains("topAngle") && !p.contains("topRearAngle"))
+                .migrateStrength(old = p.contains("virtualizer") && p.getInt("settingsVersion", 0) < 2)
+        }
+
+        private const val SETTINGS_VERSION = 2
+
+        /**
+         * v1.8 에서 프리셋 3D 강도가 바뀜 (음악 85→100%, 콘서트홀 95→100%, 보컬 65→85%: 원음을 섞을 때 생기는 빗살 간섭 제거).
+         * 저장된 값이 예전 프리셋/기본값 그대로면(사용자가 안 바꿨으면) 새 값으로 옮김.
+         */
+        private fun SpatialSettings.migrateStrength(old: Boolean): SpatialSettings {
+            if (!old) return this
+            val before = mapOf(0 to 850, 2 to 950, 4 to 650)
+            val after = mapOf(0 to 1000, 2 to 1000, 4 to 850)
+            return when {
+                before[presetIndex] == virtualizerStrength -> copy(virtualizerStrength = after.getValue(presetIndex))
+                presetIndex == SOUND_PRESETS.lastIndex && virtualizerStrength == 850 -> copy(virtualizerStrength = 1000)
+                else -> this
+            }
         }
 
         /** v1.6 (천장 스피커 한 쌍, 방향 20~160°) 저장값 → 천장 앞/뒤 두 쌍 */

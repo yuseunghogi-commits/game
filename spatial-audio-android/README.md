@@ -116,6 +116,9 @@ PC 검증: 보내는 프레임이 표준 CRC-16/XMODEM 계산과 바이트 단�
 Apple AirPods Max·Pro 2·4, Samsung Galaxy Buds3 Pro·Buds2 Pro·Buds FE.
 데이터: [AutoEq](https://github.com/jaakkopasanen/AutoEq) (Jaakko Pasanen, MIT License) 결과 —
 측정 출처 Rtings, oratory1990, HypetheSonics (`tools/build_hp_eq.py`).
+AutoEq 의 프리앰프(부스트로 깨지지 않게 미리 낮춘 볼륨, 모델별 -1.9~-6.4dB)는 최대 3.5dB 까지 되돌려서 3D 를 켜도 원음과 같은 크기로
+들리게 합니다 (Bose QC 2023: -3.6dB → -0.3dB). 최고점 -1dBFS 로 마스터링된 음원에서도 처리 후 최고점은 -0.9dBFS 이고,
+넘는 순간은 끝단 리미터가 잡습니다 (측정상 리미터로 잃는 음량 0.0dB, 리듬 보존 변화 없음).
 
 ### 데이터 출처 (CC BY 4.0)
 실측 HRTF: *KEMAR HRTFs with low frequency correction* — H. Wierstorf, M. Geier, S. Spors, V. Erbes
