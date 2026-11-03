@@ -38,6 +38,7 @@
   --head: #c9d2cd; --ring: #39443f; --floor: #e08a55; color-scheme: dark;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body {
   background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.55;
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
@@ -48,7 +49,7 @@ header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content:
 h1 { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
 .lede { margin: 2px 0 0; color: var(--muted); max-width: 62ch; }
 .pill { font-family: var(--font-mono); font-size: 0.78rem; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line);
-  color: var(--muted); background: var(--surface); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  color: var(--muted); background: var(--surface); max-width: 100%; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .pill.ok { color: var(--side); border-color: color-mix(in srgb, var(--side) 45%, var(--line)); }
 .pill.err { color: var(--center); border-color: color-mix(in srgb, var(--center) 45%, var(--line)); }
 .grid { display: grid; gap: 18px; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); align-items: start; }
@@ -93,6 +94,8 @@ details.more { border-top: 1px solid var(--line); padding-top: 8px; }
 details.more summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; min-height: 36px; display: flex; align-items: center; }
 details.more .fields { margin-top: 10px; }
 footer { color: var(--muted); font-size: 0.82rem; display: grid; gap: 6px; max-width: 90ch; }
+.banner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--line)); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
 footer p { margin: 0; }
 a { color: var(--accent); }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
@@ -102,7 +105,7 @@ a { color: var(--accent); }
   <header>
     <div>
       <h1>3D 사운드 플레이어</h1>
-      <p class="lede">아이패드에 저장된 음악·영상을 헤드폰용 입체 음향으로 듣습니다. 폰·노트북 앱과 같은 실측 HRTF 엔진입니다.</p>
+      <p class="lede">헤드폰용 3D 입체 음향 — PC 크롬·엣지에서는 유튜브 같은 다른 탭의 소리를, 아이패드에서는 저장된 음악·영상을. 폰·노트북 앱과 같은 실측 HRTF 엔진입니다.</p>
     </div>
     <span class="pill" id="status">엔진 준비 중…</span>
   </header>
@@ -113,8 +116,10 @@ a { color: var(--accent); }
         <h2 id="h-player">재생</h2>
         <div class="row">
           <button type="button" id="srcDemo" aria-pressed="true">예시 음원</button>
+          <button type="button" id="srcTab" aria-pressed="false" hidden>다른 탭 소리 (유튜브 등)</button>
           <label class="filebtn" for="file">파일 열기 <input type="file" id="file" accept="audio/*,video/*"></label>
         </div>
+        <p class="note" id="tabHelp" hidden>PC 크롬·엣지: [다른 탭 소리] → 창에서 <b>탭</b>을 고르고 유튜브 탭 선택 → <b>탭 오디오도 공유</b> 켜기 → 공유. 영상은 그 탭에서 그대로 보면 되고, 원래 소리는 꺼지고 3D 로 바뀐 소리만 들립니다. 공유 표시가 뜨지만 화면은 어디로도 보내거나 녹화하지 않습니다. 이 탭은 닫지 말고 열어 두세요.</p>
         <div class="now">
           <b id="nowTitle">예시: 왼쪽→오른쪽으로 움직이는 소리 + 음악</b>
           <span id="nowSub">0~8초 짧은 소리가 16단계로 이동 · 8초부터 음악과 위치가 바뀌는 박수 · 20초</span>
@@ -125,6 +130,7 @@ a { color: var(--accent); }
           <input type="range" id="seek" min="0" max="1000" value="0" step="1" aria-label="재생 위치">
           <span class="time" id="time">0:00 / 0:20</span>
         </div>
+        <div class="banner" id="updateBanner" hidden><span id="updateText">새 버전이 나왔어요</span> <button type="button" id="updateReload">새로고침해서 적용</button></div>
         <div class="ab">
           <div class="seg" role="group" aria-label="3D 효과">
             <button type="button" id="on3d" aria-pressed="true">3D 켜짐</button>
@@ -216,7 +222,7 @@ a { color: var(--accent); }
   </div>
 
   <footer>
-    <p>아이패드는 앱이 유튜브 같은 다른 앱의 소리를 가져가지 못하게 막혀 있어서, 이 페이지는 아이패드에 저장된 파일만 처리합니다. 유튜브는 폰·노트북 앱으로 들으세요.</p>
+    <p>PC 크롬·엣지에서는 다른 탭(유튜브·넷플릭스 웹 등)의 소리를 3D 로 바꿀 수 있습니다. 게임처럼 브라우저 밖 프로그램 소리는 Windows 앱(VB-CABLE 필요)으로 들으세요. 아이패드는 다른 앱의 소리를 가져가지 못하게 막혀 있어서 저장된 파일만 처리합니다.</p>
     <p>소리가 안 나면: 아이패드 소리 크기와 무음 설정을 확인하고, 재생 중에는 사파리를 앞에 둔 채로 들으세요. 헤드폰 앱의 EQ 와 기기의 공간 음향은 꺼 두는 것이 좋습니다.</p>
     <p>실측 HRTF: KEMAR HRTFs with low frequency correction — H. Wierstorf, M. Geier, S. Spors, V. Erbes (TU Berlin / Universität Rostock), <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>. 헤드폰 보정: <a href="https://github.com/jaakkopasanen/AutoEq" target="_blank" rel="noopener">AutoEq</a> (MIT), 측정 Rtings · oratory1990 · HypetheSonics. 높이 단서: MIT KEMAR HRTF (W. Gardner, K. Martin, MIT Media Lab), mit-hrtf-lib (MIT).</p>
   </footer>
@@ -1578,6 +1584,10 @@ registerProcessor('spatial3d', Spatial3DProcessor);
   }
   const save = () => { try { localStorage.setItem(STORE, JSON.stringify(st)); } catch (e) { /* 무시 */ } };
 
+  // PC 크롬·엣지: 다른 탭 소리 가져오기 가능 (아이패드·폰 브라우저는 안 됨)
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const canTab = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) && !isIOS;
+
   // ── 오디오 ──
   let ctx = null, node = null, mainEngine = null, ready = null, sendParams = () => {};
   const status = (text, cls) => { const s = $('status'); s.textContent = text; s.className = 'pill' + (cls ? ' ' + cls : ''); };
@@ -1594,7 +1604,8 @@ registerProcessor('spatial3d', Spatial3DProcessor);
     if (ready) return ready;
     ready = (async () => {
       const AC = window.AudioContext || window.webkitAudioContext;
-      ctx = new AC({ latencyHint: 'playback' });
+      // PC(탭 소리)는 영상과 소리가 어긋나지 않게 짧은 지연, 아이패드(파일)는 배터리 위주
+      ctx = new AC({ latencyHint: canTab ? 'interactive' : 'playback' });
       let how = '';
       try {
         if (!ctx.audioWorklet) throw new Error('AudioWorklet 없음');
@@ -1638,8 +1649,8 @@ registerProcessor('spatial3d', Spatial3DProcessor);
     } catch (e) { wakeLock = null; }
   };
   const fmt = (s) => { s = Math.max(0, s || 0); const m = Math.floor(s / 60); return m + ':' + String(Math.floor(s % 60)).padStart(2, '0'); };
-  const duration = () => source === 'demo' ? (demoBuf ? demoBuf.duration : 20) : (isFinite(video.duration) ? video.duration : 0);
-  const position = () => source === 'demo' ? (playing ? Math.min(duration(), bufOffset + ctx.currentTime - bufStart) : bufOffset) : video.currentTime;
+  const duration = () => source === 'demo' ? (demoBuf ? demoBuf.duration : 20) : source === 'tab' ? 0 : (isFinite(video.duration) ? video.duration : 0);
+  const position = () => source === 'demo' ? (playing ? Math.min(duration(), bufOffset + ctx.currentTime - bufStart) : bufOffset) : source === 'tab' ? 0 : video.currentTime;
 
   function makeDemo() {
     if (demoBuf) return;
@@ -1667,11 +1678,16 @@ registerProcessor('spatial3d', Spatial3DProcessor);
     keepAwake(true); updatePlay();
   }
   function pause() {
+    if (source === 'tab') { stopTab(); return; }
     if (source === 'demo') { if (playing) bufOffset = position(); stopBuf(); }
     else video.pause();
     playing = false; keepAwake(false); updatePlay();
   }
-  function updatePlay() { $('play').textContent = playing ? '일시정지' : '재생'; }
+  function updatePlay() {
+    const tab = source === 'tab';
+    $('play').textContent = tab ? '탭 소리 그만 받기' : playing ? '일시정지' : '재생';
+    $('seek').hidden = tab; $('time').hidden = tab;
+  }
   $('play').addEventListener('click', () => { (playing ? Promise.resolve(pause()) : play()).catch((e) => status('재생할 수 없습니다: ' + e.message, 'err')); });
   $('seek').addEventListener('input', () => {
     const t = $('seek').value / 1000 * duration();
@@ -1679,25 +1695,83 @@ registerProcessor('spatial3d', Spatial3DProcessor);
   });
   video.addEventListener('ended', () => { playing = false; updatePlay(); keepAwake(false); });
   setInterval(() => {
-    if (!ctx && source === 'demo') return;
+    if ((!ctx && source === 'demo') || source === 'tab') return;
     const d = duration(), p = ctx ? position() : 0;
     $('time').textContent = fmt(p) + ' / ' + fmt(d);
     if (document.activeElement !== $('seek') && d > 0) $('seek').value = Math.round(p / d * 1000);
   }, 250);
 
-  $('srcDemo').addEventListener('click', () => {
-    if (source === 'demo') return;
-    pause(); source = 'demo'; bufOffset = 0; video.hidden = true;
-    $('srcDemo').setAttribute('aria-pressed', 'true');
+  function showDemo() {
+    source = 'demo'; bufOffset = 0; video.hidden = true;
+    $('srcDemo').setAttribute('aria-pressed', 'true'); $('srcTab').setAttribute('aria-pressed', 'false');
     $('nowTitle').textContent = '예시: 왼쪽→오른쪽으로 움직이는 소리 + 음악';
     $('nowSub').textContent = '0~8초 짧은 소리가 16단계로 이동 · 8초부터 음악과 위치가 바뀌는 박수 · 20초';
+    updatePlay();
+  }
+  $('srcDemo').addEventListener('click', () => {
+    if (source === 'demo') return;
+    pause(); showDemo();
+  });
+
+  // ── 다른 탭 소리 (PC 크롬·엣지) ──
+  // 탭 공유로 소리만 받아 3D 로 바꿔 재생한다. suppressLocalAudioPlayback 으로 원래 탭 소리는 꺼진다.
+  let tabStream = null, tabNode = null;
+  function stopTab() {
+    if (tabNode) { try { tabNode.disconnect(); } catch (e) { } tabNode = null; }
+    if (tabStream) { tabStream.getTracks().forEach((t) => t.stop()); tabStream = null; }
+    if (source === 'tab') { playing = false; showDemo(); status('탭 소리 받기를 멈췄습니다', ''); }
+  }
+  async function startTab() {
+    await ensureAudio();
+    if (ctx.state !== 'running') await ctx.resume();
+    stopEarTest();
+    if (playing) pause();
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { displaySurface: 'browser', frameRate: { ideal: 1, max: 5 }, width: { max: 640 }, height: { max: 360 } },
+        audio: { suppressLocalAudioPlayback: true, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        preferCurrentTab: false, selfBrowserSurface: 'exclude', systemAudio: 'exclude', surfaceSwitching: 'include',
+        monitorTypeSurfaces: 'exclude',
+      });
+    } catch (e) {
+      if (e && e.name === 'NotAllowedError') status('탭 공유를 취소했습니다', '');
+      else status('탭 소리를 가져오지 못했습니다: ' + (e && e.message), 'err');
+      return;
+    }
+    const at = stream.getAudioTracks()[0], vt = stream.getVideoTracks()[0];
+    const label = (vt && vt.label) || '';
+    if (!at) {
+      stream.getTracks().forEach((t) => t.stop());
+      status('소리가 같이 공유되지 않았어요 — 탭을 고르고 "탭 오디오도 공유"를 켜 주세요 (크롬·엣지)', 'err');
+      return;
+    }
+    // 화면은 필요 없으므로 바로 끈다 (소리 공유는 계속됨)
+    if (vt) vt.stop();
+    if (source !== 'demo') { pause(); }
+    source = 'tab'; playing = true; video.hidden = true;
+    tabStream = stream;
+    tabNode = ctx.createMediaStreamSource(new MediaStream([at]));
+    tabNode.connect(node);
+    at.addEventListener('ended', () => stopTab());
+    $('srcDemo').setAttribute('aria-pressed', 'false'); $('srcTab').setAttribute('aria-pressed', 'true');
+    $('nowTitle').textContent = '다른 탭 소리' + (label && !/^(screen|window|web-contents-media-stream)/i.test(label) ? ': ' + label : '');
+    $('nowSub').textContent = '원래 탭 소리는 꺼지고 3D 로 바뀐 소리만 들립니다 · 이 탭은 열어 두세요 · 영상보다 소리가 아주 살짝 늦을 수 있어요';
+    updatePlay();
+    status('탭 소리를 3D 로 바꾸는 중 · ' + (ctx.sampleRate / 1000).toFixed(1) + ' kHz', 'ok');
+  }
+  if (canTab) { $('srcTab').hidden = false; $('tabHelp').hidden = false; }
+  $('srcTab').addEventListener('click', () => {
+    if (source === 'tab') return;
+    startTab().catch((e) => status('탭 소리를 가져오지 못했습니다: ' + e.message, 'err'));
   });
   $('file').addEventListener('change', () => {
     const f = $('file').files[0]; if (!f) return;
     pause(); if (fileUrl) URL.revokeObjectURL(fileUrl);
     fileUrl = URL.createObjectURL(f); source = 'file';
     video.src = fileUrl; video.hidden = !(f.type || '').startsWith('video');
-    $('srcDemo').setAttribute('aria-pressed', 'false');
+    $('srcDemo').setAttribute('aria-pressed', 'false'); $('srcTab').setAttribute('aria-pressed', 'false');
+    updatePlay();
     $('nowTitle').textContent = f.name;
     $('nowSub').textContent = ((f.type || '').startsWith('video') ? '영상' : '음악') + ' · ' + (f.size / 1048576).toFixed(1) + ' MB · 재생을 누르세요';
     video.addEventListener('loadedmetadata', () => { $('time').textContent = '0:00 / ' + fmt(video.duration); }, { once: true });
@@ -1910,7 +1984,8 @@ registerProcessor('spatial3d', Spatial3DProcessor);
 
   syncUi();
   status('준비됨 · 재생을 누르면 엔진이 켜집니다');
+  
   // 검증용 훅 (페이지 동작에는 영향 없음)
-  window.__spatial3d = { state: () => ({ ctx: ctx && ctx.state, worklet: !!(node && !mainEngine), st }) };
+  window.__spatial3d = { state: () => ({ ctx: ctx && ctx.state, worklet: !!(node && !mainEngine), st, source, playing, canTab }) };
 })();
 </script>
