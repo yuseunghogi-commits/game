@@ -689,7 +689,8 @@
         const ldr = lr * md, ldi = li * md, rdr = rr * md, rdi = ri * md;
         const tot = sLL[k] + sRR[k] + 1e-20;
         const psi = Math.min(1, Math.max(0, 2 * Math.sqrt(sLRr[k] * sLRr[k] + sLRi[k] * sLRi[k]) / tot));
-        const p2 = psi * psi, wc = p2 * p2 * cl;
+        // 좌우가 완전히 같은 소리는 가운데 스피커로만 (세 스피커 간섭 → 1~2kHz 골·250Hz 부풂 방지), cl 은 모으는 범위
+        const u = cl > 0.001 ? Math.min(1, Math.max(0, (psi - (1 - cl)) / cl)) : 0, wc = u * u;
         const cr = wc * 0.5 * (ldr + rdr), ci = wc * 0.5 * (ldi + rdi);
         let flr = ldr - cr, fli = ldi - ci, frr = rdr - cr, fri = rdi - ci;
         const eIn = ldr * ldr + ldi * ldi + rdr * rdr + rdi * rdi;
@@ -775,6 +776,8 @@
   }
 
   // ─────────────────────────────── 엔진 (실측 경로) ───────────────────────────────
+  /** 잔향 보내기 저음 컷(Hz)과 긴 잔향 배율 — 배경음악 리듬 보존 0.71 → 0.84 (BinauralProcessor.kt 와 같음) */
+  const REV_HP_HZ = 300, LATE_SCALE = 0.6;
   const ROOMS = [[0.8, 0, 0], [0.7, 0.4, 0.6], [1.0, 0.7, 0.75], [1.4, 1.0, 0.85], [2.0, 1.6, 0.95], [2.8, 2.4, 1.05], [1.2, 1.5, 1.0]];
   const FDN_N = 8, FDN_MAX = 1 << 13;
   const FDN_MS = [29.7, 37.1, 41.1, 43.7, 53.3, 59.9, 67.7, 73.1];
@@ -784,7 +787,7 @@
 
   /** 기본 설정 (안드로이드 SpatialSettings 와 같은 이름·범위) */
   const DEFAULTS = {
-    virtualizerStrength: 850, bassStrength: 250, spaceEq: 45, reverbPreset: 2, frontAngle: 45, rearAngle: 135,
+    virtualizerStrength: 1000, bassStrength: 250, spaceEq: 45, reverbPreset: 2, frontAngle: 45, rearAngle: 135,
     rearLevel: 45, centerLevel: 60, engineMode: 1, spread: 90, earSize: 2, hpEq: 0, enabled: true,
     frontElev: 0, heightLevel: 25, topAngle: HEIGHT_AZ, topElev: HEIGHT_EL, topRearAngle: TOP_REAR_AZ, topRearElev: TOP_REAR_EL,
     bottomLevel: 10, bottomAngle: BOTTOM_AZ, bottomElev: BOTTOM_EL, enhance: 30,
@@ -803,6 +806,8 @@
       const lp = (hz) => hz <= 0 ? 1 : Math.min(1, Math.fround(1 - Math.exp(-2 * PI * hz / fs)));
       this.lpCoef = lp;
       this.dampCoef = lp(9000); this.revInLp = lp(6000);
+      // 잔향으로 보내는 소리의 저음(300Hz 아래)을 뺌 — 킥·베이스 잔향 꼬리가 배경음악을 뭉개지 않게 (2단 1차 고역통과)
+      this.revHp = lp(REV_HP_HZ); this.revH1L = 0; this.revH2L = 0; this.revH1R = 0; this.revH2R = 0;
       this.aBass = lp(130); this.aDc = lp(15);
       this.release = Math.fround(1 - Math.exp(-1 / (0.25 * fs)));
       this.revL = this.makeFdn(); this.revR = this.makeFdn();
@@ -813,6 +818,7 @@
       this.hpEq = null; this.hpEqIdx = 0;
       this.p = Object.assign({}, DEFAULTS);
       this.applyParams();
+      this.applied = false; // 밖에서 처음 주는 설정(setParams)도 3D 강조를 바로 계산 — 그 뒤 바뀔 때만 나눠서
     }
 
     makeFdn() {
@@ -881,7 +887,7 @@
       const modeRoom = this.engineMode === 2 ? 0.5 : 1.0;
       this.roomTaps = this.early > 0.001 ? buildRoom(fs, rnd.frontAngle, this.roomIdx, this.early * 1.1 * modeRoom) : null;
       this.rt60 = room[1];
-      this.lateGain = Math.fround(room[2] * (0.4 + 0.6 * this.early) * modeRoom);
+      this.lateGain = Math.fround(room[2] * (0.4 + 0.6 * this.early) * modeRoom * LATE_SCALE);
       this.preDelay = Math.round(0.012 * room[0] * fs);
       this.configureFdn(this.revL, room[0], 1.0);
       this.configureFdn(this.revR, room[0], 1.037);
@@ -937,8 +943,14 @@
           const di = (w0 + i - this.preDelay) & mask;
           this.revLpL += this.revInLp * (bufL[di] - this.revLpL);
           this.revLpR += this.revInLp * (bufR[di] - this.revLpR);
-          this.runFdn(this.revL, this.revLpL);
-          this.runFdn(this.revR, this.revLpR);
+          const hp = this.revHp;
+          let xl = this.revLpL, xr = this.revLpR;
+          this.revH1L += hp * (xl - this.revH1L); xl -= this.revH1L;
+          this.revH2L += hp * (xl - this.revH2L); xl -= this.revH2L;
+          this.revH1R += hp * (xr - this.revH1R); xr -= this.revH1R;
+          this.revH2R += hp * (xr - this.revH2R); xr -= this.revH2R;
+          this.runFdn(this.revL, xl);
+          this.runFdn(this.revR, xr);
           for (let k = 0; k < FDN_N; k++) {
             B.bus[LATE_BUS_L[k]][i] += g * LATE_SIGN[k] * dL[k];
             B.bus[LATE_BUS_R[k]][i] += g * LATE_SIGN[k] * dR[k];

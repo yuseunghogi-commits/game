@@ -11,7 +11,7 @@ data class SpatialSettings(
     /** 헤드폰/이어폰이 연결됐을 때만 효과 켜기 */
     val headphonesOnly: Boolean = true,
     /** 가상 서라운드 강도 0..1000 */
-    val virtualizerStrength: Int = 850,
+    val virtualizerStrength: Int = 1000,
     /** 저음 보강 0..1000 */
     val bassStrength: Int = 250,
     /** 공간 EQ(입체감 커브) 0..100 */
@@ -180,11 +180,11 @@ val SOUND_PRESETS = listOf(
     // 이름, 3D 강도, 저음, 방 울림/공간감, 잔향(방 크기), 좌우 넓이
     // … 좌우 분리, 앞 스피커 각도, 뒤 스피커 각도, 배경음 옆/뒤 비율, 가운데 스피커
     // …, 천장 스피커 비율, 앞 스피커 높이 (+ 바닥 스피커 비율, 3D 강조)
-    SoundPreset("음악 (자연스러운 입체감)", 850, 250, 45, PresetReverb.PRESET_MEDIUMROOM, 65, 45, 135, 45, 60, 25, 0, bottom = 10, enhance = 30),
+    SoundPreset("음악 (자연스러운 입체감)", 1000, 250, 45, PresetReverb.PRESET_MEDIUMROOM, 65, 45, 135, 45, 60, 25, 0, bottom = 10, enhance = 30),
     SoundPreset("영화관", 1000, 500, 60, PresetReverb.PRESET_LARGEROOM, 80, 55, 130, 65, 85, 40, 5, bottom = 20, enhance = 50),
-    SoundPreset("콘서트홀", 950, 300, 55, PresetReverb.PRESET_LARGEHALL, 60, 40, 140, 55, 50, 35, 0, bottom = 10, enhance = 30),
+    SoundPreset("콘서트홀", 1000, 300, 55, PresetReverb.PRESET_LARGEHALL, 60, 40, 140, 55, 50, 35, 0, bottom = 10, enhance = 30),
     SoundPreset("게임 (발소리/방향감)", 1000, 200, 35, PresetReverb.PRESET_SMALLROOM, 95, 60, 130, 50, 70, 15, 0, bottom = 15, enhance = 80),
-    SoundPreset("보컬/팟캐스트", 650, 50, 30, PresetReverb.PRESET_SMALLROOM, 30, 35, 140, 20, 90, 10, 0, bottom = 0, enhance = 10),
+    SoundPreset("보컬/팟캐스트", 850, 50, 30, PresetReverb.PRESET_SMALLROOM, 30, 35, 140, 20, 90, 10, 0, bottom = 0, enhance = 10),
     SoundPreset("사용자 설정", -1, -1, -1, PresetReverb.PRESET_NONE, -1),
 )
 

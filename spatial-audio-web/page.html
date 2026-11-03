@@ -260,11 +260,11 @@ registerProcessor('spatial3d', Spatial3DProcessor);
   const LAYOUT3D = { topAngle: 45, topElev: 45, topRearAngle: 135, topRearElev: 45, bottomAngle: 45, bottomElev: -30 };
   // 안드로이드 앱과 같은 프리셋
   const PRESETS = [
-    { name: '음악 (자연스러운 입체감)', p: { virtualizerStrength: 850, bassStrength: 250, spaceEq: 45, reverbPreset: 2, frontAngle: 45, rearAngle: 135, rearLevel: 45, centerLevel: 60, heightLevel: 25, frontElev: 0, bottomLevel: 10, enhance: 30, ...LAYOUT3D } },
+    { name: '음악 (자연스러운 입체감)', p: { virtualizerStrength: 1000, bassStrength: 250, spaceEq: 45, reverbPreset: 2, frontAngle: 45, rearAngle: 135, rearLevel: 45, centerLevel: 60, heightLevel: 25, frontElev: 0, bottomLevel: 10, enhance: 30, ...LAYOUT3D } },
     { name: '영화관', p: { virtualizerStrength: 1000, bassStrength: 500, spaceEq: 60, reverbPreset: 3, frontAngle: 55, rearAngle: 130, rearLevel: 65, centerLevel: 85, heightLevel: 40, frontElev: 5, bottomLevel: 20, enhance: 50, ...LAYOUT3D } },
-    { name: '콘서트홀', p: { virtualizerStrength: 950, bassStrength: 300, spaceEq: 55, reverbPreset: 5, frontAngle: 40, rearAngle: 140, rearLevel: 55, centerLevel: 50, heightLevel: 35, frontElev: 0, bottomLevel: 10, enhance: 30, ...LAYOUT3D } },
+    { name: '콘서트홀', p: { virtualizerStrength: 1000, bassStrength: 300, spaceEq: 55, reverbPreset: 5, frontAngle: 40, rearAngle: 140, rearLevel: 55, centerLevel: 50, heightLevel: 35, frontElev: 0, bottomLevel: 10, enhance: 30, ...LAYOUT3D } },
     { name: '게임 (발소리·방향감)', p: { virtualizerStrength: 1000, bassStrength: 200, spaceEq: 35, reverbPreset: 1, frontAngle: 60, rearAngle: 130, rearLevel: 50, centerLevel: 70, heightLevel: 15, frontElev: 0, bottomLevel: 15, enhance: 80, ...LAYOUT3D } },
-    { name: '보컬·팟캐스트', p: { virtualizerStrength: 650, bassStrength: 50, spaceEq: 30, reverbPreset: 1, frontAngle: 35, rearAngle: 140, rearLevel: 20, centerLevel: 90, heightLevel: 10, frontElev: 0, bottomLevel: 0, enhance: 10, ...LAYOUT3D } },
+    { name: '보컬·팟캐스트', p: { virtualizerStrength: 850, bassStrength: 50, spaceEq: 30, reverbPreset: 1, frontAngle: 35, rearAngle: 140, rearLevel: 20, centerLevel: 90, heightLevel: 10, frontElev: 0, bottomLevel: 0, enhance: 10, ...LAYOUT3D } },
   ];
   const MODE_INFO = {
     1: '방 안의 가상 스피커 7개(앞 2·가운데·옆 2·뒤 2)로 들려줍니다. 보컬은 가운데, 박수·관중·울림은 옆과 뒤로 갑니다.',

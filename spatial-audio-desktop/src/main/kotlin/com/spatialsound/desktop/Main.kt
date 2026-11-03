@@ -347,7 +347,7 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
     }
 
     private fun loadSettings() = SpatialSettings(
-        virtualizerStrength = prefs.getInt("strength", 850),
+        virtualizerStrength = prefs.getInt("strength", 1000),
         bassStrength = prefs.getInt("bass", 250),
         spaceEq = prefs.getInt("room", 45),
         reverbPreset = prefs.getInt("reverb", 2),

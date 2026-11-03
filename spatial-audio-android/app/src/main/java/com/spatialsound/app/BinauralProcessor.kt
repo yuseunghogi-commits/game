@@ -258,7 +258,7 @@ class BinauralProcessor(private val fs: Int) {
 
         // 잔향 설정
         rt60 = room.rt60
-        lateGain = (room.late * (0.4 + 0.6 * early) * (if (engineMode == 2) 0.5 else 1.0)).toFloat()
+        lateGain = (room.late * (0.4 + 0.6 * early) * (if (engineMode == 2) 0.5 else 1.0) * LATE_SCALE).toFloat()
         // 실측 모드는 잔향도 렌더러(지연 LATENCY)를 거치므로 따로 늦출 필요 없음
         preDelay = samples(0.012 * room.size) + (if (useHrtf) 0 else latency)
         revL.configure(room.size, 1.0)
@@ -322,6 +322,22 @@ class BinauralProcessor(private val fs: Int) {
     private lateinit var revR: Fdn
     private val dampCoef = lpCoef(9000.0)
     private val revInLp = lpCoef(6000.0)
+    // 잔향으로 보내는 소리에서 저음을 뺌 (2단 1차 고역통과): 킥·베이스의 잔향 꼬리가 리듬과 배경음악을 뭉개지 않게
+    private val revHp = lpCoef(REV_HP_HZ)
+    private var revH1L = 0f; private var revH2L = 0f; private var revH1R = 0f; private var revH2R = 0f
+
+    /** 잔향 입력: 6kHz 저역통과 + 300Hz 고역통과 (2단) */
+    private fun revInput(xl: Float, xr: Float) {
+        revLpL += revInLp * (xl - revLpL)
+        revLpR += revInLp * (xr - revLpR)
+        var l = revLpL; var r = revLpR
+        revH1L += revHp * (l - revH1L); l -= revH1L
+        revH2L += revHp * (l - revH2L); l -= revH2L
+        revH1R += revHp * (r - revH1R); r -= revH1R
+        revH2R += revHp * (r - revH2R); r -= revH2R
+        revL.run(l)
+        revR.run(r)
+    }
     private var revLpL = 0f
     private var revLpR = 0f
     private var rt60 = 0.0
@@ -455,10 +471,7 @@ class BinauralProcessor(private val fs: Int) {
                 }
                 if (hasLate) {
                     val di = (w - preDelay) and mask
-                    revLpL += revInLp * (bufL[di] - revLpL)
-                    revLpR += revInLp * (bufR[di] - revLpR)
-                    revL.run(revLpL)
-                    revR.run(revLpR)
+                    revInput(bufL[di], bufR[di])
                     // 왼쪽 소리의 잔향은 왼쪽 반공간(왼앞·왼옆·왼뒤 + 정면·정후방)에서, 오른쪽은 오른쪽에서
                     val g = late * 0.6f
                     for (i in 0 until FDN_N) {
@@ -498,10 +511,7 @@ class BinauralProcessor(private val fs: Int) {
                 // 잔향: 왼쪽 소리의 잔향은 주로 왼쪽 귀에, 오른쪽은 오른쪽에 (반대쪽은 REV_CROSS 만큼)
                 if (hasLate) {
                     val di = (w - preDelay) and mask
-                    revLpL += revInLp * (bufL[di] - revLpL)
-                    revLpR += revInLp * (bufR[di] - revLpR)
-                    revL.run(revLpL)
-                    revR.run(revLpR)
+                    revInput(bufL[di], bufR[di])
                     outL += late * 0.6f * (revL.outA + REV_CROSS * revR.outB)
                     outR += late * 0.6f * (revR.outA + REV_CROSS * revL.outB)
                 }
@@ -552,6 +562,14 @@ class BinauralProcessor(private val fs: Int) {
     private class Room(val size: Double, val rt60: Double, val late: Double)
 
     companion object {
+        /**
+         * 잔향으로 보내는 소리의 저음 컷(Hz)과 긴 잔향 배율.
+         * 측정: 저음 잔향 꼬리가 킥·베이스를 뭉개서 125Hz 대역 리듬 보존이 0.50 까지 떨어지고,
+         * 긴 잔향이 1~2kHz 를 흐리게 만듦 → 300Hz 컷 + 60% 로 배경음악 리듬 보존 0.71 → 0.84 (넓은 느낌 IACC 는 거의 그대로).
+         */
+        private const val REV_HP_HZ = 300.0
+        private const val LATE_SCALE = 0.6
+
         /** 실측 HRIR 데이터 — 앱 시작 시 한 번 불러서 넣어 둔다 (없으면 실측 모드는 기본 모드로 동작) */
         @Volatile var hrirBase: HrirSet? = null
         /** 높이(위아래) 단서 데이터 — 없으면 높이 기능만 빠지고 나머지는 그대로 동작 */

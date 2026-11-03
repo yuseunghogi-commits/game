@@ -446,8 +446,10 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
             // 가운데 성분: 좌우가 "같을수록"(유사도 ψ → 1) 가운데로
             val tot = sLL[k] + sRR[k] + 1e-20f
             val psi = (2f * sqrt(sLRr[k] * sLRr[k] + sLRi[k] * sLRi[k]) / tot).coerceIn(0f, 1f)
-            val p2 = psi * psi
-            val wc = p2 * p2 * cl
+            // 가운데로 보낼 몫: 좌우가 완전히 같은 소리(ψ=1)는 가운데 스피커로만 보내고(앞 L/R 에 같은 소리가 남으면
+            // 세 스피커 소리가 귀에서 간섭해 1~2kHz 가 최대 -7dB 파이고 250Hz 가 부풂 = 탁한 소리), cl 은 "얼마나 덜 같은
+            // 소리까지 가운데로 모을지"를 정함 (ψ > 1 − cl 부터).
+            val wc = if (cl <= 0.001f) 0f else { val u = ((psi - (1f - cl)) / cl).coerceIn(0f, 1f); u * u }
             val cr = wc * 0.5f * (ldr + rdr); val ci = wc * 0.5f * (ldi + rdi)
             var flr = ldr - cr; var fli = ldi - ci; var frr = rdr - cr; var fri = rdi - ci
             // 에너지 보존 (가운데를 빼면서 줄어든 만큼 되돌림)
