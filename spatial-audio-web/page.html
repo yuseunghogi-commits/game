@@ -1,0 +1,532 @@
+<title>3D 사운드 플레이어</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+/* 레이아웃: 아이패드 가로 = 왼쪽(플레이어 + 스피커 배치도) / 오른쪽(조절판) 두 단, 세로·폰 = 한 단 */
+:root {
+  --bg: #eceeea;
+  --surface: #fbfcfa;
+  --surface-2: #f2f4f0;
+  --ink: #1a2420;
+  --muted: #5b6862;
+  --line: #d3d9d4;
+  --accent: #b5720f;
+  --accent-ink: #ffffff;
+  --front: #b5720f;
+  --center: #b23c68;
+  --side: #1b8576;
+  --rear: #2a73b5;
+  --head: #3a4641;
+  --ring: #c3cbc5;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --radius: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111513; --surface: #1a201d; --surface-2: #222a26; --ink: #e6ebe8; --muted: #9aa7a0; --line: #2d3732;
+    --accent: #e4a23e; --accent-ink: #1a1408; --front: #e4a23e; --center: #e2658f; --side: #3db6a3; --rear: #5ba7e8;
+    --head: #c9d2cd; --ring: #39443f; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111513; --surface: #1a201d; --surface-2: #222a26; --ink: #e6ebe8; --muted: #9aa7a0; --line: #2d3732;
+  --accent: #e4a23e; --accent-ink: #1a1408; --front: #e4a23e; --center: #e2658f; --side: #3db6a3; --rear: #5ba7e8;
+  --head: #c9d2cd; --ring: #39443f; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 40px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 18px; }
+header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px 20px; }
+h1 { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
+.lede { margin: 2px 0 0; color: var(--muted); max-width: 62ch; }
+.pill { font-family: var(--font-mono); font-size: 0.78rem; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line);
+  color: var(--muted); background: var(--surface); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pill.ok { color: var(--side); border-color: color-mix(in srgb, var(--side) 45%, var(--line)); }
+.pill.err { color: var(--center); border-color: color-mix(in srgb, var(--center) 45%, var(--line)); }
+.grid { display: grid; gap: 18px; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); align-items: start; }
+@media (max-width: 900px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.col { display: grid; gap: 18px; min-width: 0; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; display: grid; gap: 14px; min-width: 0; }
+.card h2 { font-size: 0.8rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+button, .filebtn, select {
+  font: inherit; color: var(--ink); background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 14px; min-height: 44px; cursor: pointer;
+}
+button:focus-visible, .filebtn:focus-within, select:focus-visible, input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; min-width: 112px; }
+button[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.filebtn { display: inline-flex; align-items: center; gap: 8px; position: relative; overflow: hidden; }
+.filebtn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; font-size: 0; }
+select { width: 100%; appearance: auto; }
+.now { display: grid; gap: 2px; min-width: 0; }
+.now b { font-weight: 600; overflow-wrap: anywhere; }
+.now span { color: var(--muted); font-size: 0.85rem; }
+video { width: 100%; max-width: 100%; border-radius: 10px; background: #000; aspect-ratio: 16 / 9; }
+.transport { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+.time { font-family: var(--font-mono); font-size: 0.85rem; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+input[type="range"] { width: 100%; accent-color: var(--accent); min-height: 32px; }
+.seg { display: inline-grid; grid-auto-flow: column; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface-2); }
+.seg button { border: 0; border-radius: 0; background: transparent; min-width: 0; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+.ab { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+.ab p { margin: 0; color: var(--muted); font-size: 0.88rem; max-width: 40ch; }
+.stage { display: grid; gap: 10px; }
+.stage svg { width: 100%; max-width: 440px; height: auto; margin: 0 auto; display: block; touch-action: none; user-select: none; -webkit-user-select: none; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 0.85rem; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+.field { display: grid; gap: 4px; }
+.field label, .field .lab { display: flex; justify-content: space-between; gap: 12px; font-size: 0.92rem; }
+.field .val { font-family: var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.field small { color: var(--muted); font-size: 0.82rem; }
+.fields { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.note { font-size: 0.85rem; color: var(--muted); margin: 0; }
+footer { color: var(--muted); font-size: 0.82rem; display: grid; gap: 6px; max-width: 90ch; }
+footer p { margin: 0; }
+a { color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>3D 사운드 플레이어</h1>
+      <p class="lede">아이패드에 저장된 음악·영상을 헤드폰용 입체 음향으로 듣습니다. 폰·노트북 앱과 같은 실측 HRTF 엔진입니다.</p>
+    </div>
+    <span class="pill" id="status">엔진 준비 중…</span>
+  </header>
+
+  <div class="grid">
+    <div class="col">
+      <section class="card" aria-labelledby="h-player">
+        <h2 id="h-player">재생</h2>
+        <div class="row">
+          <button type="button" id="srcDemo" aria-pressed="true">예시 음원</button>
+          <label class="filebtn" for="file">파일 열기 <input type="file" id="file" accept="audio/*,video/*"></label>
+        </div>
+        <div class="now">
+          <b id="nowTitle">예시: 왼쪽→오른쪽으로 움직이는 소리 + 음악</b>
+          <span id="nowSub">0~8초 짧은 소리가 16단계로 이동 · 8초부터 음악과 위치가 바뀌는 박수 · 20초</span>
+        </div>
+        <video id="video" playsinline preload="metadata" hidden></video>
+        <div class="transport">
+          <button type="button" class="primary" id="play">재생</button>
+          <input type="range" id="seek" min="0" max="1000" value="0" step="1" aria-label="재생 위치">
+          <span class="time" id="time">0:00 / 0:20</span>
+        </div>
+        <div class="ab">
+          <div class="seg" role="group" aria-label="3D 효과">
+            <button type="button" id="on3d" aria-pressed="true">3D 켜짐</button>
+            <button type="button" id="off3d" aria-pressed="false">원음</button>
+          </div>
+          <p>재생 중에 눌러서 원음과 바로 비교해 보세요. 헤드폰으로 들어야 효과가 납니다.</p>
+        </div>
+      </section>
+
+      <section class="card stage" aria-labelledby="h-stage">
+        <h2 id="h-stage">스피커 배치</h2>
+        <svg id="stageSvg" viewBox="0 0 340 300" role="img" aria-label="위에서 본 가상 스피커 배치. 앞·뒤 스피커를 끌어서 옮길 수 있습니다."></svg>
+        <div class="legend">
+          <span><i style="background:var(--front)"></i>앞 스피커 (끌기)</span>
+          <span><i style="background:var(--center)"></i>가운데</span>
+          <span><i style="background:var(--side)"></i>옆 (배경음)</span>
+          <span><i style="background:var(--rear)"></i>뒤 (끌기)</span>
+        </div>
+        <p class="note">좌우는 항상 대칭입니다. 앞 스피커를 위로 올리면 소리가 정면으로 모이고, 옆으로 내리면 넓어집니다.</p>
+      </section>
+    </div>
+
+    <div class="col">
+      <section class="card" aria-labelledby="h-phones">
+        <h2 id="h-phones">헤드폰 보정</h2>
+        <div class="field">
+          <select id="hpEq" aria-label="헤드폰 모델"></select>
+          <small id="hpEqInfo"></small>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="h-engine">
+        <h2 id="h-engine">3D 엔진</h2>
+        <div class="seg" role="group" aria-label="엔진">
+          <button type="button" id="modeSpatial" aria-pressed="true">공간 모드</button>
+          <button type="button" id="modeLocal" aria-pressed="false">정위 모드</button>
+        </div>
+        <p class="note" id="modeInfo"></p>
+        <div class="field" id="spreadField" hidden>
+          <label for="spread">방향 펼침 <span class="val" id="spreadVal"></span></label>
+          <input type="range" id="spread" min="30" max="120" step="1">
+        </div>
+        <div class="field">
+          <label for="preset">프리셋</label>
+          <select id="preset"></select>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="h-sound">
+        <h2 id="h-sound">소리 조절</h2>
+        <div class="fields">
+          <div class="field"><label for="strength">3D 강도 <span class="val" id="strengthVal"></span></label><input type="range" id="strength" min="0" max="1000" step="10"></div>
+          <div class="field"><label for="front">앞 스피커 각도 <span class="val" id="frontVal"></span></label><input type="range" id="front" min="0" max="90" step="1"></div>
+          <div class="field"><label for="rear">뒤 스피커 각도 <span class="val" id="rearVal"></span></label><input type="range" id="rear" min="90" max="180" step="1"></div>
+          <div class="field"><label for="rearLevel">배경음 옆·뒤 비율 <span class="val" id="rearLevelVal"></span></label><input type="range" id="rearLevel" min="0" max="100" step="1"></div>
+          <div class="field" id="centerField"><label for="center">가운데 스피커 <span class="val" id="centerVal"></span></label><input type="range" id="center" min="0" max="100" step="1"></div>
+          <div class="field"><label for="room">방 울림 (반사음) <span class="val" id="roomVal"></span></label><input type="range" id="room" min="0" max="100" step="1"></div>
+          <div class="field"><label for="roomSize">방 크기 · 잔향 <span class="val" id="roomSizeVal"></span></label><select id="roomSize"></select></div>
+          <div class="field"><label for="bass">저음 보강 <span class="val" id="bassVal"></span></label><input type="range" id="bass" min="0" max="1000" step="10"></div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="h-ear">
+        <h2 id="h-ear">귀 맞춤</h2>
+        <p class="note">앞과 뒤가 헷갈리면 단계를 바꿔 보세요. 테스트음은 앞 → 뒤 → 앞 → 뒤 → 왼쪽 → 오른쪽 순서로 나옵니다. 앞뒤가 가장 확실히 구분되는 단계를 고르면 됩니다.</p>
+        <div class="row">
+          <div class="field" style="flex:1 1 200px"><select id="ear" aria-label="머리·귀 크기 단계"></select></div>
+          <button type="button" id="earTest">테스트 듣기</button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <footer>
+    <p>아이패드는 앱이 유튜브 같은 다른 앱의 소리를 가져가지 못하게 막혀 있어서, 이 페이지는 아이패드에 저장된 파일만 처리합니다. 유튜브는 폰·노트북 앱으로 들으세요.</p>
+    <p>소리가 안 나면: 아이패드 소리 크기와 무음 설정을 확인하고, 재생 중에는 사파리를 앞에 둔 채로 들으세요. 헤드폰 앱의 EQ 와 기기의 공간 음향은 꺼 두는 것이 좋습니다.</p>
+    <p>실측 HRTF: KEMAR HRTFs with low frequency correction — H. Wierstorf, M. Geier, S. Spors, V. Erbes (TU Berlin / Universität Rostock), <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>. 헤드폰 보정: <a href="https://github.com/jaakkopasanen/AutoEq" target="_blank" rel="noopener">AutoEq</a> (MIT), 측정 Rtings · oratory1990 · HypetheSonics.</p>
+  </footer>
+</div>
+
+<script type="application/octet-stream" id="hrir-data">__HRIR_B64__</script>
+<script type="text/plain" id="eq-data">__EQ_TEXT__</script>
+<script id="engine-src">
+/*ENGINE_SRC*/
+</script>
+<script type="text/plain" id="worklet-src">
+class Spatial3DProcessor extends AudioWorkletProcessor {
+  constructor(options) {
+    super();
+    const o = options.processorOptions, E = globalThis.SpatialEngine;
+    this.engine = new E.Engine(sampleRate, E.loadHrir(o.hrir), E.parseEq(o.eqText));
+    this.engine.setParams(o.params);
+    this.zero = new Float32Array(128);
+    this.port.onmessage = (e) => { if (e.data && e.data.params) this.engine.setParams(e.data.params); };
+    this.port.postMessage({ ready: true });
+  }
+  process(inputs, outputs) {
+    const out = outputs[0], n = out[0].length, inp = inputs[0];
+    if (this.zero.length !== n) this.zero = new Float32Array(n);
+    const L = (inp && inp[0]) || this.zero, R = (inp && inp[1]) || null;
+    this.engine.processPlanar(L, R, out[0], out[1] || new Float32Array(n), n);
+    return true;
+  }
+}
+registerProcessor('spatial3d', Spatial3DProcessor);
+</script>
+<script>
+(() => {
+  'use strict';
+  const E = globalThis.SpatialEngine;
+  const $ = (id) => document.getElementById(id);
+  const ROOM_NAMES = ['없음', '작은 방', '중간 방', '큰 방', '중간 홀', '큰 홀', '플레이트'];
+  const ROOM_RT = ['잔향 없음', 'RT60 0.4초', 'RT60 0.7초', 'RT60 1.0초', 'RT60 1.6초', 'RT60 2.4초', 'RT60 1.5초'];
+  // 안드로이드 앱과 같은 프리셋
+  const PRESETS = [
+    { name: '음악 (자연스러운 입체감)', p: { virtualizerStrength: 850, bassStrength: 250, spaceEq: 45, reverbPreset: 2, frontAngle: 45, rearAngle: 135, rearLevel: 45, centerLevel: 60 } },
+    { name: '영화관', p: { virtualizerStrength: 1000, bassStrength: 500, spaceEq: 60, reverbPreset: 3, frontAngle: 55, rearAngle: 130, rearLevel: 65, centerLevel: 85 } },
+    { name: '콘서트홀', p: { virtualizerStrength: 950, bassStrength: 300, spaceEq: 55, reverbPreset: 5, frontAngle: 40, rearAngle: 140, rearLevel: 55, centerLevel: 50 } },
+    { name: '게임 (발소리·방향감)', p: { virtualizerStrength: 1000, bassStrength: 200, spaceEq: 35, reverbPreset: 1, frontAngle: 60, rearAngle: 130, rearLevel: 50, centerLevel: 70 } },
+    { name: '보컬·팟캐스트', p: { virtualizerStrength: 650, bassStrength: 50, spaceEq: 30, reverbPreset: 1, frontAngle: 35, rearAngle: 140, rearLevel: 20, centerLevel: 90 } },
+  ];
+  const MODE_INFO = {
+    1: '방 안의 가상 스피커 7개(앞 2·가운데·옆 2·뒤 2)로 들려줍니다. 보컬은 가운데, 박수·관중·울림은 옆과 뒤로 갑니다.',
+    2: '소리를 주파수 성분별로 나눠 스테레오 위치에 맞는 정확한 방향에 하나씩 놓습니다. 어디서 소리가 나는지 또렷합니다. 게임·영화용.',
+  };
+  const STORE = 'spatial3d-web-v1';
+
+  // ── 데이터 ──
+  const b64 = $('hrir-data').textContent.trim();
+  const bin = atob(b64), bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const hrirBuf = bytes.buffer;
+  const hrir = E.loadHrir(hrirBuf);
+  const eqText = $('eq-data').textContent;
+  const eqProfiles = E.parseEq(eqText);
+
+  // ── 설정 (이 기기에만 저장) ──
+  let st = Object.assign({}, E.DEFAULTS, PRESETS[0].p, { hpEq: 1, presetIndex: 0, engineMode: 1, spread: 90, earSize: 2, enabled: true });
+  try { const saved = JSON.parse(localStorage.getItem(STORE) || 'null'); if (saved) Object.assign(st, saved); } catch (e) { /* 저장소 없음 */ }
+  const save = () => { try { localStorage.setItem(STORE, JSON.stringify(st)); } catch (e) { /* 무시 */ } };
+
+  // ── 오디오 ──
+  let ctx = null, node = null, mainEngine = null, ready = null, sendParams = () => {};
+  const status = (text, cls) => { const s = $('status'); s.textContent = text; s.className = 'pill' + (cls ? ' ' + cls : ''); };
+  const params = () => ({
+    virtualizerStrength: st.virtualizerStrength, bassStrength: st.bassStrength, spaceEq: st.spaceEq, reverbPreset: st.reverbPreset,
+    frontAngle: st.frontAngle, rearAngle: st.rearAngle, rearLevel: st.rearLevel, centerLevel: st.centerLevel,
+    engineMode: st.engineMode, spread: st.spread, earSize: st.earSize, hpEq: st.hpEq, enabled: st.enabled,
+  });
+
+  async function ensureAudio() {
+    if (ready) return ready;
+    ready = (async () => {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      ctx = new AC({ latencyHint: 'playback' });
+      let how = '';
+      try {
+        if (!ctx.audioWorklet) throw new Error('AudioWorklet 없음');
+        const src = $('engine-src').textContent + '\n' + $('worklet-src').textContent;
+        const url = URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
+        await ctx.audioWorklet.addModule(url);
+        node = new AudioWorkletNode(ctx, 'spatial3d', {
+          numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+          channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers',
+          processorOptions: { hrir: hrirBuf.slice(0), eqText, params: params() },
+        });
+        sendParams = () => node.port.postMessage({ params: params() });
+        how = '오디오 워크릿';
+      } catch (err) {
+        // 대체: 메인 스레드에서 처리 (조금 더 지연되지만 같은 소리)
+        mainEngine = new E.Engine(ctx.sampleRate, hrir, eqProfiles);
+        mainEngine.setParams(params());
+        node = ctx.createScriptProcessor(2048, 2, 2);
+        node.onaudioprocess = (ev) => {
+          const ib = ev.inputBuffer, ob = ev.outputBuffer;
+          mainEngine.processPlanar(ib.getChannelData(0), ib.numberOfChannels > 1 ? ib.getChannelData(1) : null,
+            ob.getChannelData(0), ob.getChannelData(1), ob.length);
+        };
+        sendParams = () => mainEngine.setParams(params());
+        how = '기본 처리';
+      }
+      node.connect(ctx.destination);
+      status(`엔진 동작 중 · ${(ctx.sampleRate / 1000).toFixed(1)} kHz · ${how}`, 'ok');
+    })().catch((err) => { status('오디오를 시작하지 못했습니다: ' + err.message, 'err'); ready = null; throw err; });
+    return ready;
+  }
+
+  // ── 재생 소스: 예시(버퍼) 또는 파일(미디어 요소) ──
+  const video = $('video');
+  let source = 'demo', demoBuf = null, bufNode = null, bufStart = 0, bufOffset = 0, playing = false, mediaNode = null, fileUrl = null;
+  let wakeLock = null;
+  const keepAwake = async (on) => {
+    try {
+      if (on && !wakeLock && navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen');
+      if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+    } catch (e) { wakeLock = null; }
+  };
+  const fmt = (s) => { s = Math.max(0, s || 0); const m = Math.floor(s / 60); return m + ':' + String(Math.floor(s % 60)).padStart(2, '0'); };
+  const duration = () => source === 'demo' ? (demoBuf ? demoBuf.duration : 20) : (isFinite(video.duration) ? video.duration : 0);
+  const position = () => source === 'demo' ? (playing ? Math.min(duration(), bufOffset + ctx.currentTime - bufStart) : bufOffset) : video.currentTime;
+
+  function makeDemo() {
+    if (demoBuf) return;
+    const [L, R] = E.makeDemo(ctx.sampleRate);
+    demoBuf = ctx.createBuffer(2, L.length, ctx.sampleRate);
+    demoBuf.copyToChannel(L, 0); demoBuf.copyToChannel(R, 1);
+  }
+  function startBuf(offset) {
+    stopBuf();
+    bufNode = ctx.createBufferSource(); bufNode.buffer = demoBuf; bufNode.connect(node);
+    bufNode.onended = () => { if (bufNode && playing && position() >= duration() - 0.05) { playing = false; bufOffset = 0; updatePlay(); keepAwake(false); } };
+    bufStart = ctx.currentTime; bufOffset = offset; bufNode.start(0, offset);
+  }
+  function stopBuf() { if (bufNode) { try { bufNode.onended = null; bufNode.stop(); } catch (e) { } bufNode.disconnect(); bufNode = null; } }
+
+  async function play() {
+    await ensureAudio();
+    if (ctx.state !== 'running') await ctx.resume();
+    stopEarTest();
+    if (source === 'demo') { makeDemo(); startBuf(bufOffset >= duration() ? 0 : bufOffset); playing = true; }
+    else {
+      if (!mediaNode) { mediaNode = ctx.createMediaElementSource(video); mediaNode.connect(node); }
+      await video.play(); playing = true;
+    }
+    keepAwake(true); updatePlay();
+  }
+  function pause() {
+    if (source === 'demo') { if (playing) bufOffset = position(); stopBuf(); }
+    else video.pause();
+    playing = false; keepAwake(false); updatePlay();
+  }
+  function updatePlay() { $('play').textContent = playing ? '일시정지' : '재생'; }
+  $('play').addEventListener('click', () => { (playing ? Promise.resolve(pause()) : play()).catch((e) => status('재생할 수 없습니다: ' + e.message, 'err')); });
+  $('seek').addEventListener('input', () => {
+    const t = $('seek').value / 1000 * duration();
+    if (source === 'demo') { if (playing) startBuf(t); else bufOffset = t; } else video.currentTime = t;
+  });
+  video.addEventListener('ended', () => { playing = false; updatePlay(); keepAwake(false); });
+  setInterval(() => {
+    if (!ctx && source === 'demo') return;
+    const d = duration(), p = ctx ? position() : 0;
+    $('time').textContent = fmt(p) + ' / ' + fmt(d);
+    if (document.activeElement !== $('seek') && d > 0) $('seek').value = Math.round(p / d * 1000);
+  }, 250);
+
+  $('srcDemo').addEventListener('click', () => {
+    if (source === 'demo') return;
+    pause(); source = 'demo'; bufOffset = 0; video.hidden = true;
+    $('srcDemo').setAttribute('aria-pressed', 'true');
+    $('nowTitle').textContent = '예시: 왼쪽→오른쪽으로 움직이는 소리 + 음악';
+    $('nowSub').textContent = '0~8초 짧은 소리가 16단계로 이동 · 8초부터 음악과 위치가 바뀌는 박수 · 20초';
+  });
+  $('file').addEventListener('change', () => {
+    const f = $('file').files[0]; if (!f) return;
+    pause(); if (fileUrl) URL.revokeObjectURL(fileUrl);
+    fileUrl = URL.createObjectURL(f); source = 'file';
+    video.src = fileUrl; video.hidden = !(f.type || '').startsWith('video');
+    $('srcDemo').setAttribute('aria-pressed', 'false');
+    $('nowTitle').textContent = f.name;
+    $('nowSub').textContent = ((f.type || '').startsWith('video') ? '영상' : '음악') + ' · ' + (f.size / 1048576).toFixed(1) + ' MB · 재생을 누르세요';
+    video.addEventListener('loadedmetadata', () => { $('time').textContent = '0:00 / ' + fmt(video.duration); }, { once: true });
+  });
+
+  // 3D 켜기 / 원음 비교
+  const setEnabled = (on) => { st.enabled = on; $('on3d').setAttribute('aria-pressed', String(on)); $('off3d').setAttribute('aria-pressed', String(!on)); sendParams(); save(); };
+  $('on3d').addEventListener('click', () => setEnabled(true));
+  $('off3d').addEventListener('click', () => setEnabled(false));
+
+  // ── 귀 맞춤 테스트 ──
+  let earNode = null;
+  function stopEarTest() { if (earNode) { try { earNode.stop(); } catch (e) { } earNode = null; $('earTest').textContent = '테스트 듣기'; } }
+  $('earTest').addEventListener('click', async () => {
+    if (earNode) { stopEarTest(); return; }
+    await ensureAudio(); if (ctx.state !== 'running') await ctx.resume();
+    if (playing) pause();
+    const [L, R] = E.renderEarTest(hrir, ctx.sampleRate, st.earSize);
+    const b = ctx.createBuffer(2, L.length, ctx.sampleRate); b.copyToChannel(L, 0); b.copyToChannel(R, 1);
+    earNode = ctx.createBufferSource(); earNode.buffer = b; earNode.connect(ctx.destination);
+    earNode.onended = () => { earNode = null; $('earTest').textContent = '테스트 듣기'; };
+    earNode.start(); $('earTest').textContent = '테스트 멈춤';
+  });
+
+  // ── 스피커 배치도 (위에서 본 모습) ──
+  const svg = $('stageSvg'), NS = 'http://www.w3.org/2000/svg', CX = 170, CY = 150, RAD = 112;
+  // 색·글꼴은 CSS 변수를 쓰므로 속성이 아니라 style 로 넣는다 (사파리 호환)
+  const STYLE_KEYS = new Set(['fill', 'stroke', 'font-family']);
+  const el = (tag, attrs, parent) => {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) { if (STYLE_KEYS.has(k)) e.style.setProperty(k, attrs[k]); else e.setAttribute(k, attrs[k]); }
+    (parent || svg).appendChild(e); return e;
+  };
+  const pos = (deg, r = RAD) => [CX + r * Math.sin(deg * Math.PI / 180), CY - r * Math.cos(deg * Math.PI / 180)];
+  el('circle', { cx: CX, cy: CY, r: RAD, fill: 'none', stroke: 'var(--ring)', 'stroke-width': 1.5 });
+  el('circle', { cx: CX, cy: CY, r: RAD / 2, fill: 'none', stroke: 'var(--ring)', 'stroke-width': 1, 'stroke-dasharray': '3 4' });
+  for (const [deg, txt] of [[0, '0° 앞'], [90, '90°'], [180, '180° 뒤'], [-90, '90°']]) {
+    const [x, y] = pos(deg, RAD + 18);
+    el('text', { x, y: y + 4, 'text-anchor': 'middle', 'font-size': 11, fill: 'var(--muted)', 'font-family': 'var(--font-mono)' }).textContent = txt;
+  }
+  const beams = el('g', {});
+  const head = el('g', {});
+  el('rect', { x: CX - 27, y: CY - 7, width: 8, height: 14, rx: 3, fill: 'var(--head)', opacity: 0.55 }, head);
+  el('rect', { x: CX + 19, y: CY - 7, width: 8, height: 14, rx: 3, fill: 'var(--head)', opacity: 0.55 }, head);
+  el('circle', { cx: CX, cy: CY, r: 21, fill: 'var(--head)' }, head);
+  el('path', { d: `M ${CX - 5} ${CY - 19} L ${CX} ${CY - 27} L ${CX + 5} ${CY - 19} Z`, fill: 'var(--head)' }, head);
+  const spk = {};
+  const mk = (key, color, r, label) => {
+    const g = el('g', { 'data-key': key, style: label ? 'cursor:grab' : '' });
+    const c = el('circle', { r, fill: color, stroke: 'var(--surface)', 'stroke-width': 2 }, g);
+    const t = label ? el('text', { 'text-anchor': 'middle', 'font-size': 10.5, fill: 'var(--muted)', 'font-family': 'var(--font-mono)' }, g) : null;
+    if (label) { const hit = el('circle', { r: 24, fill: 'transparent' }, g); hit.dataset.key = key; }
+    return { g, c, t };
+  };
+  spk.C = mk('C', 'var(--center)', 9);
+  spk.SL = mk('SL', 'var(--side)', 8); spk.SR = mk('SR', 'var(--side)', 8);
+  spk.RL = mk('rear', 'var(--rear)', 12, true); spk.RR = mk('rear', 'var(--rear)', 12, true);
+  spk.FL = mk('front', 'var(--front)', 12, true); spk.FR = mk('front', 'var(--front)', 12, true);
+  function place(o, deg, labelText, dy) {
+    const [x, y] = pos(deg);
+    o.g.setAttribute('transform', `translate(${x.toFixed(1)} ${y.toFixed(1)})`);
+    if (o.t) { o.t.setAttribute('y', dy); o.t.textContent = labelText; }
+  }
+  function drawStage() {
+    const f = st.frontAngle, r = st.rearAngle, spatial = st.engineMode === 1;
+    place(spk.FL, -f, '−' + f + '°', -18); place(spk.FR, f, f + '°', -18);
+    place(spk.RL, -r, '−' + r + '°', 26); place(spk.RR, r, r + '°', 26);
+    place(spk.C, 0); place(spk.SL, -95); place(spk.SR, 95);
+    spk.C.g.style.display = spatial && st.centerLevel > 0 ? '' : 'none';
+    spk.C.c.setAttribute('opacity', (0.35 + 0.65 * st.centerLevel / 100).toFixed(2));
+    const amb = (0.3 + 0.7 * st.rearLevel / 100).toFixed(2);
+    for (const k of ['SL', 'SR', 'RL', 'RR']) spk[k].c.setAttribute('opacity', amb);
+    beams.innerHTML = '';
+    const list = [[-f, 'var(--front)'], [f, 'var(--front)'], [-95, 'var(--side)'], [95, 'var(--side)'], [-r, 'var(--rear)'], [r, 'var(--rear)']];
+    if (spatial && st.centerLevel > 0) list.push([0, 'var(--center)']);
+    for (const [d, col] of list) { const [x, y] = pos(d, RAD - 14); el('line', { x1: x, y1: y, x2: CX, y2: CY, stroke: col, 'stroke-width': 1.2, opacity: 0.35 }, beams); }
+  }
+  let drag = null;
+  const svgAngle = (ev) => {
+    const pt = svg.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
+    const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+    return Math.abs(Math.atan2(p.x - CX, -(p.y - CY)) * 180 / Math.PI);
+  };
+  svg.addEventListener('pointerdown', (ev) => {
+    const key = ev.target.closest('[data-key]') && ev.target.closest('[data-key]').getAttribute('data-key');
+    if (key !== 'front' && key !== 'rear') return;
+    drag = key; svg.setPointerCapture(ev.pointerId); ev.preventDefault();
+  });
+  svg.addEventListener('pointermove', (ev) => {
+    if (!drag) return;
+    const a = Math.round(svgAngle(ev));
+    if (drag === 'front') st.frontAngle = Math.min(90, Math.max(0, a)); else st.rearAngle = Math.min(180, Math.max(90, a));
+    st.presetIndex = -1; syncUi(); sendParams();
+  });
+  const endDrag = () => { if (drag) { drag = null; save(); } };
+  svg.addEventListener('pointerup', endDrag); svg.addEventListener('pointercancel', endDrag);
+
+  // ── 조절판 ──
+  const hp = $('hpEq');
+  hp.innerHTML = '<option value="0">보정 안 함</option>' + eqProfiles.map((p, i) => `<option value="${i + 1}">${p.name}</option>`).join('');
+  $('preset').innerHTML = PRESETS.map((p, i) => `<option value="${i}">${p.name}</option>`).join('') + '<option value="-1">직접 조절함</option>';
+  $('roomSize').innerHTML = ROOM_NAMES.map((n, i) => `<option value="${i}">${n}</option>`).join('');
+  $('ear').innerHTML = E.EAR_NAMES.map((n, i) => `<option value="${i}">${n}</option>`).join('');
+
+  const sliders = [
+    ['strength', 'virtualizerStrength', (v) => Math.round(v / 10) + '%'],
+    ['front', 'frontAngle', (v) => '±' + v + '°'],
+    ['rear', 'rearAngle', (v) => '±' + v + '°'],
+    ['rearLevel', 'rearLevel', (v) => v + '%'],
+    ['center', 'centerLevel', (v) => v + '%'],
+    ['room', 'spaceEq', (v) => v + '%'],
+    ['bass', 'bassStrength', (v) => Math.round(v / 10) + '%'],
+    ['spread', 'spread', (v) => '±' + v + '°'],
+  ];
+  function syncUi() {
+    for (const [id, key, f] of sliders) { $(id).value = st[key]; $(id + 'Val').textContent = f(st[key]); }
+    $('roomSize').value = st.reverbPreset; $('roomSizeVal').textContent = ROOM_RT[st.reverbPreset] || '';
+    hp.value = st.hpEq; $('ear').value = st.earSize; $('preset').value = st.presetIndex;
+    const prof = eqProfiles[st.hpEq - 1];
+    $('hpEqInfo').textContent = prof ? `측정 ${prof.source} · 보정 필터 ${prof.filters.length}개 · 프리앰프 ${prof.preampDb} dB. 헤드폰 앱의 EQ 는 평평하게 두세요.`
+      : '쓰는 헤드폰을 고르면 그 헤드폰 고유의 음색을 평평하게 맞춰서 방향 단서가 또렷해집니다.';
+    $('modeSpatial').setAttribute('aria-pressed', String(st.engineMode === 1));
+    $('modeLocal').setAttribute('aria-pressed', String(st.engineMode === 2));
+    $('modeInfo').textContent = MODE_INFO[st.engineMode];
+    $('spreadField').hidden = st.engineMode !== 2;
+    $('centerField').hidden = st.engineMode !== 1;
+    $('on3d').setAttribute('aria-pressed', String(st.enabled)); $('off3d').setAttribute('aria-pressed', String(!st.enabled));
+    drawStage();
+  }
+  for (const [id, key] of sliders) {
+    $(id).addEventListener('input', () => { st[key] = +$(id).value; if (key !== 'spread') st.presetIndex = -1; syncUi(); sendParams(); });
+    $(id).addEventListener('change', save);
+  }
+  $('roomSize').addEventListener('change', () => { st.reverbPreset = +$('roomSize').value; st.presetIndex = -1; syncUi(); sendParams(); save(); });
+  hp.addEventListener('change', () => { st.hpEq = +hp.value; syncUi(); sendParams(); save(); });
+  $('ear').addEventListener('change', () => { st.earSize = +$('ear').value; syncUi(); sendParams(); save(); });
+  $('preset').addEventListener('change', () => {
+    const i = +$('preset').value; st.presetIndex = i;
+    if (i >= 0) Object.assign(st, PRESETS[i].p);
+    syncUi(); sendParams(); save();
+  });
+  const setMode = (m) => { st.engineMode = m; syncUi(); sendParams(); save(); };
+  $('modeSpatial').addEventListener('click', () => setMode(1));
+  $('modeLocal').addEventListener('click', () => setMode(2));
+
+  syncUi();
+  status('준비됨 · 재생을 누르면 엔진이 켜집니다');
+  // 검증용 훅 (페이지 동작에는 영향 없음)
+  window.__spatial3d = { state: () => ({ ctx: ctx && ctx.state, worklet: !!(node && !mainEngine), st }) };
+})();
+</script>
