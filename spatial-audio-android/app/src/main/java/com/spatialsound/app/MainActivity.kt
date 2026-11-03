@@ -65,6 +65,21 @@ class MainActivity : Activity() {
     private lateinit var seekTopAngle: SeekBar
     private lateinit var labelTopElev: TextView
     private lateinit var seekTopElev: SeekBar
+    private lateinit var labelTopRearAngle: TextView
+    private lateinit var seekTopRearAngle: SeekBar
+    private lateinit var labelTopRearElev: TextView
+    private lateinit var seekTopRearElev: SeekBar
+    private lateinit var labelBottom: TextView
+    private lateinit var seekBottom: SeekBar
+    private lateinit var labelBottomAngle: TextView
+    private lateinit var seekBottomAngle: SeekBar
+    private lateinit var labelBottomElev: TextView
+    private lateinit var seekBottomElev: SeekBar
+    private lateinit var labelEnhance: TextView
+    private lateinit var seekEnhance: SeekBar
+    private lateinit var textHeightMore: TextView
+    private lateinit var heightMoreGroup: android.widget.LinearLayout
+    private var heightMoreOpen = false
     private lateinit var switchHeadPitch: Switch
     private lateinit var spinnerHeadSource: Spinner
     private lateinit var switchHeadInvert: Switch
@@ -127,6 +142,20 @@ class MainActivity : Activity() {
         seekTopAngle = findViewById(R.id.seekTopAngle)
         labelTopElev = findViewById(R.id.labelTopElev)
         seekTopElev = findViewById(R.id.seekTopElev)
+        labelTopRearAngle = findViewById(R.id.labelTopRearAngle)
+        seekTopRearAngle = findViewById(R.id.seekTopRearAngle)
+        labelTopRearElev = findViewById(R.id.labelTopRearElev)
+        seekTopRearElev = findViewById(R.id.seekTopRearElev)
+        labelBottom = findViewById(R.id.labelBottom)
+        seekBottom = findViewById(R.id.seekBottom)
+        labelBottomAngle = findViewById(R.id.labelBottomAngle)
+        seekBottomAngle = findViewById(R.id.seekBottomAngle)
+        labelBottomElev = findViewById(R.id.labelBottomElev)
+        seekBottomElev = findViewById(R.id.seekBottomElev)
+        labelEnhance = findViewById(R.id.labelEnhance)
+        seekEnhance = findViewById(R.id.seekEnhance)
+        textHeightMore = findViewById(R.id.textHeightMore)
+        heightMoreGroup = findViewById(R.id.heightMoreGroup)
         switchHeadPitch = findViewById(R.id.switchHeadPitch)
         spinnerHeadSource = findViewById(R.id.spinnerHeadSource)
         spinnerHeadSource.adapter = darkAdapter(HEAD_SOURCES)
@@ -232,15 +261,18 @@ class MainActivity : Activity() {
         seekCenter.progress = settings.centerLevel
         seekElev.progress = settings.frontElev + 20
         seekHeight.progress = settings.heightLevel
-        seekTopAngle.progress = settings.topAngle - SpeakerLayoutView.TOP_ANGLE_MIN
-        seekTopElev.progress = settings.topElev - SpeakerLayoutView.TOP_ELEV_MIN
-        speakerLayout.setTop(settings.topAngle, settings.topElev)
+        seekBottom.progress = settings.bottomLevel
+        seekEnhance.progress = settings.enhance
+        syncPairSeeks()
+        for (i in 0..2) { val (a, e) = pairOf(settings, i); speakerLayout.setHeightPair(i, a, e) }
         switchHeadPitch.isChecked = settings.headPitch
         // 높이 기능은 실측 엔진(공간·정위)에서만
         val measured = settings.engineMode != 0
         val hv = if (measured) android.view.View.VISIBLE else android.view.View.GONE
-        for (v in listOf(labelElev, seekElev, labelHeight, seekHeight, labelTopAngle, seekTopAngle, labelTopElev, seekTopElev)) v.visibility = hv
+        for (v in listOf(labelElev, seekElev, labelHeight, seekHeight, labelBottom, seekBottom, labelEnhance, seekEnhance, textHeightMore)) v.visibility = hv
+        heightMoreGroup.visibility = if (measured && heightMoreOpen) android.view.View.VISIBLE else android.view.View.GONE
         speakerLayout.heightLevel = if (measured) settings.heightLevel.toFloat() else 0f
+        speakerLayout.bottomLevel = if (measured) settings.bottomLevel.toFloat() else 0f
         labelCenter.visibility = if (seven) android.view.View.VISIBLE else android.view.View.GONE
         seekCenter.visibility = labelCenter.visibility
         spinnerHeadSource.setSelection(settings.headSource.coerceIn(0, HEAD_SOURCES.lastIndex))
@@ -275,14 +307,17 @@ class MainActivity : Activity() {
             settings.frontElev < 0 -> "아래 ${-settings.frontElev}°"
             else -> "귀 높이 (0°)"
         } + " — 영상 볼 때 화면 높이에 맞춰 보세요"
-        labelHeight.text = "높이감 (천장 스피커): ${settings.heightLevel}% — 배경음 일부를 머리 위쪽에서"
-        val off = if (settings.heightLevel == 0) " · 높이감 0%라 지금은 꺼짐" else ""
-        labelTopAngle.text = "천장 스피커 방향: ±${settings.topAngle}° (" + when {
-            settings.topAngle < 60 -> "앞쪽 위"
-            settings.topAngle <= 120 -> "머리 옆 위"
-            else -> "뒤쪽 위"
-        } + ")$off"
-        labelTopElev.text = "천장 스피커 높이: 위 ${settings.topElev}° — 배치도의 ▲를 끌어도 됩니다 (안쪽일수록 높이)"
+        labelHeight.text = "▲ 천장 스피커 4개 (앞 2·뒤 2): ${settings.heightLevel}% — 배경음 일부를 머리 위쪽에서"
+        labelBottom.text = "▼ 바닥 스피커 2개: ${settings.bottomLevel}% — 배경음 일부를 아래쪽에서 (0이면 없음)"
+        labelEnhance.text = "✨ 3D 강조: ${settings.enhance}% — 뒤는 더 뒤처럼, 위·아래는 더 위·아래처럼 (0 = 측정 그대로)"
+        val topOff = if (settings.heightLevel == 0) " · 지금 꺼짐 (천장 0%)" else ""
+        val botOff = if (settings.bottomLevel == 0) " · 지금 꺼짐 (바닥 0%)" else ""
+        labelTopAngle.text = "천장 앞 ▲ 방향: ±${settings.topAngle}° (0 = 정면, 90 = 머리 옆)$topOff"
+        labelTopElev.text = "천장 앞 ▲ 높이: 위 ${settings.topElev}°"
+        labelTopRearAngle.text = "천장 뒤 ▲ 방향: ±${settings.topRearAngle}° (90 = 머리 옆, 180 = 바로 뒤)$topOff"
+        labelTopRearElev.text = "천장 뒤 ▲ 높이: 위 ${settings.topRearElev}°"
+        labelBottomAngle.text = "바닥 ▼ 방향: ±${settings.bottomAngle}° (0 = 정면, 180 = 바로 뒤)$botOff"
+        labelBottomElev.text = "바닥 ▼ 높이: 아래 ${-settings.bottomElev}°"
         labelBass.text = "저음 보강: ${settings.bassStrength / 10}%"
         labelReverb.text = if (settings.strongMode) "잔향 (공간 크기)"
         else "잔향 (공간 크기) — 기본 모드에선 세션을 알려주는 음악앱에서만 적용"
@@ -356,6 +391,12 @@ class MainActivity : Activity() {
                     frontElev = p0.elev,
                     topAngle = p0.topAngle,
                     topElev = p0.topElev,
+                    topRearAngle = p0.topRearAngle,
+                    topRearElev = p0.topRearElev,
+                    bottomLevel = p0.bottom,
+                    bottomAngle = p0.bottomAngle,
+                    bottomElev = p0.bottomElev,
+                    enhance = p0.enhance,
                 )
                 commit(next)
                 bindUi()
@@ -416,16 +457,30 @@ class MainActivity : Activity() {
             speakerLayout.heightLevel = v.toFloat()
             settings.copy(heightLevel = v, presetIndex = CUSTOM)
         })
-        seekTopAngle.setOnSeekBarChangeListener(seekListener { v ->
-            val a = v + SpeakerLayoutView.TOP_ANGLE_MIN
-            speakerLayout.setTop(a, settings.topElev)
-            settings.copy(topAngle = a, presetIndex = CUSTOM)
+        seekBottom.setOnSeekBarChangeListener(seekListener { v ->
+            speakerLayout.bottomLevel = v.toFloat()
+            settings.copy(bottomLevel = v, presetIndex = CUSTOM)
         })
-        seekTopElev.setOnSeekBarChangeListener(seekListener { v ->
-            val e = v + SpeakerLayoutView.TOP_ELEV_MIN
-            speakerLayout.setTop(settings.topAngle, e)
-            settings.copy(topElev = e, presetIndex = CUSTOM)
+        seekEnhance.setOnSeekBarChangeListener(seekListener { v -> settings.copy(enhance = v, presetIndex = CUSTOM) })
+        textHeightMore.setOnClickListener {
+            heightMoreOpen = !heightMoreOpen
+            heightMoreGroup.visibility = if (heightMoreOpen) android.view.View.VISIBLE else android.view.View.GONE
+            textHeightMore.text = "📐 천장·바닥 스피커 위치 세부 조절 " + if (heightMoreOpen) "▾" else "▸"
+        }
+        // 높이 스피커 위치 슬라이더: (쌍 0 천장 앞 / 1 천장 뒤 / 2 바닥, 각도인지, 슬라이더 0 이 나타내는 값)
+        fun pairSeek(sb: SeekBar, which: Int, isAngle: Boolean, offset: Int) = sb.setOnSeekBarChangeListener(seekListener { v ->
+            val value = v + offset
+            val next = if (isAngle) withPair(settings, which, value, null) else withPair(settings, which, null, value)
+            val (a, e) = pairOf(next, which)
+            speakerLayout.setHeightPair(which, a, e)
+            next.copy(presetIndex = CUSTOM)
         })
+        pairSeek(seekTopAngle, 0, true, SpeakerLayoutView.TOP_ANGLE_MIN)
+        pairSeek(seekTopElev, 0, false, SpeakerLayoutView.TOP_ELEV_MIN)
+        pairSeek(seekTopRearAngle, 1, true, SpeakerLayoutView.TOP_REAR_MIN)
+        pairSeek(seekTopRearElev, 1, false, SpeakerLayoutView.TOP_ELEV_MIN)
+        pairSeek(seekBottomAngle, 2, true, SpeakerLayoutView.BOTTOM_ANGLE_MIN)
+        pairSeek(seekBottomElev, 2, false, SpeakerLayoutView.BOTTOM_ELEV_MIN)
         switchHeadPitch.setOnCheckedChangeListener { _, checked ->
             if (!binding) commit(settings.copy(headPitch = checked))
         }
@@ -454,13 +509,12 @@ class MainActivity : Activity() {
                 Strong3DService.instance?.applySettings(settings)
             }
         }
-        // 천장 스피커 끌기: 방향 = 좌우 각도, 머리 쪽으로 = 더 높이
-        speakerLayout.onTopChange = { a, e, done ->
-            settings = settings.copy(topAngle = a, topElev = e, presetIndex = CUSTOM)
+        // 천장·바닥 스피커 끌기: 방향 = 좌우 각도, 머리 쪽으로 = 더 높이 (실선 원 바깥 = 아래)
+        speakerLayout.onHeightChange = { which, a, e, done ->
+            settings = withPair(settings, which, a, e).copy(presetIndex = CUSTOM)
             updateLabels()
             binding = true
-            seekTopAngle.progress = a - SpeakerLayoutView.TOP_ANGLE_MIN
-            seekTopElev.progress = e - SpeakerLayoutView.TOP_ELEV_MIN
+            syncPairSeeks()
             binding = false
             if (done) {
                 commit(settings)
@@ -483,6 +537,28 @@ class MainActivity : Activity() {
             Toast.makeText(this, "헤드폰으로 들어보세요: 앞 → 오른쪽 → 뒤 → 왼쪽", Toast.LENGTH_LONG).show()
         }
         findViewById<Button>(R.id.buttonSystem).setOnClickListener { openSystemSpatialSettings() }
+    }
+
+    /** 높이 스피커 쌍 (0 천장 앞, 1 천장 뒤, 2 바닥) 의 (각도, 높이) */
+    private fun pairOf(s: SpatialSettings, which: Int) = when (which) {
+        0 -> s.topAngle to s.topElev
+        1 -> s.topRearAngle to s.topRearElev
+        else -> s.bottomAngle to s.bottomElev
+    }
+
+    private fun withPair(s: SpatialSettings, which: Int, angle: Int?, elev: Int?): SpatialSettings = when (which) {
+        0 -> s.copy(topAngle = angle ?: s.topAngle, topElev = elev ?: s.topElev)
+        1 -> s.copy(topRearAngle = angle ?: s.topRearAngle, topRearElev = elev ?: s.topRearElev)
+        else -> s.copy(bottomAngle = angle ?: s.bottomAngle, bottomElev = elev ?: s.bottomElev)
+    }
+
+    private fun syncPairSeeks() {
+        seekTopAngle.progress = settings.topAngle - SpeakerLayoutView.TOP_ANGLE_MIN
+        seekTopElev.progress = settings.topElev - SpeakerLayoutView.TOP_ELEV_MIN
+        seekTopRearAngle.progress = settings.topRearAngle - SpeakerLayoutView.TOP_REAR_MIN
+        seekTopRearElev.progress = settings.topRearElev - SpeakerLayoutView.TOP_ELEV_MIN
+        seekBottomAngle.progress = settings.bottomAngle - SpeakerLayoutView.BOTTOM_ANGLE_MIN
+        seekBottomElev.progress = settings.bottomElev - SpeakerLayoutView.BOTTOM_ELEV_MIN
     }
 
     private fun seekListener(update: (Int) -> SpatialSettings) = object : SeekBar.OnSeekBarChangeListener {

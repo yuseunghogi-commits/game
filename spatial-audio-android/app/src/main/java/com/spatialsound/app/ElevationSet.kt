@@ -104,9 +104,10 @@ class ElevationSet private constructor(
     /**
      * 높이 단서 게인(배율, 0위상): 소리가 (azS, elS)에서 올 때 MIT 크기 ÷ 같은 좌우 각도 수평 방향(azEq) MIT 크기.
      * fs·n 은 엔진의 STFT 크기. 400Hz 아래는 단서 없음(compact 세트가 저음에서 부정확), ±6dB 로 제한.
+     * scale: 3D 강조 배율 (1 = 그대로, 2 = 단서 2배, 이때 한계도 ±9dB 까지)
      */
     @Synchronized
-    fun cueGain(azS: Double, elS: Double, azEq: Double, ear: Int, fs: Int, n: Int, out: FloatArray) {
+    fun cueGain(azS: Double, elS: Double, azEq: Double, ear: Int, fs: Int, n: Int, out: FloatArray, scale: Float = 1f) {
         val m = magDb ?: run { out.fill(1f); return }
         val bins = n / 2 + 1
         val key = fs.toLong() * 100000 + n
@@ -118,6 +119,7 @@ class ElevationSet private constructor(
         }
         val wu = weights(azS, elS, ear)
         val wf = weights(azEq, 0.0, ear)
+        val lim = min(MAX_DB * scale, MAX_DB_ENH)
         val lo = 400.0 * n / fs; val ramp = 800.0 * n / fs
         for (k in 0 until bins) {
             if (k < lo) { out[k] = 1f; continue }
@@ -125,7 +127,7 @@ class ElevationSet private constructor(
             val up = dbAt(m, wu, b0) * (1 - fr) + dbAt(m, wu, b0 + 1) * fr
             val flat = dbAt(m, wf, b0) * (1 - fr) + dbAt(m, wf, b0 + 1) * fr
             // 두 측정(귀 크기 다름)의 차이로 특정 주파수가 튀지 않게 ±6dB 로 제한
-            var g = (up - flat).coerceIn(-MAX_DB, MAX_DB)
+            var g = ((up - flat) * scale).coerceIn(-lim, lim)
             if (k < ramp) g *= ((k - lo) / (ramp - lo)).toFloat() // 400~800Hz 서서히
             out[k] = exp(g * LN10_20)
         }
@@ -168,5 +170,6 @@ class ElevationSet private constructor(
 
         private const val LN10_20 = 0.11512925f // ln(10)/20 : dB → 배율
         private const val MAX_DB = 6f
+        private const val MAX_DB_ENH = 9f
     }
 }

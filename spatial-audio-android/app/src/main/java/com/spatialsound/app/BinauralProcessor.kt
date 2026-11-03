@@ -88,6 +88,12 @@ class BinauralProcessor(private val fs: Int) {
     private var heightLevel = 0.0
     private var topAz = HrtfRenderer.HEIGHT_AZ
     private var topEl = HrtfRenderer.HEIGHT_EL
+    private var topRearAz = HrtfRenderer.TOP_REAR_AZ
+    private var topRearEl = HrtfRenderer.TOP_REAR_EL
+    private var bottomLevel = 0.0
+    private var bottomAz = HrtfRenderer.BOTTOM_AZ
+    private var bottomEl = HrtfRenderer.BOTTOM_EL
+    private var enhance = 0.0
 
     private var appliedYaw = 0.0
     private var oldSources: Array<Src>? = null
@@ -354,14 +360,21 @@ class BinauralProcessor(private val fs: Int) {
             centerLevel = s.centerLevel / 100.0
             frontElev = s.frontElev.toDouble().coerceIn(-30.0, 45.0)
             heightLevel = s.heightLevel / 100.0
-            topAz = s.topAngle.toDouble().coerceIn(20.0, 160.0)
+            topAz = s.topAngle.toDouble().coerceIn(0.0, 90.0)
             topEl = s.topElev.toDouble().coerceIn(25.0, 89.0)
+            topRearAz = s.topRearAngle.toDouble().coerceIn(90.0, 180.0)
+            topRearEl = s.topRearElev.toDouble().coerceIn(25.0, 89.0)
+            bottomLevel = s.bottomLevel / 100.0
+            bottomAz = s.bottomAngle.toDouble().coerceIn(0.0, 180.0)
+            bottomEl = s.bottomElev.toDouble().coerceIn(-45.0, -5.0)
+            enhance = s.enhance / 100.0
             earSize = s.earSize
             if (s.hpEq != hpEqIdx) {
                 hpEqIdx = s.hpEq
                 hpEq = HeadphoneEq.profiles.getOrNull(s.hpEq - 1)?.let { HeadphoneEq.Chain(it, fs) }
             }
             renderer?.setEarSize(earSize)
+            renderer?.setEnhance(enhance)
             ensureRenderer()
             rebuildWithFade()
         }
@@ -377,6 +390,7 @@ class BinauralProcessor(private val fs: Int) {
         if (wantLatency != latency) {
             latency = wantLatency
             rnd?.setEarSize(earSize)
+            rnd?.setEnhance(enhance)
             rebuild()
             oldSources = null
         }
@@ -390,6 +404,11 @@ class BinauralProcessor(private val fs: Int) {
             it.heightLevel = heightLevel
             it.topAz = topAz
             it.topEl = topEl
+            it.topRearAz = topRearAz
+            it.topRearEl = topRearEl
+            it.bottomLevel = bottomLevel
+            it.bottomAz = bottomAz
+            it.bottomEl = bottomEl
             it.headPitch = headPitchDeg
             it.spread = spreadDeg
             it.headYaw = headYawDeg

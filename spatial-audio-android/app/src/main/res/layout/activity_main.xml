@@ -181,8 +181,18 @@
             </LinearLayout>
 
             <TextView
+                android:id="@+id/labelEnhance"
+                style="@style/SliderLabel" />
+
+            <SeekBar
+                android:id="@+id/seekEnhance"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100" />
+
+            <TextView
                 style="@style/SliderLabel"
-                android:text="🔊 스피커 배치 — 동그라미를 끌어서 소리 방향을 바꾸세요 (🟣 앞 / 🔵 뒤)" />
+                android:text="🔊 스피커 배치 — 끌어서 옮기세요 (🟣 앞 / 🔵 뒤 / ▲ 천장 / ▼ 바닥). 안쪽일수록 높고, 실선 원 바깥은 아래" />
 
             <com.spatialsound.app.SpeakerLayoutView
                 android:id="@+id/speakerLayout"
@@ -252,24 +262,90 @@
                 android:max="100" />
 
             <TextView
-                android:id="@+id/labelTopAngle"
+                android:id="@+id/labelBottom"
                 style="@style/SliderLabel" />
 
             <SeekBar
-                android:id="@+id/seekTopAngle"
+                android:id="@+id/seekBottom"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:max="140" />
+                android:max="100" />
 
             <TextView
-                android:id="@+id/labelTopElev"
-                style="@style/SliderLabel" />
+                android:id="@+id/textHeightMore"
+                style="@style/SliderLabel"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:textColor="#FF9E8CFF"
+                android:text="📐 천장·바닥 스피커 위치 세부 조절 ▸" />
 
-            <SeekBar
-                android:id="@+id/seekTopElev"
+            <LinearLayout
+                android:id="@+id/heightMoreGroup"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:max="55" />
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/labelTopAngle"
+                    style="@style/SliderLabel" />
+
+                <SeekBar
+                    android:id="@+id/seekTopAngle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:max="90" />
+
+                <TextView
+                    android:id="@+id/labelTopElev"
+                    style="@style/SliderLabel" />
+
+                <SeekBar
+                    android:id="@+id/seekTopElev"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:max="55" />
+
+                <TextView
+                    android:id="@+id/labelTopRearAngle"
+                    style="@style/SliderLabel" />
+
+                <SeekBar
+                    android:id="@+id/seekTopRearAngle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:max="90" />
+
+                <TextView
+                    android:id="@+id/labelTopRearElev"
+                    style="@style/SliderLabel" />
+
+                <SeekBar
+                    android:id="@+id/seekTopRearElev"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:max="55" />
+
+                <TextView
+                    android:id="@+id/labelBottomAngle"
+                    style="@style/SliderLabel" />
+
+                <SeekBar
+                    android:id="@+id/seekBottomAngle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:max="180" />
+
+                <TextView
+                    android:id="@+id/labelBottomElev"
+                    style="@style/SliderLabel" />
+
+                <SeekBar
+                    android:id="@+id/seekBottomElev"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:max="30" />
+            </LinearLayout>
         </LinearLayout>
 
         <TextView

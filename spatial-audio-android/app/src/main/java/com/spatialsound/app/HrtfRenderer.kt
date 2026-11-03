@@ -3,8 +3,12 @@ package com.spatialsound.app
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.exp
+import kotlin.math.floor
+import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -22,6 +26,11 @@ import kotlin.math.sqrt
  *      배경음은 옆/뒤로 분리.
  *
  *  ■ 방 버스 — 벽 반사음과 잔향을 45° 간격 8방향으로 받아 실측 HRTF 로 들려준다 (BinauralProcessor 가 채움).
+ *
+ *  ■ 위·아래 — 배경음 일부를 천장 스피커 4개(앞 2·뒤 2)와 바닥 스피커 2개로.
+ *
+ *  ■ 3D 강조 — 같은 좌우 각도의 앞/뒤 짝 방향과 비교한 주파수 모양 차이(귓바퀴 단서)를 키워
+ *      뒤쪽은 더 뒤처럼, 위·아래는 더 위·아래처럼 (앞쪽 음색은 조금만 바뀌게 비대칭으로).
  *
  * 모든 방향은 headYaw 만큼 반대로 돌려서 렌더링 (헤드 트래킹).
  * 지연(latency) = [WIN] 샘플 (48kHz 에서 21ms).
@@ -46,9 +55,17 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
     @Volatile var frontElev = 0.0
     /** 배경음 중 천장 스피커로 보낼 비율 (0..1) */
     @Volatile var heightLevel = 0.0
-    /** 천장 스피커 위치: 좌우 각도(±, 30=앞쪽…90=머리 옆 위…150=뒤쪽)와 높이(도) */
+    /** 천장 앞 스피커 위치: 좌우 각도(±, 0=정면…90=머리 옆…180=뒤)와 높이(도) */
     @Volatile var topAz = HEIGHT_AZ
     @Volatile var topEl = HEIGHT_EL
+    /** 천장 뒤 스피커 위치 */
+    @Volatile var topRearAz = TOP_REAR_AZ
+    @Volatile var topRearEl = TOP_REAR_EL
+    /** 배경음 중 바닥 스피커로 보낼 비율 (0..1) */
+    @Volatile var bottomLevel = 0.0
+    /** 바닥 스피커 위치: 좌우 각도(±)와 높이(도, 아래 −) */
+    @Volatile var bottomAz = BOTTOM_AZ
+    @Volatile var bottomEl = BOTTOM_EL
 
     // 프레임마다 고정해서 쓰는 값 (프레임 도중 바뀌어도 한 프레임 안에서는 일관되게)
     private var yawF = 0.0
@@ -61,22 +78,97 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
     private val fft = Fft(N)
     private val bins = N / 2 + 1
 
-    // HRTF 스펙트럼 표: [dir][ear] → re/im (bins)
-    private class Table(val dirs: Int, val step: Int, val re: Array<Array<FloatArray>>, val im: Array<Array<FloatArray>>)
+    // HRTF 스펙트럼 표: [dir][ear] → re/im (bins). enh = 3D 강조 (α − 1)
+    private class Table(val dirs: Int, val step: Int, val re: Array<Array<FloatArray>>, val im: Array<Array<FloatArray>>, val enh: Float = 0f)
+    /** 귀 크기별 원본 표 + 방향마다 "앞/뒤 짝 방향과의 크기 차이(dB, 1/2 옥타브 평활)" — 3D 강조를 FFT 없이 다시 계산하려고 보관 */
+    private class Base(val t: Table, val diff: Array<Array<FloatArray>>)
 
-    @Volatile private var table: Table = buildTable(base.adapted(fs, 1.0))
     private val baseSet = base
+    /** 3D 강조 적용 범위: 700Hz 아래는 그대로, 1.4kHz 까지 서서히 (앞뒤 단서는 고음 쪽 귓바퀴 특성) */
+    private val enhRamp = FloatArray(bins) { k -> ((k * fs.toDouble() / N - 700.0) / 700.0).coerceIn(0.0, 1.0).toFloat() }
     @Volatile private var earIdx = 2
+    @Volatile private var enhanceAmt = 0.0
+    private var baseTab: Base = buildBase(base.adapted(fs, 1.0))
+    private var baseEar = 2
+    @Volatile private var table: Table = baseTab.t
 
     /** 귀 맞춤 단계 변경 (백그라운드에서 다시 계산 후 교체) */
     fun setEarSize(idx: Int) {
         val i = idx.coerceIn(0, HrirSet.EAR_FACTORS.lastIndex)
         if (i == earIdx) return
         earIdx = i
-        Thread({
-            val t = buildTable(baseSet.adapted(fs, HrirSet.EAR_FACTORS[i]))
-            if (earIdx == i) table = t
-        }, "hrtf-table").apply { isDaemon = true; start() }
+        requestRebuild()
+    }
+
+    /** 3D 강조 0..1 (α = 1 + amount): 0 이면 실측 그대로 */
+    fun setEnhance(amount: Double) {
+        val a = amount.coerceIn(0.0, 1.0)
+        if (a == enhanceAmt) return
+        enhanceAmt = a
+        requestRebuild()
+    }
+
+    // 표 다시 만들기: 한 스레드에서 차례로, 밀린 요청은 마지막 것만 계산
+    private val rebuildSeq = java.util.concurrent.atomic.AtomicInteger()
+    private val rebuilder = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "hrtf-table").apply { isDaemon = true } }
+
+    private fun requestRebuild() {
+        val my = rebuildSeq.incrementAndGet()
+        rebuilder.execute {
+            if (my != rebuildSeq.get()) return@execute
+            val e = earIdx; val a = enhanceAmt
+            var b = baseTab
+            if (baseEar != e) { b = buildBase(baseSet.adapted(fs, HrirSet.EAR_FACTORS[e])); baseTab = b; baseEar = e }
+            val t = enhanced(b, a)
+            if (my == rebuildSeq.get()) table = t
+        }
+    }
+
+    private fun buildBase(set: HrirSet): Base {
+        val t = buildTable(set)
+        val sm = Array(t.dirs) { d -> Array(2) { e -> smoothDb(t.re[d][e], t.im[d][e]) } }
+        val diff = Array(t.dirs) { d ->
+            // 앞뒤 짝: θ ↔ 180° − θ (좌우 시간차·음량차가 같고 귓바퀴 단서만 다름)
+            val p = (((180 - d * t.step) % 360 + 360) % 360 / t.step) % t.dirs
+            Array(2) { e -> FloatArray(bins) { k -> sm[d][e][k] - sm[p][e][k] } }
+        }
+        return Base(t, diff)
+    }
+
+    /** 크기(dB)를 1/2 옥타브 폭으로 평활 */
+    private fun smoothDb(re: FloatArray, im: FloatArray): FloatArray {
+        val c = DoubleArray(bins + 1)
+        for (k in 0 until bins) c[k + 1] = c[k] + 10.0 * log10(re[k].toDouble() * re[k] + im[k].toDouble() * im[k] + 1e-20)
+        val r = 2.0.pow(0.25)
+        return FloatArray(bins) { k ->
+            val lo = max(0, floor(k / r).toInt()); val hi = min(bins - 1, max(k, (k * r).toInt()))
+            ((c[hi + 1] - c[lo]) / (hi - lo + 1)).toFloat()
+        }
+    }
+
+    /**
+     * 3D 강조: 방향마다 앞/뒤 짝과의 크기 차이 D 를 (α−1)배 더 벌린다 (0위상 게인 → 시간차는 그대로).
+     * 뒤쪽 방향이 차이의 3/4, 앞쪽이 1/4 을 맡아 → 앞(보컬) 음색은 조금만 바뀌고 뒤는 더 뒤처럼.
+     */
+    private fun enhanced(b: Base, amount: Double): Table {
+        val t = b.t
+        if (amount <= 0.0) return t
+        val a = amount.toFloat()
+        val re = Array(t.dirs) { Array(2) { FloatArray(bins) } }
+        val im = Array(t.dirs) { Array(2) { FloatArray(bins) } }
+        for (d in 0 until t.dirs) {
+            val back = cos(Math.toRadians(d * t.step.toDouble())) < -1e-9
+            val c = a * (if (back) ENH_BACK else ENH_FRONT)
+            for (e in 0..1) {
+                val df = b.diff[d][e]; val sr = t.re[d][e]; val si = t.im[d][e]; val dr = re[d][e]; val di = im[d][e]
+                for (k in 0 until bins) {
+                    val g = (c * df[k]).coerceIn(-ENH_MAX_DB, ENH_MAX_DB) * enhRamp[k]
+                    val m = exp(g * LN10_20)
+                    dr[k] = sr[k] * m; di[k] = si[k] * m
+                }
+            }
+        }
+        return Table(t.dirs, t.step, re, im, a)
     }
 
     private fun buildTable(set: HrirSet): Table {
@@ -145,6 +237,8 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
     private val dSide = (0.004 * fs).roundToInt().coerceAtMost(MAX_DELAY)
     private val dRear = (0.009 * fs).roundToInt().coerceAtMost(MAX_DELAY)
     private val dTop = (0.006 * fs).roundToInt().coerceAtMost(MAX_DELAY)
+    private val dTopRear = (0.0105 * fs).roundToInt().coerceAtMost(MAX_DELAY)
+    private val dBottom = (0.0025 * fs).roundToInt().coerceAtMost(MAX_DELAY)
 
     /**
      * 샘플 하나 입력 → [LATENCY] 샘플 전의 처리 결과를 out[0], out[1] 에.
@@ -277,9 +371,11 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         val sp = Spec(t.re[d][0].copyOf(), t.im[d][0].copyOf(), t.re[d][1].copyOf(), t.im[d][1].copyOf())
         val ev = elev
         if (ev != null && ei != 0) {
-            ev.cueGain(azQ, elQ, azEq, 0, fs, N, gainTmp)
+            // 3D 강조: 위·아래 단서도 α 배
+            val sc = 1f + t.enh
+            ev.cueGain(azQ, elQ, azEq, 0, fs, N, gainTmp, sc)
             for (k in 0 until bins) { sp.lr[k] *= gainTmp[k]; sp.li[k] *= gainTmp[k] }
-            ev.cueGain(azQ, elQ, azEq, 1, fs, N, gainTmp)
+            ev.cueGain(azQ, elQ, azEq, 1, fs, N, gainTmp, sc)
             for (k in 0 until bins) { sp.rr[k] *= gainTmp[k]; sp.ri[k] *= gainTmp[k] }
         }
         specCache[key] = sp
@@ -331,10 +427,12 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         val cl = centerLevel.toFloat()
         val r = rearLevel.toFloat().coerceIn(0f, 1f)
         val h = heightLevel.toFloat().coerceIn(0f, 1f)
-        // 배경음 에너지 나누기: 앞 (1-r)(1-h), 옆·뒤 r(1-h), 천장 h
-        val frontAmb = sqrt((1f - r) * (1f - h))
-        val surAmb = sqrt(r * (1f - h))
-        val topAmb = sqrt(h)
+        val bt = bottomLevel.toFloat().coerceIn(0f, 1f)
+        // 배경음 에너지 나누기: 앞 (1-r)(1-h)(1-b), 옆·뒤 r(1-h)(1-b), 천장 h(1-b), 바닥 b
+        val frontAmb = sqrt((1f - r) * (1f - h) * (1f - bt))
+        val surAmb = sqrt(r * (1f - h) * (1f - bt))
+        val topAmb = sqrt(h * (1f - bt))
+        val botAmb = sqrt(bt)
         for (k in 0 until bins) {
             val lr = xLr[k]; val li = xLi[k]; val rr = xRr[k]; val ri = xRi[k]
             if (k < lowBin) {
@@ -368,18 +466,18 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         for (k in lowBin until bins) {
             eF += (fLr[k] * fLr[k] + fLi[k] * fLi[k] + fRr[k] * fRr[k] + fRi[k] * fRi[k]).toDouble()
             eC += (cRr[k] * cRr[k] + cIi[k] * cIi[k]).toDouble()
-            eA += (aLr[k] * aLr[k] + aLi[k] * aLi[k] + aRr[k] * aRr[k] + aRi[k] * aRi[k]).toDouble() * (surAmb * surAmb + topAmb * topAmb)
+            eA += (aLr[k] * aLr[k] + aLi[k] * aLi[k] + aRr[k] * aRr[k] + aRi[k] * aRi[k]).toDouble() * (surAmb * surAmb + topAmb * topAmb + botAmb * botAmb)
         }
         routedEnergy[0] = eF; routedEnergy[1] = eC; routedEnergy[2] = eA
         val f = frontAngle
         addSource(t, fLr, fLi, -f, elevF, 1f, 0)
         addSource(t, fRr, fRi, f, elevF, 1f, 0)
         if (cl > 0.001f) addSource(t, cRr, cIi, 0.0, elevF, 1f, 0)
-        addAmbience(t, surAmb, topAmb)
+        addAmbience(t, surAmb, topAmb, botAmb)
     }
 
-    /** 배경음 → 옆(±95°)·뒤(±rear)·천장(±topAz, 위 topEl) — 서로 다른 지연으로 디코릴레이션 */
-    private fun addAmbience(t: Table, surAmb: Float, topAmb: Float) {
+    /** 배경음 → 옆(±95°)·뒤(±rear)·천장 앞/뒤·바닥 — 서로 다른 지연으로 디코릴레이션 */
+    private fun addAmbience(t: Table, surAmb: Float, topAmb: Float, botAmb: Float) {
         if (surAmb > 0.0005f) {
             addSource(t, aLr, aLi, -SIDE_ANGLE, 0.0, SIDE_SHARE * surAmb, dSide)
             addSource(t, aRr, aRi, SIDE_ANGLE, 0.0, SIDE_SHARE * surAmb, dSide)
@@ -387,9 +485,18 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
             addSource(t, aRr, aRi, rearAngle, 0.0, REAR_SHARE * surAmb, dRear)
         }
         if (topAmb > 0.0005f) {
-            val az = topAz; val el = topEl
-            addSource(t, aLr, aLi, -az, el, topAmb, dTop)
-            addSource(t, aRr, aRi, az, el, topAmb, dTop)
+            // 천장 앞·뒤에 에너지 반씩
+            val g = topAmb * HALF
+            val az = topAz; val el = topEl; val raz = topRearAz; val rel = topRearEl
+            addSource(t, aLr, aLi, -az, el, g, dTop)
+            addSource(t, aRr, aRi, az, el, g, dTop)
+            addSource(t, aLr, aLi, -raz, rel, g, dTopRear)
+            addSource(t, aRr, aRi, raz, rel, g, dTopRear)
+        }
+        if (botAmb > 0.0005f) {
+            val az = bottomAz; val el = bottomEl
+            addSource(t, aLr, aLi, -az, el, botAmb, dBottom)
+            addSource(t, aRr, aRi, az, el, botAmb, dBottom)
         }
     }
 
@@ -397,9 +504,11 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         val spr = spread
         val r = rearLevel.toFloat().coerceIn(0f, 1f)
         val h = heightLevel.toFloat().coerceIn(0f, 1f)
-        val frontAmb = sqrt((1f - r) * (1f - h))
-        val surAmb = sqrt(r * (1f - h))
-        val topAmb = sqrt(h)
+        val bt = bottomLevel.toFloat().coerceIn(0f, 1f)
+        val frontAmb = sqrt((1f - r) * (1f - h) * (1f - bt))
+        val surAmb = sqrt(r * (1f - h) * (1f - bt))
+        val topAmb = sqrt(h * (1f - bt))
+        val botAmb = sqrt(bt)
         val fast = elevF == 0.0 && pitchF == 0.0
         if (!fast) java.util.Arrays.fill(rowSpec, null)
         for (k in 0 until bins) {
@@ -439,7 +548,7 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         }
         addSource(t, fLr, fLi, -frontAngle, elevF, 1f, 0)
         addSource(t, fRr, fRi, frontAngle, elevF, 1f, 0)
-        addAmbience(t, surAmb, topAmb)
+        addAmbience(t, surAmb, topAmb, botAmb)
     }
 
     companion object {
@@ -453,9 +562,21 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         const val NB = RoomModel.BUSES
         val BUS_ANGLES = DoubleArray(NB) { it * 360.0 / NB }
         const val SIDE_ANGLE = 95.0
-        /** 천장 스피커 기본 위치: 좌우 ±70°, 위 55° */
-        const val HEIGHT_AZ = 70.0
-        const val HEIGHT_EL = 55.0
+        /** 천장 앞 스피커 기본 위치: 좌우 ±45°, 위 45° (7.1.4 배치) */
+        const val HEIGHT_AZ = 45.0
+        const val HEIGHT_EL = 45.0
+        /** 천장 뒤 스피커 기본 위치: 좌우 ±135°, 위 45° */
+        const val TOP_REAR_AZ = 135.0
+        const val TOP_REAR_EL = 45.0
+        /** 바닥 스피커 기본 위치: 좌우 ±45°, 아래 30° */
+        const val BOTTOM_AZ = 45.0
+        const val BOTTOM_EL = -30.0
+        /** 3D 강조: 앞/뒤 짝과의 차이를 뒤쪽이 3/4, 앞쪽이 1/4 맡음. 최대 ±10dB */
+        private const val ENH_BACK = 0.75f
+        private const val ENH_FRONT = 0.25f
+        private const val ENH_MAX_DB = 10f
+        private const val LN10_20 = 0.11512925f
+        private val HALF = sqrt(0.5f)
         private val SIDE_SHARE = sqrt(0.6f)
         private val REAR_SHARE = sqrt(0.4f)
         private val SQRT2 = sqrt(2f)

@@ -79,9 +79,20 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
     private val lCenter = JLabel()
     private val sElev = slider(-20, 40, settings.frontElev)
     private val sHeight = slider(0, 100, settings.heightLevel)
-    private val sTopAz = slider(20, 160, settings.topAngle)
+    private val sTopAz = slider(0, 90, settings.topAngle)
     private val sTopEl = slider(30, 85, settings.topElev)
+    private val sTopRearAz = slider(90, 180, settings.topRearAngle)
+    private val sTopRearEl = slider(30, 85, settings.topRearElev)
+    private val sBottom = slider(0, 100, settings.bottomLevel)
+    private val sBottomAz = slider(0, 180, settings.bottomAngle)
+    private val sBottomEl = slider(-40, -10, settings.bottomElev)
+    private val sEnhance = slider(0, 100, settings.enhance)
     private val lElev = JLabel(); private val lHeight = JLabel(); private val lTopAz = JLabel(); private val lTopEl = JLabel()
+    private val lTopRearAz = JLabel(); private val lTopRearEl = JLabel(); private val lBottom = JLabel()
+    private val lBottomAz = JLabel(); private val lBottomEl = JLabel(); private val lEnhance = JLabel()
+    /** 실측 엔진에서만 보이는 높이·3D 강조 조절 */
+    private val measuredOnly: List<javax.swing.JComponent> get() = listOf(lElev, sElev, lHeight, sHeight, lTopAz, sTopAz, lTopEl, sTopEl, lTopRearAz, sTopRearAz,
+        lTopRearEl, sTopRearEl, lBottom, sBottom, lBottomAz, sBottomAz, lBottomEl, sBottomEl, lEnhance, sEnhance)
     private val lFront = JLabel(); private val lRearAngle = JLabel(); private val lRearLevel = JLabel()
     private val lStrength = JLabel(); private val lWidth = JLabel(); private val lRoom = JLabel(); private val lBass = JLabel()
     private val status = JLabel(" ")
@@ -122,6 +133,7 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         row(engineBox)
         row(lSpread); row(sSpread)
         row(JLabel("👂 귀 맞춤 (앞/뒤가 헷갈리면 단계를 바꿔 보세요)")); row(earBox)
+        row(lEnhance); row(sEnhance)
 
         row(title("③ 소리 조절"))
         row(JLabel("프리셋")); row(presetBox)
@@ -134,6 +146,11 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         row(lHeight); row(sHeight)
         row(lTopAz); row(sTopAz)
         row(lTopEl); row(sTopEl)
+        row(lTopRearAz); row(sTopRearAz)
+        row(lTopRearEl); row(sTopRearEl)
+        row(lBottom); row(sBottom)
+        row(lBottomAz); row(sBottomAz)
+        row(lBottomEl); row(sBottomEl)
         row(lWidth); row(sWidth)
         row(lRoom); row(sRoom)
         row(JLabel("잔향 (방 크기)")); row(reverbBox)
@@ -163,11 +180,15 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
                 sCenter.value = p.centerLevel
                 sElev.value = p.frontElev; sHeight.value = p.heightLevel
                 sTopAz.value = p.topAngle; sTopEl.value = p.topElev
+                sTopRearAz.value = p.topRearAngle; sTopRearEl.value = p.topRearElev
+                sBottom.value = p.bottomLevel; sBottomAz.value = p.bottomAngle; sBottomEl.value = p.bottomElev
+                sEnhance.value = p.enhance
                 applyingPreset = false
                 changed()
             }
         }
-        listOf(sStrength, sWidth, sRoom, sBass, sFront, sRearAngle, sRearLevel, sCenter, sElev, sHeight, sTopAz, sTopEl).forEach { s -> s.addChangeListener { changed() } }
+        listOf(sStrength, sWidth, sRoom, sBass, sFront, sRearAngle, sRearLevel, sCenter, sElev, sHeight, sTopAz, sTopEl, sTopRearAz, sTopRearEl, sBottom, sBottomAz, sBottomEl, sEnhance)
+            .forEach { s -> s.addChangeListener { changed() } }
         reverbBox.addActionListener { changed() }
         engineBox.selectedIndex = intArrayOf(1, 2, 0).indexOf(settings.engineMode).coerceAtLeast(0)
         earBox.selectedIndex = settings.earSize.coerceIn(0, 4)
@@ -178,7 +199,7 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         sSpread.addChangeListener { changed() }
         lSpread.isVisible = settings.engineMode == 2; sSpread.isVisible = lSpread.isVisible
         lCenter.isVisible = settings.engineMode == 1; sCenter.isVisible = lCenter.isVisible
-        for (c in listOf(lElev, sElev, lHeight, sHeight, lTopAz, sTopAz, lTopEl, sTopEl)) c.isVisible = settings.engineMode != 0
+        for (c in measuredOnly) c.isVisible = settings.engineMode != 0
         updateLabels()
 
         pack()
@@ -201,9 +222,12 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
             centerLevel = sCenter.value,
             frontElev = sElev.value, heightLevel = sHeight.value,
             topAngle = sTopAz.value, topElev = sTopEl.value,
+            topRearAngle = sTopRearAz.value, topRearElev = sTopRearEl.value,
+            bottomLevel = sBottom.value, bottomAngle = sBottomAz.value, bottomElev = sBottomEl.value,
+            enhance = sEnhance.value,
         )
         val measured = settings.engineMode != 0
-        for (c in listOf(lElev, sElev, lHeight, sHeight, lTopAz, sTopAz, lTopEl, sTopEl)) c.isVisible = measured
+        for (c in measuredOnly) c.isVisible = measured
         lCenter.isVisible = settings.engineMode == 1; sCenter.isVisible = lCenter.isVisible
         lSpread.isVisible = settings.engineMode == 2; sSpread.isVisible = lSpread.isVisible
         val soundOnly = settings.copy(engineMode = 1, spread = 90, earSize = 2, hpEq = 0)
@@ -230,10 +254,17 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         else "배경음 옆/뒤 비율: ${sRearLevel.value}% (박수·관중·울림을 옆/뒤로)"
         lCenter.text = "가운데 스피커: ${sCenter.value}% (보컬·대사를 정면에)"
         lElev.text = "앞 스피커 높이: " + when { sElev.value > 0 -> "위 ${sElev.value}°"; sElev.value < 0 -> "아래 ${-sElev.value}°"; else -> "귀 높이 (0°)" }
-        lHeight.text = "높이감 (천장 스피커): ${sHeight.value}%"
-        val where = when { sTopAz.value < 60 -> "앞쪽 위"; sTopAz.value <= 120 -> "머리 옆 위"; else -> "뒤쪽 위" }
-        lTopAz.text = "천장 스피커 방향: ±${sTopAz.value}° ($where)" + if (sHeight.value == 0) " · 높이감 0%라 꺼짐" else ""
-        lTopEl.text = "천장 스피커 높이: 위 ${sTopEl.value}° (90° = 머리 바로 위)"
+        lHeight.text = "▲ 천장 스피커 4개 (앞 2·뒤 2): ${sHeight.value}%"
+        val topOff = if (sHeight.value == 0) " · 천장 0%라 꺼짐" else ""
+        val botOff = if (sBottom.value == 0) " · 바닥 0%라 꺼짐" else ""
+        lTopAz.text = "천장 앞 ▲ 방향: ±${sTopAz.value}° (0 = 정면, 90 = 머리 옆)$topOff"
+        lTopEl.text = "천장 앞 ▲ 높이: 위 ${sTopEl.value}° (90° = 머리 바로 위)"
+        lTopRearAz.text = "천장 뒤 ▲ 방향: ±${sTopRearAz.value}° (90 = 머리 옆, 180 = 바로 뒤)$topOff"
+        lTopRearEl.text = "천장 뒤 ▲ 높이: 위 ${sTopRearEl.value}°"
+        lBottom.text = "▼ 바닥 스피커 2개: ${sBottom.value}% (배경음 일부를 아래쪽에서, 0이면 없음)"
+        lBottomAz.text = "바닥 ▼ 방향: ±${sBottomAz.value}° (0 = 정면, 180 = 바로 뒤)$botOff"
+        lBottomEl.text = "바닥 ▼ 높이: 아래 ${-sBottomEl.value}°"
+        lEnhance.text = "✨ 3D 강조: ${sEnhance.value}% (뒤는 더 뒤처럼, 위·아래는 더 위·아래처럼 · 0 = 측정 그대로)"
         lRoom.text = "방 울림 (벽 반사음): ${sRoom.value}%"
         lBass.text = "저음 보강: ${sBass.value / 10}%"
     }
@@ -327,8 +358,14 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         centerLevel = prefs.getInt("center", 70),
         frontElev = prefs.getInt("elev", 0),
         heightLevel = prefs.getInt("height", 25),
-        topAngle = prefs.getInt("topAz", 70),
-        topElev = prefs.getInt("topEl", 55),
+        topAngle = prefs.getInt("topAz2", 45),
+        topElev = prefs.getInt("topEl2", 45),
+        topRearAngle = prefs.getInt("topRearAz", 135),
+        topRearElev = prefs.getInt("topRearEl", 45),
+        bottomLevel = prefs.getInt("bottom", 10),
+        bottomAngle = prefs.getInt("bottomAz", 45),
+        bottomElev = prefs.getInt("bottomEl", -30),
+        enhance = prefs.getInt("enhance", 30),
         engineMode = prefs.getInt("engine", 1),
         spread = prefs.getInt("spread", 90),
         earSize = prefs.getInt("ear", 2),
@@ -342,7 +379,10 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         prefs.putInt("front", settings.frontAngle); prefs.putInt("rearAngle", settings.rearAngle)
         prefs.putInt("rearLevel", settings.rearLevel); prefs.putInt("center", settings.centerLevel)
         prefs.putInt("elev", settings.frontElev); prefs.putInt("height", settings.heightLevel)
-        prefs.putInt("topAz", settings.topAngle); prefs.putInt("topEl", settings.topElev)
+        prefs.putInt("topAz2", settings.topAngle); prefs.putInt("topEl2", settings.topElev)
+        prefs.putInt("topRearAz", settings.topRearAngle); prefs.putInt("topRearEl", settings.topRearElev)
+        prefs.putInt("bottom", settings.bottomLevel); prefs.putInt("bottomAz", settings.bottomAngle); prefs.putInt("bottomEl", settings.bottomElev)
+        prefs.putInt("enhance", settings.enhance)
         prefs.putInt("engine", settings.engineMode); prefs.putInt("spread", settings.spread); prefs.putInt("ear", settings.earSize)
         prefs.putInt("hpEq", settings.hpEq)
     }

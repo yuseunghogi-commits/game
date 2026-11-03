@@ -6,12 +6,12 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.DashPathEffect
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import kotlin.math.abs
-import kotlin.math.acos
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -20,21 +20,32 @@ import kotlin.math.sin
 
 /**
  * 위에서 내려다본 가상 스피커 배치도.
- * 가운데가 내 머리(위쪽 = 정면), 보라색 = 앞 스피커, 하늘색 = 뒤 스피커,
- * 노란색 = 가운데 스피커, 청록색 = 옆 스피커(공간 모드 실측 엔진), 흰 삼각형 = 천장 스피커.
- * 앞/뒤 스피커를 손가락으로 끌면 각도가 바뀐다 (좌우는 항상 대칭).
- * 천장 스피커는 위에서 내려다본 위치에 그린다: 방향 = 좌우 각도, 머리에서 거리 ∝ cos(높이)
- *  → 안쪽(머리 쪽)으로 끌수록 더 높이, 바깥 원(귀 높이)으로 갈수록 낮게 (점선 원 = 위 60°).
+ * 가운데가 내 머리(위쪽 = 정면). 실선 원 = 귀 높이: 보라색 = 앞 스피커, 하늘색 = 뒤 스피커,
+ * 노란색 = 가운데 스피커, 청록색 = 옆 스피커(공간 모드 실측 엔진).
+ * ▲ = 천장 스피커 (앞 2개·뒤 2개), ▼ = 바닥 스피커 2개.
+ *
+ * 높이는 머리에서의 거리로 표시한다 (위에서 내려다본 돔):
+ *  귀 높이 = 실선 원, 안쪽으로 갈수록 높이(머리 바로 옆 = 바로 위), 실선 원 바깥 = 아래.
+ * 모든 스피커는 손가락으로 끌어서 옮길 수 있다 (좌우는 항상 대칭).
  */
 class SpeakerLayoutView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null,
 ) : View(context, attrs) {
 
+    /** 높이가 있는 스피커 한 쌍 (좌우 대칭): 좌우 각도와 높이(도, 아래 −) */
+    class HeightPair(
+        var angle: Float, var elev: Float,
+        val minAngle: Float, val maxAngle: Float, val minElev: Float, val maxElev: Float,
+    )
+
     var frontAngle = 50f; private set
     var rearAngle = 120f; private set
-    /** 천장 스피커: 좌우 각도(±), 높이(도) */
-    var topAngle = 70f; private set
-    var topElev = 55f; private set
+    /** 0 = 천장 앞, 1 = 천장 뒤, 2 = 바닥 */
+    val heightPairs = arrayOf(
+        HeightPair(45f, 45f, TOP_ANGLE_MIN.toFloat(), TOP_ANGLE_MAX.toFloat(), TOP_ELEV_MIN.toFloat(), TOP_ELEV_MAX.toFloat()),
+        HeightPair(135f, 45f, TOP_REAR_MIN.toFloat(), TOP_REAR_MAX.toFloat(), TOP_ELEV_MIN.toFloat(), TOP_ELEV_MAX.toFloat()),
+        HeightPair(45f, -30f, BOTTOM_ANGLE_MIN.toFloat(), BOTTOM_ANGLE_MAX.toFloat(), BOTTOM_ELEV_MIN.toFloat(), BOTTOM_ELEV_MAX.toFloat()),
+    )
     var rearLevel = 45f
         set(v) { field = v; invalidate() }
     /** 가운데 스피커 양 (0 = 안 그림) */
@@ -43,8 +54,11 @@ class SpeakerLayoutView @JvmOverloads constructor(
     /** 옆 스피커(±95°) 표시 — 실측 엔진의 배경음 스피커 */
     var showSides = false
         set(v) { field = v; invalidate() }
-    /** 천장 스피커 양 (0 = 안 그림) — 위에서 본 그림이라 머리 가까이(안쪽 원)에 표시 */
+    /** 천장 스피커 양 (0 = 안 그림) */
     var heightLevel = 0f
+        set(v) { field = v; invalidate() }
+    /** 바닥 스피커 양 (0 = 안 그림) */
+    var bottomLevel = 0f
         set(v) { field = v; invalidate() }
     /** 헤드 트래킹 중이면 머리를 돌려서 표시 */
     var headYaw = 0f
@@ -52,8 +66,8 @@ class SpeakerLayoutView @JvmOverloads constructor(
 
     /** (앞 각도, 뒤 각도, 손을 뗐는지) */
     var onChange: ((Int, Int, Boolean) -> Unit)? = null
-    /** 천장 스피커 (좌우 각도, 높이, 손을 뗐는지) */
-    var onTopChange: ((Int, Int, Boolean) -> Unit)? = null
+    /** 높이 스피커 (어느 쌍 0/1/2, 각도, 높이, 손을 뗐는지) */
+    var onHeightChange: ((Int, Int, Int, Boolean) -> Unit)? = null
 
     private val dp = resources.displayMetrics.density
     private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -70,57 +84,79 @@ class SpeakerLayoutView @JvmOverloads constructor(
     private val center = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(0xFF, 0xD1, 0x5C) }
     private val sideP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(0x4F, 0xD1, 0xB0) }
     private val topPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(0xF4, 0xF1, 0xFF) }
+    private val bottomPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(0xF0, 0xA0, 0x5A) }
     private val beam = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 1.5f * dp }
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.rgb(0xCC, 0xCC, 0xDD); textSize = 12f * dp; textAlign = Paint.Align.CENTER
     }
 
-    private var dragging = 0 // 0 없음, 1 앞, 2 뒤, 3 천장
+    private var dragging = 0 // 0 없음, 1 앞, 2 뒤, 10+i 높이 스피커 i
 
     companion object {
         private const val SIDE = 95f // HrtfRenderer.SIDE_ANGLE
-        const val TOP_ANGLE_MIN = 20; const val TOP_ANGLE_MAX = 160
+        const val TOP_ANGLE_MIN = 0; const val TOP_ANGLE_MAX = 90
+        const val TOP_REAR_MIN = 90; const val TOP_REAR_MAX = 180
         const val TOP_ELEV_MIN = 30; const val TOP_ELEV_MAX = 85
+        const val BOTTOM_ANGLE_MIN = 0; const val BOTTOM_ANGLE_MAX = 180
+        const val BOTTOM_ELEV_MIN = -40; const val BOTTOM_ELEV_MAX = -10
+        /** 바닥(아래 40°)까지 그릴 여유: 귀 높이 원 바깥으로 (반지름 − 머리 여백) × 40/90 */
+        private const val BELOW = 40f / 90f
     }
 
     fun setAngles(f: Int, r: Int) {
         frontAngle = f.toFloat(); rearAngle = r.toFloat(); invalidate()
     }
 
-    fun setTop(angle: Int, elev: Int) {
-        topAngle = angle.toFloat(); topElev = elev.toFloat(); invalidate()
-    }
-
-    /** 높이 → 머리에서 거리: 0° = 바깥 원(귀 높이 스피커와 같은 원), 90° = 머리 바로 옆 (머리와 겹치지 않게 띄움) */
-    private val topClear get() = 36 * dp
-    private fun topDist(elevDeg: Float) = topClear + (radius - topClear) * cos(Math.toRadians(elevDeg.toDouble())).toFloat()
-
-    /** 천장 스피커를 그릴 위치 */
-    private fun topPos(angleDeg: Float): Pair<Float, Float> {
-        val r = topDist(topElev)
-        val a = Math.toRadians(angleDeg.toDouble())
-        return (cx + r * sin(a)).toFloat() to (cy - r * cos(a)).toFloat()
+    /** 높이 스피커 위치 (which: 0 천장 앞, 1 천장 뒤, 2 바닥) */
+    fun setHeightPair(which: Int, angle: Int, elev: Int) {
+        val p = heightPairs[which]
+        p.angle = angle.toFloat().coerceIn(p.minAngle, p.maxAngle)
+        p.elev = elev.toFloat().coerceIn(p.minElev, p.maxElev)
+        invalidate()
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val w = MeasureSpec.getSize(widthMeasureSpec)
-        setMeasuredDimension(w, (w * 0.85f).toInt())
+        setMeasuredDimension(w, w)
     }
 
     private val cx get() = width / 2f
     private val cy get() = height / 2f
-    private val radius get() = min(width, height) / 2f - 26 * dp
+    /** 머리와 겹치지 않게 띄우는 거리 (바로 위 = 이 거리) */
+    private val clear get() = 34 * dp
+    /** 귀 높이 원 반지름 — 바깥에 바닥 스피커와 글자 자리를 남김 */
+    private val radius get() = (min(width, height) / 2f - 18 * dp + clear * BELOW) / (1f + BELOW)
 
-    private fun pos(angleDeg: Float): Pair<Float, Float> {
+    /** 높이 → 머리에서 거리 (높이에 비례): 0° = 귀 높이 원, 90° = 머리 바로 옆, 아래(−)는 원 바깥 */
+    private fun elevDist(el: Float) = radius - (radius - clear) * el / 90f
+    private fun elevFromDist(d: Float) = (radius - d) / (radius - clear) * 90f
+
+    private fun pos(angleDeg: Float, r: Float = radius): Pair<Float, Float> {
         val a = Math.toRadians(angleDeg.toDouble())
-        return (cx + radius * sin(a)).toFloat() to (cy - radius * cos(a)).toFloat()
+        return (cx + r * sin(a)).toFloat() to (cy - r * cos(a)).toFloat()
     }
 
+    private fun pairPos(p: HeightPair, side: Float) = pos(p.angle * side, elevDist(p.elev))
+
+    private fun shown(i: Int) = if (i < 2) heightLevel > 0f else bottomLevel > 0f
+
     override fun onDraw(c: Canvas) {
+        val outer = elevDist(BOTTOM_ELEV_MIN.toFloat())
         c.drawCircle(cx, cy, radius, ring)
-        c.drawCircle(cx, cy, topDist(60f), ringDash)
-        c.drawText("앞", cx, cy - radius - 8 * dp, text)
-        c.drawText("뒤", cx, cy + radius + 18 * dp, text)
+        c.drawText("앞", cx, cy - outer - 4 * dp, text)
+        c.drawText("뒤", cx, cy + outer + 14 * dp, text)
+        text.textSize = 10f * dp
+        text.alpha = 140
+        if (heightLevel > 0f) {
+            c.drawCircle(cx, cy, elevDist(60f), ringDash)
+            c.drawText("점선 = 위 60°", cx, cy + elevDist(60f) + 13 * dp, text)
+        }
+        if (bottomLevel > 0f) {
+            c.drawCircle(cx, cy, elevDist(-30f), ringDash)
+            c.drawText("아래 30°", cx + elevDist(-30f) * 0.72f, cy + elevDist(-30f) * 0.72f + 14 * dp, text)
+        }
+        text.alpha = 255
+        text.textSize = 12f * dp
 
         // 스피커 → 머리 방향 빔
         for ((ang, p, alpha) in listOf(
@@ -158,28 +194,27 @@ class SpeakerLayoutView @JvmOverloads constructor(
             }
         }
 
-        // 천장 스피커: 위에서 보면 높을수록 머리 가까이 → 방향 = 좌우 각도, 거리 ∝ cos(높이)
-        if (heightLevel > 0f) {
-            text.textSize = 10f * dp
-            text.alpha = 140
-            c.drawText("점선 = 위 60°", cx, cy + topDist(60f) + 13 * dp, text)
-            text.alpha = 255
-            topPaint.alpha = if (dragging == 3) 255 else (90 + 165 * heightLevel / 100f).toInt()
-            val k = if (dragging == 3) 1.3f else 1f
+        // 천장(▲) · 바닥(▼) 스피커
+        for (i in heightPairs.indices) {
+            if (!shown(i)) continue
+            val p = heightPairs[i]
+            val up = i < 2
+            val paint = if (up) topPaint else bottomPaint
+            val level = if (up) heightLevel else bottomLevel
+            paint.alpha = if (dragging == 10 + i) 255 else (90 + 165 * level / 100f).toInt()
+            val k = (if (dragging == 10 + i) 1.3f else 1f) * dp
             for (s in listOf(1f, -1f)) {
-                val (x, y) = topPos(topAngle * s)
-                val path = android.graphics.Path().apply {
-                    moveTo(x, y - 10 * dp * k); lineTo(x - 9 * dp * k, y + 7 * dp * k); lineTo(x + 9 * dp * k, y + 7 * dp * k); close()
+                val (x, y) = pairPos(p, s)
+                val path = Path().apply {
+                    if (up) { moveTo(x, y - 10 * k); lineTo(x - 9 * k, y + 7 * k); lineTo(x + 9 * k, y + 7 * k) }
+                    else { moveTo(x, y + 10 * k); lineTo(x - 9 * k, y - 7 * k); lineTo(x + 9 * k, y - 7 * k) }
+                    close()
                 }
-                c.drawPath(path, topPaint)
+                c.drawPath(path, paint)
             }
-            val (tx, ty) = topPos(topAngle)
-            text.textSize = 10.5f * dp
-            c.drawText("위 ${topElev.toInt()}°", tx, ty + 20 * dp, text)
-            text.textSize = 12f * dp
         }
 
-        // 스피커
+        // 귀 높이 스피커
         val sr = 13 * dp
         for (s in listOf(1f, -1f)) {
             val (fx, fy) = pos(frontAngle * s)
@@ -193,6 +228,18 @@ class SpeakerLayoutView @JvmOverloads constructor(
         c.drawText("L ${frontAngle.toInt()}°", lx, ly - 18 * dp, text)
         val (rx, ry) = pos(-rearAngle)
         c.drawText("뒤 ${rearAngle.toInt()}°", rx, ry + 28 * dp, text)
+
+        // 끄는 동안 왼쪽 위에 정확한 값 (손가락에 가려지지 않게)
+        if (dragging >= 10) {
+            val p = heightPairs[dragging - 10]
+            val e = p.elev.toInt()
+            val name = arrayOf("천장 앞 ▲", "천장 뒤 ▲", "바닥 ▼")[dragging - 10]
+            text.textAlign = Paint.Align.LEFT
+            text.textSize = 12.5f * dp
+            c.drawText(name, 8 * dp, 18 * dp, text)
+            c.drawText("±${p.angle.toInt()}° · " + (if (e >= 0) "위 $e°" else "아래 ${-e}°"), 8 * dp, 35 * dp, text)
+            text.textAlign = Paint.Align.CENTER
+        }
         text.textSize = 12f * dp
     }
 
@@ -203,19 +250,15 @@ class SpeakerLayoutView @JvmOverloads constructor(
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 // 가장 가까운 스피커 잡기 (좌우 어느 쪽이든)
-                fun dist(a: Float) = listOf(a, -a).minOf { val (x, y) = pos(it); hypot(x - e.x, y - e.y) }
-                val df = dist(frontAngle)
-                val dr = dist(rearAngle)
-                val dt = if (heightLevel > 0f) listOf(topAngle, -topAngle).minOf { val (x, y) = topPos(it); hypot(x - e.x, y - e.y) }
-                else Float.MAX_VALUE
-                val grab = 40 * dp
-                val best = minOf(df, dr, dt)
-                dragging = when {
-                    best >= grab -> 0
-                    best == dt -> 3
-                    best == df -> 1
-                    else -> 2
+                fun dist(x: Float, y: Float) = hypot(x - e.x, y - e.y)
+                val cands = mutableListOf<Pair<Int, Float>>()
+                cands += 1 to listOf(frontAngle, -frontAngle).minOf { val (x, y) = pos(it); dist(x, y) }
+                cands += 2 to listOf(rearAngle, -rearAngle).minOf { val (x, y) = pos(it); dist(x, y) }
+                for (i in heightPairs.indices) if (shown(i)) {
+                    cands += (10 + i) to listOf(1f, -1f).minOf { val (x, y) = pairPos(heightPairs[i], it); dist(x, y) }
                 }
+                val best = cands.minBy { it.second }
+                dragging = if (best.second < 40 * dp) best.first else 0
                 if (dragging != 0) parent?.requestDisallowInterceptTouchEvent(true)
                 invalidate()
                 return dragging != 0
@@ -224,12 +267,13 @@ class SpeakerLayoutView @JvmOverloads constructor(
                 if (dragging == 0) return false
                 // 위쪽이 0°, 좌우 대칭이므로 절댓값
                 val ang = abs(Math.toDegrees(atan2(dx.toDouble(), -dy.toDouble()))).toFloat()
-                if (dragging == 3) {
-                    // 방향 → 좌우 각도, 머리에서 거리 → 높이 (topDist 의 역함수)
-                    topAngle = ang.coerceIn(TOP_ANGLE_MIN.toFloat(), TOP_ANGLE_MAX.toFloat())
-                    val d = ((hypot(dx, dy) - topClear) / (radius - topClear)).coerceIn(0f, 1f)
-                    topElev = Math.toDegrees(acos(d.toDouble())).toFloat().coerceIn(TOP_ELEV_MIN.toFloat(), TOP_ELEV_MAX.toFloat())
-                    onTopChange?.invoke(topAngle.toInt(), topElev.toInt(), false)
+                if (dragging >= 10) {
+                    // 방향 → 좌우 각도, 머리에서 거리 → 높이
+                    val i = dragging - 10
+                    val p = heightPairs[i]
+                    p.angle = ang.coerceIn(p.minAngle, p.maxAngle)
+                    p.elev = elevFromDist(hypot(dx, dy)).coerceIn(p.minElev, p.maxElev)
+                    onHeightChange?.invoke(i, p.angle.toInt(), p.elev.toInt(), false)
                     invalidate()
                     return true
                 }
@@ -240,8 +284,10 @@ class SpeakerLayoutView @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                if (dragging == 3) onTopChange?.invoke(topAngle.toInt(), topElev.toInt(), true)
-                else if (dragging != 0) onChange?.invoke(frontAngle.toInt(), rearAngle.toInt(), true)
+                if (dragging >= 10) {
+                    val i = dragging - 10
+                    onHeightChange?.invoke(i, heightPairs[i].angle.toInt(), heightPairs[i].elev.toInt(), true)
+                } else if (dragging != 0) onChange?.invoke(frontAngle.toInt(), rearAngle.toInt(), true)
                 dragging = 0
                 invalidate()
                 return true

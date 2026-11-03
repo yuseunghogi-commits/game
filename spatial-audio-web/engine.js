@@ -121,7 +121,7 @@
    * MIT KEMAR HRTF (W. Gardner, K. Martin, MIT Media Lab) 확산음장 등화 compact 48kHz, 높이 -40°~+90° (ElevationSet.kt 와 동일).
    * 수평은 기존 실측(2°)을 쓰고, 여기서는 "같은 좌우 각도 수평 방향 대비 위/아래에서 올 때 달라지는 주파수 모양"만 가져온다.
    */
-  const MIT_N = 2048, MAX_ELEV_DB = 6, LN10_20 = 0.11512925;
+  const MIT_N = 2048, MAX_ELEV_DB = 6, MAX_ELEV_DB_ENH = 9, LN10_20 = 0.11512925;
   function loadElevation(buffer) {
     const dv = new DataView(buffer);
     const magic = String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3));
@@ -185,7 +185,8 @@
       return out;
     }
     dbAt(w, b) { let s = 0; for (const [li, ai, e, wt] of w) s += wt * this.magDb[li][ai][e][b]; return s; }
-    cueGain(azS, elS, azEq, ear, fs, n, out) {
+    /** scale: 3D 강조 배율 (1 = 그대로, 2 = 단서 2배, 이때 한계도 ±9dB 까지) */
+    cueGain(azS, elS, azEq, ear, fs, n, out, scale = 1) {
       if (!this.magDb) { out.fill(1); return; }
       const bins = n / 2 + 1, key = fs * 100000 + n;
       if (key !== this.mapKey) {
@@ -195,13 +196,14 @@
         this.mapKey = key;
       }
       const wu = this.weights(azS, elS, ear), wf = this.weights(azEq, 0, ear);
+      const lim = Math.min(MAX_ELEV_DB * scale, MAX_ELEV_DB_ENH);
       const lo = 400 * n / fs, ramp = 800 * n / fs;
       for (let k = 0; k < bins; k++) {
         if (k < lo) { out[k] = 1; continue; }
         const b0 = this.mapB0[k], fr = this.mapFr[k];
         const up = this.dbAt(wu, b0) * (1 - fr) + this.dbAt(wu, b0 + 1) * fr;
         const flat = this.dbAt(wf, b0) * (1 - fr) + this.dbAt(wf, b0 + 1) * fr;
-        let g = Math.min(MAX_ELEV_DB, Math.max(-MAX_ELEV_DB, up - flat));
+        let g = Math.min(lim, Math.max(-lim, (up - flat) * scale));
         if (k < ramp) g *= (k - lo) / (ramp - lo);
         out[k] = Math.exp(g * LN10_20);
       }
@@ -338,22 +340,30 @@
   const N = 2048, WIN = 1024, HOP = 512, LATENCY = WIN, MAX_DELAY = 512;
   const BUS_ANGLES = Array.from({ length: BUSES }, (_, i) => i * 360 / BUSES);
   const SIDE_ANGLE = 95;
-  /** 천장 스피커 기본 위치: 좌우 ±70°, 위 55° */
-  const HEIGHT_AZ = 70, HEIGHT_EL = 55;
+  /** 천장 앞 스피커 기본 위치 ±45°·위 45°, 천장 뒤 ±135°·위 45° (7.1.4 배치), 바닥 ±45°·아래 30° */
+  const HEIGHT_AZ = 45, HEIGHT_EL = 45, TOP_REAR_AZ = 135, TOP_REAR_EL = 45, BOTTOM_AZ = 45, BOTTOM_EL = -30;
+  /** 3D 강조: 앞/뒤 짝과의 차이를 뒤쪽이 3/4, 앞쪽이 1/4 맡음. 최대 ±10dB */
+  const ENH_BACK = 0.75, ENH_FRONT = 0.25, ENH_MAX_DB = 10, HALF = Math.SQRT1_2;
   const SIDE_SHARE = Math.sqrt(0.6), REAR_SHARE = Math.sqrt(0.4), SQRT2 = Math.SQRT2;
 
   class HrtfRenderer {
     constructor(fs, base, elev) {
       this.fs = fs; this.base = base; this.elev = elev || null;
       this.headPitch = 0; this.frontElev = 0; this.heightLevel = 0; this.yawF = 0; this.pitchF = 0; this.elevF = 0;
-      this.topAz = HEIGHT_AZ; this.topEl = HEIGHT_EL; // 천장 스피커 위치 (좌우 ±각도, 높이)
+      this.topAz = HEIGHT_AZ; this.topEl = HEIGHT_EL; // 천장 앞 스피커 위치 (좌우 ±각도, 높이)
+      this.topRearAz = TOP_REAR_AZ; this.topRearEl = TOP_REAR_EL; // 천장 뒤
+      this.bottomLevel = 0; this.bottomAz = BOTTOM_AZ; this.bottomEl = BOTTOM_EL; // 바닥 (높이 −)
       this.specCache = new Map(); this.specTable = null; this.rowSpec = new Array(180).fill(null);
       this.mode = 'speakers'; this.frontAngle = 45; this.rearAngle = 135; this.rearLevel = 0.45;
       this.centerLevel = 0.7; this.spread = 90; this.headYaw = 0;
       this.fft = new Fft(N);
       const bins = this.bins = N / 2 + 1;
-      this.earIdx = 2;
-      this.table = this.buildTable(adaptHrir(base, fs, 1.0));
+      this.earIdx = 2; this.enhanceAmt = 0;
+      // 3D 강조 적용 범위: 700Hz 아래는 그대로, 1.4kHz 까지 서서히
+      this.enhRamp = new Float32Array(bins);
+      for (let k = 0; k < bins; k++) this.enhRamp[k] = Math.min(1, Math.max(0, (k * fs / N - 700) / 700));
+      this.baseTab = this.buildBase(adaptHrir(base, fs, 1.0));
+      this.table = this.baseTab.t;
       // 계산용 배열은 64비트 (JS 엔진에서 32비트 배열보다 FFT 가 약 3배 빠름)
       const F = (n) => new Float64Array(n);
       this.window = F(WIN); for (let i = 0; i < WIN; i++) this.window[i] = 0.5 - 0.5 * Math.cos(2 * PI * i / WIN);
@@ -375,6 +385,8 @@
       this.dSide = Math.min(MAX_DELAY, Math.round(0.004 * fs));
       this.dRear = Math.min(MAX_DELAY, Math.round(0.009 * fs));
       this.dTop = Math.min(MAX_DELAY, Math.round(0.006 * fs));
+      this.dTopRear = Math.min(MAX_DELAY, Math.round(0.0105 * fs));
+      this.dBottom = Math.min(MAX_DELAY, Math.round(0.0025 * fs));
       this.gainTmp = new Float64Array(this.bins);
       this.routedEnergy = [0, 0, 0];
     }
@@ -383,7 +395,74 @@
       const i = Math.max(0, Math.min(EAR_FACTORS.length - 1, idx));
       if (i === this.earIdx) return;
       this.earIdx = i;
-      this.table = this.buildTable(adaptHrir(this.base, this.fs, EAR_FACTORS[i]));
+      this.baseTab = this.buildBase(adaptHrir(this.base, this.fs, EAR_FACTORS[i]));
+      this.enhJob = null;
+      this.table = this.enhanced(this.baseTab, this.enhanceAmt);
+    }
+
+    /**
+     * 3D 강조 0..1 (α = 1 + amount): 0 이면 실측 그대로. FFT 없이 게인만 다시 곱함.
+     * now 가 아니면 오디오가 끊기지 않게 프레임마다 8방향씩 나눠 계산하고 다 되면 교체 (48kHz 에서 약 0.25초).
+     */
+    setEnhance(amount, now = false) {
+      const a = Math.min(1, Math.max(0, amount || 0));
+      if (a === this.enhanceAmt && !this.enhJob) return;
+      this.enhanceAmt = a;
+      if (now || !(a > 0)) { this.enhJob = null; this.table = this.enhanced(this.baseTab, a); return; }
+      this.enhJob = { b: this.baseTab, a, d: 0, re: [], im: [] };
+    }
+
+    stepEnhance(count) {
+      const j = this.enhJob, t = j.b.t;
+      for (let n = 0; n < count && j.d < t.dirs; n++, j.d++) { const [r2, i2] = this.enhanceDir(j.b, j.a, j.d); j.re.push(r2); j.im.push(i2); }
+      if (j.d === t.dirs) { this.table = { dirs: t.dirs, step: t.step, re: j.re, im: j.im, enh: j.a }; this.enhJob = null; }
+    }
+
+    /** 원본 표 + 방향마다 "앞/뒤 짝 방향(θ ↔ 180°−θ)과의 크기 차이(dB, 1/2 옥타브 평활)" */
+    buildBase(set) {
+      const t = this.buildTable(set), bins = this.bins;
+      const r = Math.pow(2, 0.25), c = new Float64Array(bins + 1);
+      const sm = t.re.map((pair, d) => pair.map((re, e) => {
+        const im = t.im[d][e];
+        for (let k = 0; k < bins; k++) c[k + 1] = c[k] + 10 * Math.log10(re[k] * re[k] + im[k] * im[k] + 1e-20);
+        const out = new Float32Array(bins);
+        for (let k = 0; k < bins; k++) {
+          const lo = Math.max(0, Math.floor(k / r)), hi = Math.min(bins - 1, Math.max(k, Math.trunc(k * r)));
+          out[k] = (c[hi + 1] - c[lo]) / (hi - lo + 1);
+        }
+        return out;
+      }));
+      const diff = sm.map((pair, d) => {
+        const p = Math.floor(((((180 - d * t.step) % 360) + 360) % 360) / t.step) % t.dirs;
+        return pair.map((s, e) => { const o = new Float32Array(bins), q = sm[p][e]; for (let k = 0; k < bins; k++) o[k] = s[k] - q[k]; return o; });
+      });
+      return { t, diff };
+    }
+
+    /** 3D 강조: 앞/뒤 짝과의 차이를 (α−1)배 더 벌림 — 뒤쪽 3/4, 앞쪽 1/4 (보컬 음색은 거의 그대로) */
+    enhanced(b, amount) {
+      const t = b.t;
+      if (!(amount > 0)) return t;
+      const re = [], im = [];
+      for (let d = 0; d < t.dirs; d++) { const [r2, i2] = this.enhanceDir(b, amount, d); re.push(r2); im.push(i2); }
+      return { dirs: t.dirs, step: t.step, re, im, enh: amount };
+    }
+
+    enhanceDir(b, amount, d) {
+      const t = b.t, bins = this.bins, ramp = this.enhRamp;
+      const back = Math.cos(d * t.step * PI / 180) < -1e-9;
+      const c = amount * (back ? ENH_BACK : ENH_FRONT);
+      const r2 = [], i2 = [];
+      for (let e = 0; e < 2; e++) {
+        const df = b.diff[d][e], sr = t.re[d][e], si = t.im[d][e], dr = new Float32Array(bins), di = new Float32Array(bins);
+        for (let k = 0; k < bins; k++) {
+          const g = Math.fround(Math.fround(Math.min(ENH_MAX_DB, Math.max(-ENH_MAX_DB, Math.fround(c * df[k])))) * ramp[k]);
+          const m = Math.fround(Math.exp(Math.fround(g * LN10_20)));
+          dr[k] = sr[k] * m; di[k] = si[k] * m;
+        }
+        r2.push(dr); i2.push(di);
+      }
+      return [r2, i2];
     }
 
     buildTable(set) {
@@ -401,7 +480,7 @@
         }
         re.push(r2); im.push(i2);
       }
-      return { dirs: set.dirs, step: set.step, re, im };
+      return { dirs: set.dirs, step: set.step, re, im, enh: 0 };
     }
 
     phase(delay) {
@@ -474,6 +553,7 @@
     }
 
     frame() {
+      if (this.enhJob) this.stepEnhance(8);
       const t = this.table;
       this.yawF = this.headYaw; this.pitchF = this.headPitch; this.elevF = this.frontElev;
       this.fft2(this.inL, this.inR, this.xLr, this.xLi, this.xRr, this.xRi);
@@ -540,10 +620,10 @@
       const d = Math.round((((azEq % 360) + 360) % 360) / t.step) % t.dirs;
       const sp = { lr: t.re[d][0].slice(), li: t.im[d][0].slice(), rr: t.re[d][1].slice(), ri: t.im[d][1].slice() };
       if (this.elev && ei !== 0) {
-        const g = this.gainTmp, bins = this.bins;
-        this.elev.cueGain(azQ, elQ, azEq, 0, this.fs, N, g);
+        const g = this.gainTmp, bins = this.bins, sc = 1 + (t.enh || 0); // 3D 강조: 위·아래 단서도 α 배
+        this.elev.cueGain(azQ, elQ, azEq, 0, this.fs, N, g, sc);
         for (let k = 0; k < bins; k++) { sp.lr[k] *= g[k]; sp.li[k] *= g[k]; }
-        this.elev.cueGain(azQ, elQ, azEq, 1, this.fs, N, g);
+        this.elev.cueGain(azQ, elQ, azEq, 1, this.fs, N, g, sc);
         for (let k = 0; k < bins; k++) { sp.rr[k] *= g[k]; sp.ri[k] *= g[k]; }
       }
       this.specCache.set(key, sp);
@@ -591,8 +671,11 @@
 
     speakers(t) {
       const cl = this.centerLevel, r = Math.min(1, Math.max(0, this.rearLevel)), h = Math.min(1, Math.max(0, this.heightLevel));
-      // 배경음 에너지 나누기: 앞 (1-r)(1-h), 옆·뒤 r(1-h), 천장 h
-      const frontAmb = Math.sqrt((1 - r) * (1 - h)), surAmb = Math.sqrt(r * (1 - h)), topAmb = Math.sqrt(h);
+      const bt = Math.min(1, Math.max(0, this.bottomLevel));
+      // 배경음 에너지 나누기: 앞 (1-r)(1-h)(1-b), 옆·뒤 r(1-h)(1-b), 천장 h(1-b), 바닥 b
+      const frontAmb = Math.fround(Math.sqrt(Math.fround(Math.fround((1 - r) * (1 - h)) * (1 - bt))));
+      const surAmb = Math.fround(Math.sqrt(Math.fround(Math.fround(r * (1 - h)) * (1 - bt))));
+      const topAmb = Math.fround(Math.sqrt(Math.fround(h * (1 - bt)))), botAmb = Math.fround(Math.sqrt(bt));
       const { xLr, xLi, xRr, xRi, fLr, fLi, fRr, fRi, cRr, cIi, aLr, aLi, aRr, aRi, sLL, sRR, sLRr, sLRi, bins, lowBin } = this;
       for (let k = 0; k < bins; k++) {
         const lr = xLr[k], li = xLi[k], rr = xRr[k], ri = xRi[k];
@@ -623,11 +706,11 @@
       this.addSource(t, fLr, fLi, -f, ef, 1, 0);
       this.addSource(t, fRr, fRi, f, ef, 1, 0);
       if (cl > 0.001) this.addSource(t, cRr, cIi, 0, ef, 1, 0);
-      this.addAmbience(t, surAmb, topAmb);
+      this.addAmbience(t, surAmb, topAmb, botAmb);
     }
 
-    /** 배경음 → 옆(±95°)·뒤(±rear)·천장(±topAz, 위 topEl) */
-    addAmbience(t, surAmb, topAmb) {
+    /** 배경음 → 옆(±95°)·뒤(±rear)·천장 앞/뒤·바닥 — 서로 다른 지연으로 디코릴레이션 */
+    addAmbience(t, surAmb, topAmb, botAmb) {
       const { aLr, aLi, aRr, aRi } = this;
       if (surAmb > 0.0005) {
         this.addSource(t, aLr, aLi, -SIDE_ANGLE, 0, SIDE_SHARE * surAmb, this.dSide);
@@ -636,15 +719,26 @@
         this.addSource(t, aRr, aRi, this.rearAngle, 0, REAR_SHARE * surAmb, this.dRear);
       }
       if (topAmb > 0.0005) {
-        const az = this.topAz, el = this.topEl;
-        this.addSource(t, aLr, aLi, -az, el, topAmb, this.dTop);
-        this.addSource(t, aRr, aRi, az, el, topAmb, this.dTop);
+        // 천장 앞·뒤에 에너지 반씩
+        const g = Math.fround(topAmb * Math.fround(HALF)), az = this.topAz, el = this.topEl, raz = this.topRearAz, rel = this.topRearEl;
+        this.addSource(t, aLr, aLi, -az, el, g, this.dTop);
+        this.addSource(t, aRr, aRi, az, el, g, this.dTop);
+        this.addSource(t, aLr, aLi, -raz, rel, g, this.dTopRear);
+        this.addSource(t, aRr, aRi, raz, rel, g, this.dTopRear);
+      }
+      if (botAmb > 0.0005) {
+        const az = this.bottomAz, el = this.bottomEl;
+        this.addSource(t, aLr, aLi, -az, el, botAmb, this.dBottom);
+        this.addSource(t, aRr, aRi, az, el, botAmb, this.dBottom);
       }
     }
 
     localize(t) {
       const spr = this.spread, r = Math.min(1, Math.max(0, this.rearLevel)), h = Math.min(1, Math.max(0, this.heightLevel));
-      const frontAmb = Math.sqrt((1 - r) * (1 - h)), surAmb = Math.sqrt(r * (1 - h)), topAmb = Math.sqrt(h);
+      const bt = Math.min(1, Math.max(0, this.bottomLevel));
+      const frontAmb = Math.fround(Math.sqrt(Math.fround(Math.fround((1 - r) * (1 - h)) * (1 - bt))));
+      const surAmb = Math.fround(Math.sqrt(Math.fround(Math.fround(r * (1 - h)) * (1 - bt))));
+      const topAmb = Math.fround(Math.sqrt(Math.fround(h * (1 - bt)))), botAmb = Math.fround(Math.sqrt(bt));
       const fast = this.elevF === 0 && this.pitchF === 0, row = this.rowSpec, ef = this.elevF;
       if (!fast) row.fill(null);
       const { xLr, xLi, xRr, xRi, fLr, fLi, fRr, fRi, aLr, aLi, aRr, aRi, sLL, sRR, yLr, yLi, yRr, yRi, bins, lowBin } = this;
@@ -676,7 +770,7 @@
       }
       this.addSource(t, fLr, fLi, -this.frontAngle, ef, 1, 0);
       this.addSource(t, fRr, fRi, this.frontAngle, ef, 1, 0);
-      this.addAmbience(t, surAmb, topAmb);
+      this.addAmbience(t, surAmb, topAmb, botAmb);
     }
   }
 
@@ -692,7 +786,8 @@
   const DEFAULTS = {
     virtualizerStrength: 850, bassStrength: 250, spaceEq: 45, reverbPreset: 2, frontAngle: 45, rearAngle: 135,
     rearLevel: 45, centerLevel: 60, engineMode: 1, spread: 90, earSize: 2, hpEq: 0, enabled: true,
-    frontElev: 0, heightLevel: 25, topAngle: HEIGHT_AZ, topElev: HEIGHT_EL,
+    frontElev: 0, heightLevel: 25, topAngle: HEIGHT_AZ, topElev: HEIGHT_EL, topRearAngle: TOP_REAR_AZ, topRearElev: TOP_REAR_EL,
+    bottomLevel: 10, bottomAngle: BOTTOM_AZ, bottomElev: BOTTOM_EL, enhance: 30,
   };
 
   class Engine {
@@ -764,10 +859,19 @@
       rnd.centerLevel = p.centerLevel / 100;
       rnd.frontElev = Math.min(45, Math.max(-30, p.frontElev));
       rnd.heightLevel = p.heightLevel / 100;
-      rnd.topAz = Number.isFinite(p.topAngle) ? Math.min(160, Math.max(20, p.topAngle)) : HEIGHT_AZ;
-      rnd.topEl = Number.isFinite(p.topElev) ? Math.min(89, Math.max(25, p.topElev)) : HEIGHT_EL;
+      const num = (v, lo, hi, d) => Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d;
+      rnd.topAz = num(p.topAngle, 0, 90, HEIGHT_AZ);
+      rnd.topEl = num(p.topElev, 25, 89, HEIGHT_EL);
+      rnd.topRearAz = num(p.topRearAngle, 90, 180, TOP_REAR_AZ);
+      rnd.topRearEl = num(p.topRearElev, 25, 89, TOP_REAR_EL);
+      rnd.bottomLevel = num(p.bottomLevel, 0, 100, 0) / 100;
+      rnd.bottomAz = num(p.bottomAngle, 0, 180, BOTTOM_AZ);
+      rnd.bottomEl = num(p.bottomElev, -45, -5, BOTTOM_EL);
       rnd.spread = p.spread;
       rnd.setEarSize(p.earSize);
+      // 처음 설정은 바로, 그 뒤 바뀔 때는 오디오가 끊기지 않게 나눠서 계산
+      rnd.setEnhance(num(p.enhance, 0, 100, 0) / 100, !this.applied);
+      this.applied = true;
       if (p.hpEq !== this.hpEqIdx) {
         this.hpEqIdx = p.hpEq;
         const prof = this.eqProfiles[p.hpEq - 1];
