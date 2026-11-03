@@ -1586,7 +1586,10 @@ registerProcessor('spatial3d', Spatial3DProcessor);
 
   // PC 크롬·엣지: 다른 탭 소리 가져오기 가능 (아이패드·폰 브라우저는 안 됨)
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  const canTab = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) && !isIOS;
+  // 다른 사이트 안에 끼워 넣은 페이지(iframe)는 화면 공유가 막혀 있을 수 있음 → 웹 앱 주소로 안내
+  const shareAllowed = (() => { try { const pp = document.permissionsPolicy || document.featurePolicy; return !pp || pp.allowsFeature('display-capture'); } catch (e) { return true; } })();
+  const hasTabApi = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) && !isIOS;
+  const canTab = hasTabApi && shareAllowed;
 
   // ── 오디오 ──
   let ctx = null, node = null, mainEngine = null, ready = null, sendParams = () => {};
@@ -1761,6 +1764,10 @@ registerProcessor('spatial3d', Spatial3DProcessor);
     status('탭 소리를 3D 로 바꾸는 중 · ' + (ctx.sampleRate / 1000).toFixed(1) + ' kHz', 'ok');
   }
   if (canTab) { $('srcTab').hidden = false; $('tabHelp').hidden = false; }
+  else if (hasTabApi) {
+    const h = $('tabHelp'); h.hidden = false;
+    h.innerHTML = 'PC 크롬·엣지에서 유튜브 같은 다른 탭 소리를 3D 로 들으려면 웹 앱 주소에서 여세요: <a href="https://yuseunghogi-commits.github.io/game/" target="_blank" rel="noopener">yuseunghogi-commits.github.io/game</a>';
+  }
   $('srcTab').addEventListener('click', () => {
     if (source === 'tab') return;
     startTab().catch((e) => status('탭 소리를 가져오지 못했습니다: ' + e.message, 'err'));

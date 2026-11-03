@@ -31,8 +31,10 @@ object WirelessAdb {
     fun developerOptionsOn(ctx: Context) =
         Settings.Global.getInt(ctx.contentResolver, Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0) == 1
 
-    fun wirelessDebuggingOn(ctx: Context) =
+    /** 무선 디버깅이 켜져 있는지. 읽을 수 없으면 켜져 있다고 본다 (그러면 끝나고 끄지 않음) */
+    fun wirelessDebuggingOn(ctx: Context) = runCatching {
         Settings.Global.getInt(ctx.contentResolver, "adb_wifi_enabled", 0) == 1
+    }.getOrDefault(true)
 
     /** 무선 디버깅은 Wi-Fi 에 연결돼 있어야 켤 수 있다 (인터넷은 안 돼도 됨) */
     @Suppress("DEPRECATION")

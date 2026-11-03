@@ -116,7 +116,12 @@ class AdbPairService : Service() {
 
     /** 페어링 창이 열리면 포트 > 0, 닫히면 -1 */
     private fun onPairPort(port: Int) {
-        if (!running || busy || done) return
+        if (!running || done) return
+        if (busy) {
+            // 페어링하는 동안에도 새 창(새 포트)은 기억해 둔다
+            pairPort = port
+            return
+        }
         if (port > 0) {
             val first = pairPort <= 0
             pairPort = port
@@ -147,6 +152,7 @@ class AdbPairService : Service() {
             if (port <= 0) {
                 main.post {
                     busy = false
+                    if (!running) return@post
                     postInput(
                         "페어링 창이 보이지 않아요. 설정에서 '페어링 코드로 기기 페어링'을 다시 누르고 새 코드를 입력하세요",
                         withInput = true, alert = true,
@@ -159,6 +165,7 @@ class AdbPairService : Service() {
                 Log.w(TAG, "페어링 실패", pairErr)
                 main.post {
                     busy = false
+                    if (!running) return@post
                     postInput(
                         "페어링 실패 — 코드를 다시 확인하세요. 창이 닫혔다면 '페어링 코드로 기기 페어링'을 다시 눌러 새 코드로",
                         withInput = true, alert = true,
@@ -166,10 +173,11 @@ class AdbPairService : Service() {
                 }
                 return@execute
             }
-            main.post { postInput("페어링 성공! 권한 받는 중…", withInput = false, alert = false) }
+            main.post { if (running) postInput("페어링 성공! 권한 받는 중…", withInput = false, alert = false) }
             val result = runCatching { grantDump() }
             main.post {
                 busy = false
+                if (!running) return@post
                 val ok = result.getOrNull() == true
                 if (ok) onSuccess() else onGrantFailed(result.exceptionOrNull()?.message)
             }

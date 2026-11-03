@@ -4,7 +4,8 @@ on:
   push:
     paths:
       - "spatial-audio-desktop/**"
-      - "spatial-audio-android/app/src/main/java/com/spatialsound/app/BinauralProcessor.kt"
+      - "spatial-audio-android/app/src/main/java/com/spatialsound/app/**"
+      - "RELEASE_VERSION"
       - ".github/workflows/desktop-spatial-audio.yml"
   workflow_dispatch:
 
@@ -26,8 +27,9 @@ jobs:
       - name: Package Windows app (Java 포함, 설치 불필요)
         shell: pwsh
         run: |
+          $ver = (Get-Content ../RELEASE_VERSION -Raw).Trim()
           jpackage --type app-image --name 3DSound --input build/libs --main-jar 3DSound.jar `
-            --main-class com.spatialsound.desktop.MainKt --dest dist --app-version 1.0.0 `
+            --main-class com.spatialsound.desktop.MainKt --dest dist --app-version $ver `
             --java-options "-Dfile.encoding=UTF-8"
           Copy-Item README.md dist/3DSound/
       - uses: actions/upload-artifact@v4

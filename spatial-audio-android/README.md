@@ -9,22 +9,35 @@
 |---|---|---|
 | 처리 방식 | 다른 앱 소리를 내부 캡처 → **앱이 직접 바이노럴 3D 계산** → 헤드폰 출력 | 폰 내장 `Virtualizer` 이펙트 사용 |
 | 효과 | 확실함 (블루투스 포함, 폰 기종 무관) | 폰에 따라 약하거나 블루투스에서 거의 없음 |
-| 요구 사항 | Android 10+, PC로 1회 ADB 권한 부여 | 없음 |
+| 요구 사항 | Android 10+, 처음 1번 권한 받기 (앱 안에서, Android 11+) | 없음 |
 | 지연 | 약 20~100ms | 없음 |
 | 미지원 앱 | 캡처를 막은 앱 (넷플릭스, 크롬, 스포티파이 등은 원음 그대로) | – |
 
-### 강력 3D 모드 1회 설정 (갤럭시 기준)
-1. 설정 → 휴대전화 정보 → 소프트웨어 정보 → **빌드번호 7번 탭** (개발자 옵션 켜짐)
-2. 설정 → 개발자 옵션 → **USB 디버깅** 켜기
-3. PC에 USB 연결 후:
-   ```
-   adb shell pm grant com.spatialsound.app android.permission.DUMP
-   ```
-4. 앱을 완전히 닫고 다시 열기 → **강력 3D 모드** 선택 → 켜기 → 오디오 공유 창에서 **시작**
+### 강력 3D 모드 1회 설정 — 앱 하나로 (v2.0~, Android 11 이상)
+PC 나 Shizuku 같은 다른 앱 없이, 앱 안에서 **무선 디버깅 페어링**으로 권한을 스스로 받습니다.
+
+1. 앱 → **🔑 강력 모드 권한 받기**
+2. (처음이면) 개발자 옵션 켜기: 설정 → 휴대전화 정보 → 소프트웨어 정보 → **빌드번호 7번 탭**
+3. [시작] → 개발자 옵션이 열리면 **무선 디버깅** 켜기 → '무선 디버깅' 글자 눌러 들어가기 → **페어링 코드로 기기 페어링**
+4. 6자리 숫자가 보이는 화면 그대로, 위에 뜨는 **'3D 사운드' 알림의 [코드 입력]** 에 6자리 입력 (안 보이면 상단바를 내리기)
+5. '✅ 권한 받기 완료' 알림 → 끝. 이 과정 때문에 켠 무선 디버깅은 자동으로 다시 꺼집니다.
+
+- Wi-Fi 에 연결돼 있어야 무선 디버깅을 켤 수 있습니다 (인터넷 안 되는 Wi-Fi 도 됨).
+- 권한은 앱을 지우기 전까지 유지됩니다 (재부팅·업데이트해도 그대로).
+- Android 10 이하이거나 잘 안 될 때: [다른 방법] → PC(USB + `adb shell pm grant com.spatialsound.app android.permission.DUMP`) 또는 이미 쓰는 Shizuku.
 
 > 왜 필요한가요? 캡처해서 3D로 바꾼 소리를 내보낼 때 유튜브 **원래 소리를 꺼야** 소리가 두 번 안 들립니다.
-> 다른 앱의 오디오 세션을 찾으려면 시스템 덤프 권한(DUMP)이 필요한데, 이 권한은 ADB로만 줄 수 있습니다.
-> (RootlessJamesDSP 와 같은 방식. 화면은 녹화하지 않고 소리만 가져옵니다.)
+> 다른 앱의 오디오 세션을 찾으려면 시스템 덤프 권한(DUMP)이 필요한데, 이 권한은 ADB(셸)로만 줄 수 있습니다.
+> 앱이 폰 자신의 무선 디버깅(ADB)에 [libadb-android](https://github.com/MuntashirAkon/libadb-android) 로 접속해서
+> `pm grant` 를 한 번 실행합니다 (페어링 키는 이 앱 전용, 앱 안에만 보관).
+> (RootlessJamesDSP 와 같은 음소거 방식. 화면은 녹화하지 않고 소리만 가져옵니다.)
+
+### 자동 업데이트 (v2.0~)
+- 앱을 열면 6시간에 한 번 GitHub 의 최신 릴리스를 확인 → 새 버전이면 **[지금 업데이트]** → 받아서 설치 창 (설정·권한 유지)
+- 처음 한 번은 '이 출처 허용'(출처를 알 수 없는 앱 설치)을 켜야 합니다. 받은 APK 는 앱 이름과 **서명 키**가 같은지 확인한 뒤 설치합니다.
+- 화면 아래 **🔄 업데이트 확인** 으로 바로 확인, **새 버전 자동 확인** 으로 끄고 켜기.
+- 서명 키: CI 가 항상 같은 키로 서명합니다. 저장소 비밀값 `APK_SIGNING_SECRET` 을 넣어 두면 그 값에서 같은 키를 만들어서
+  영구히 유지되고, 없으면 Actions 캐시에 보관한 키를 씁니다 (7일 넘게 빌드가 없으면 캐시가 지워질 수 있음).
 
 ### 강력 3D 엔진 구성 (`BinauralProcessor.kt`)
 1. **머리 모델 HRTF** (Brown & Duda 구조형 모델): 양 귀 시간차(구형 머리 8.75cm), 머리 그림자(소리 온 쪽 고음 +6dB / 반대쪽 최대 -20dB), 귓바퀴 반사(앞뒤 단서)
@@ -198,6 +211,11 @@ app/src/main/java/com/spatialsound/app/
 ├── Strong3DService.kt      강력 3D 모드: 내부 오디오 캡처 → 직접 처리 → 출력
 ├── BinauralProcessor.kt    강력 3D 모드의 바이노럴 DSP 엔진
 ├── SessionMuter.kt         원래 앱 소리 음소거 (DUMP 권한으로 세션 탐색)
+├── AdbPairService.kt       무선 디버깅 페어링 (알림에서 코드 입력) → DUMP 권한 스스로 받기
+├── WirelessAdb.kt          이 폰의 ADB 에 페어링·접속·셸 명령 (libadb-android)
+├── AdbKey.kt               페어링용 RSA 키 + 자체 서명 인증서 (앱 안에 보관)
+├── AppUpdater.kt           GitHub 릴리스 확인 → APK 받기 → 서명 확인 → 설치
+├── UpdateReceiver.kt       설치 진행 상황 / 업데이트 완료 알림
 ├── SoundController.kt      설정에 맞춰 두 모드 서비스 전환
 ├── SpatialAudioService.kt  포그라운드 서비스: 세션 0 + 앱별 세션 관리, 헤드폰 감지, 제어권 감시
 ├── SpatialEngine.kt        세션 하나에 붙는 효과 체인 (Virtualizer/BassBoost/Equalizer/PresetReverb)
@@ -206,3 +224,8 @@ app/src/main/java/com/spatialsound/app/
 ├── TestSound.kt            바이노럴 회전 테스트음 생성
 └── EngineState.kt          서비스 → 화면 상태 전달
 ```
+
+## 오픈소스 라이선스
+앱 화면 맨 아래 **오픈소스 라이선스 보기** (`app/src/main/assets/open_source_licenses.txt`):
+libadb-android (Apache-2.0 로 사용), spake2-java (LGPL-3.0, 수정 없이 사용 — 이 앱 소스가 공개되어 있어 바꿔 빌드 가능),
+Conscrypt·BoringSSL (Apache-2.0), Bouncy Castle (MIT), AndroidHiddenApiBypass (Apache-2.0), Shizuku API (MIT).
