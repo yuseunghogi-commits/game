@@ -25,6 +25,8 @@ object EngineState {
         val headTrackingOn: Boolean = false,
         val headSensor: String = "",
         val headYaw: Double = 0.0,
+        /** 헤드 트래킹 상태 설명 */
+        val headInfo: String = "",
     )
 
     @Volatile

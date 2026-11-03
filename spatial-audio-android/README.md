@@ -52,6 +52,21 @@ PC 측정 (스테레오 위치 → 들리는 방향): 기존 엔진은 중간 �
 
 **👂 귀 맞춤**: 사람마다 귀 모양이 달라 앞/뒤가 헷갈릴 수 있어서, 실측 데이터를 머리·귀 크기 5단계로 늘이거나 줄여 고를 수 있습니다 (주파수 스케일링). "귀 맞춤 테스트"에서 앞→뒤 소리를 들어 보고 가장 확실한 단계를 고르세요.
 
+### 🧭 헤드 트래킹 (고개를 돌려도 소리가 제자리에)
+강력 3D 모드에서 머리 센서가 있는 이어폰을 고르면, 고개를 돌린 만큼 가상 스피커·반사음을 반대로 돌려
+소리가 공간에 고정됩니다 (앞/뒤 구분과 머리 바깥 느낌이 크게 좋아짐).
+| 장치 | 방식 |
+|---|---|
+| **갤럭시 버즈** (Buds+ 이후: Buds Pro·Buds2·Buds2 Pro·Buds3 계열) | 버즈의 360 오디오용 센서를 블루투스(RFCOMM, 삼성 관리 서비스)로 직접 읽음. 약 50회/초 쿼터니언 → 좌우 회전각 |
+| **이어폰 표준 머리 센서** (Android 13+) | Android 표준 `TYPE_HEAD_TRACKER` 를 공개하는 이어폰 (픽셀 버즈 프로 등) |
+
+갤럭시 버즈 프로토콜·각도 계산 참고 (MIT): [BudsPro-Headtracking](https://github.com/timschneeb/BudsPro-Headtracking) ·
+[GalaxyBudsClient](https://github.com/timschneeb/GalaxyBudsClient) (Tim Schneeberger),
+[galaxy-buds-headtracker](https://github.com/AkbulutMirac/galaxy-buds-headtracker) (AkbulutMirac).
+PC 검증: 보내는 프레임이 표준 CRC-16/XMODEM 계산과 바이트 단위로 일치, 귀에 0~60° 기울여 꽂은 경우에도
+좌우 회전은 정확히(±0.0°), 끄덕임은 좌우로 새지 않음(0.00°). 실제 버즈 연결은 기기에서 확인 필요.
+헤드폰(Bose QC 등)은 머리 센서가 없어 지원되지 않습니다.
+
 ### 🎧 헤드폰 보정
 3D 음향은 평평한 헤드폰을 가정하는데 실제 헤드폰은 모델마다 고유 음색(특히 2~10kHz 의 좁은 봉우리/골짜기)이 있어
 방향 단서를 흐립니다. 쓰는 헤드폰을 고르면 측정 데이터 기반 보정 EQ(바이쿼드 10개)를 마지막 단계에 겁니다.

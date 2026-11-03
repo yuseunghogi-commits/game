@@ -24,19 +24,25 @@ class HeadTracker(
     context: Context,
     private val handler: Handler,
     private val onChange: () -> Unit,
-) {
+) : HeadSource {
     private val sm = context.getSystemService(SensorManager::class.java)
     private var sensor: Sensor? = null
     private var running = false
 
     /** 정면 기준 머리 각도 (오른쪽 +) */
-    @Volatile var yawDeg = 0.0
+    @Volatile override var yawDeg = 0.0
         private set
     var available = false
         private set
     var sensorName = ""
         private set
-    var invert = false
+    override var invert = false
+    override val activeName: String get() = if (available) sensorName else ""
+    override val info: String get() = when {
+        Build.VERSION.SDK_INT < 33 -> "Android 13 이상에서만 지원됩니다"
+        available -> "$sensorName 동작 중"
+        else -> "이어폰 표준 머리 센서를 찾지 못했습니다 — 이 방식은 픽셀 버즈 프로 등 일부 이어폰만 지원합니다"
+    }
 
     private var rawYaw = 0.0
     private var center = 0.0
@@ -79,7 +85,7 @@ class HeadTracker(
         }
     }
 
-    fun start() {
+    override fun start() {
         if (running) return
         running = true
         if (Build.VERSION.SDK_INT < 33) {
@@ -91,7 +97,7 @@ class HeadTracker(
         onChange()
     }
 
-    fun stop() {
+    override fun stop() {
         if (!running) return
         running = false
         runCatching { sm.unregisterDynamicSensorCallback(dynamicCallback) }
@@ -100,7 +106,7 @@ class HeadTracker(
     }
 
     /** 지금 보고 있는 방향을 정면으로 */
-    fun recenter() {
+    override fun recenter() {
         needCenter = true
     }
 

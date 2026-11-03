@@ -57,7 +57,7 @@ class MainActivity : Activity() {
     private lateinit var labelRearLevel: TextView
     private lateinit var labelCenter: TextView
     private lateinit var seekCenter: SeekBar
-    private lateinit var switchHead: Switch
+    private lateinit var spinnerHeadSource: Spinner
     private lateinit var switchHeadInvert: Switch
     private lateinit var textHead: TextView
     private lateinit var seekWidth: SeekBar
@@ -110,7 +110,8 @@ class MainActivity : Activity() {
         labelRearLevel = findViewById(R.id.labelRearLevel)
         labelCenter = findViewById(R.id.labelCenter)
         seekCenter = findViewById(R.id.seekCenter)
-        switchHead = findViewById(R.id.switchHead)
+        spinnerHeadSource = findViewById(R.id.spinnerHeadSource)
+        spinnerHeadSource.adapter = darkAdapter(HEAD_SOURCES)
         switchHeadInvert = findViewById(R.id.switchHeadInvert)
         textHead = findViewById(R.id.textHead)
         seekWidth = findViewById(R.id.seekWidth)
@@ -144,6 +145,9 @@ class MainActivity : Activity() {
         bindUi()
         syncServices()
     }
+
+    private fun needsBluetoothPermission() = Build.VERSION.SDK_INT >= 31 &&
+        checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
 
     private fun needsNotificationPermission() = Build.VERSION.SDK_INT >= 33 &&
         checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -210,7 +214,7 @@ class MainActivity : Activity() {
         seekCenter.progress = settings.centerLevel
         labelCenter.visibility = if (seven) android.view.View.VISIBLE else android.view.View.GONE
         seekCenter.visibility = labelCenter.visibility
-        switchHead.isChecked = settings.headTracking
+        spinnerHeadSource.setSelection(settings.headSource.coerceIn(0, HEAD_SOURCES.lastIndex))
         switchHeadInvert.isChecked = settings.headInvert
         spinnerPreset.setSelection(settings.presetIndex.coerceIn(0, SOUND_PRESETS.lastIndex))
         spinnerReverb.setSelection(settings.reverbPreset.coerceIn(0, REVERB_NAMES.lastIndex))
@@ -268,10 +272,18 @@ class MainActivity : Activity() {
             if (!binding && checked && settings.strongMode) { commit(settings.copy(strongMode = false)); bindUi() }
         }
         findViewById<Button>(R.id.buttonDump).setOnClickListener { showDumpHelp() }
-        switchHead.setOnCheckedChangeListener { _, checked ->
-            if (binding) return@setOnCheckedChangeListener
-            commit(settings.copy(headTracking = checked))
-            if (checked && !HeadTracker.hasSensor(this)) showHeadHelp()
+        spinnerHeadSource.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
+                if (binding || pos == settings.headSource) return
+                if (pos == 1 && needsBluetoothPermission()) {
+                    // 버즈에 직접 연결하려면 '근처 기기' 권한 필요 → 허용되면 그때 선택 반영
+                    requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), REQ_BT)
+                    return
+                }
+                commit(settings.copy(headSource = pos))
+                if (pos == 2 && !HeadTracker.hasSensor(this@MainActivity)) showHeadHelp()
+            }
+            override fun onNothingSelected(p: AdapterView<*>?) {}
         }
         switchHeadInvert.setOnCheckedChangeListener { _, checked ->
             if (!binding) commit(settings.copy(headInvert = checked))
@@ -442,15 +454,15 @@ class MainActivity : Activity() {
     private fun renderHead(s: EngineState.Snapshot) {
         speakerLayout.headYaw = s.headYaw.toFloat()
         textHead.text = when {
-            !settings.headTracking -> "꺼짐 — 켜면 이어폰 센서로 머리 방향을 따라갑니다"
-            Build.VERSION.SDK_INT < 33 -> "⚠️ Android 13 이상에서만 지원됩니다"
+            settings.headSource == 0 -> "꺼짐 — 갤럭시 버즈 등 머리 센서가 있는 이어폰을 고르면 고개를 돌려도 소리가 제자리에 머뭅니다 (헤드폰 Bose QC 는 센서 없음)"
+            settings.headSource == 2 && Build.VERSION.SDK_INT < 33 -> "⚠️ 표준 센서 방식은 Android 13 이상에서만 지원됩니다"
             !s.strongRunning -> "강력 3D 모드가 켜지면 시작됩니다"
             s.headSensor.isNotEmpty() -> {
                 val yaw = s.headYaw.toInt()
                 val dir = when { yaw > 3 -> "오른쪽 ${yaw}°"; yaw < -3 -> "왼쪽 ${-yaw}°"; else -> "정면" }
-                "✅ 센서 연결됨 (${s.headSensor})\n현재 머리 방향: $dir"
+                "✅ ${s.headSensor}\n현재 머리 방향: $dir"
             }
-            else -> "⚠️ 이어폰 머리 센서를 찾지 못했습니다 (여기를 눌러 안내 보기)\n→ 이어폰이 'Android 헤드 트래킹'을 지원해야 합니다"
+            else -> "⏳ ${s.headInfo.ifBlank { "연결 준비 중…" }}\n(여기를 누르면 안내)"
         }
     }
 
@@ -487,16 +499,19 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this)
             .setTitle("헤드 트래킹 안내")
             .setMessage(
-                "고개를 돌려도 소리가 공간의 같은 자리에 머물러, 진짜 스피커 앞에 있는 느낌을 줍니다.\n\n" +
-                "이어폰의 머리 방향 센서를 써야 해서, 이어폰이 Android 표준 헤드 트래킹을 지원해야 합니다 " +
-                "(Android 13+). 지금은 그 센서가 보이지 않습니다.\n\n" +
-                "해 볼 것:\n" +
-                "• 이어폰을 귀에 착용하고 연결된 상태인지 확인\n" +
-                "• 갤럭시 버즈: Galaxy Wearable 앱 → 이어버드 설정 → '360 오디오'/'헤드 트래킹' 켜기, " +
-                "버즈 소프트웨어 최신 업데이트\n" +
-                "• 설정 → 연결 → 블루투스 → 이어폰 ⚙️ → '공간 음향/헤드 트래킹' 항목이 있으면 켜기\n\n" +
-                "그래도 안 보이면 그 이어폰은 다른 앱에 센서를 공개하지 않는 모델입니다 " +
-                "(삼성 버즈는 삼성 자체 기능에만 센서를 쓰는 경우가 많습니다)."
+                "고개를 돌려도 소리가 공간의 같은 자리에 머물러, 진짜 스피커 앞에 있는 느낌을 줍니다. " +
+                "앞/뒤 구분과 '머리 바깥에서 들리는 느낌'이 가장 크게 좋아지는 기능입니다.\n\n" +
+                "■ 갤럭시 버즈 (블루투스 직접 연결)\n" +
+                "버즈의 360 오디오용 센서를 앱이 직접 읽습니다. Buds+ 이후 모델(Buds Pro·Buds2·Buds2 Pro·Buds3 계열)용이며, " +
+                "공개 프로젝트에서 Buds Pro·Buds2 로 확인된 방식입니다.\n" +
+                "• 버즈를 폰에 연결하고 귀에 착용하세요. 착용하는 순간의 방향이 정면이 됩니다.\n" +
+                "• '버즈에 연결하지 못했습니다'가 계속 뜨면: 삼성 Galaxy Wearable(버즈 플러그인)이 같은 연결을 쓰고 있을 수 있습니다. " +
+                "설정 → 애플리케이션 → Galaxy Buds… Plugin → 강제 중지 후 다시 시도하세요.\n" +
+                "• 삼성 '360 오디오'는 꺼 두세요 (소리가 두 번 처리될 수 있음).\n" +
+                "• 방향이 반대로 느껴지면 '방향 반대로'를 켜세요.\n\n" +
+                "■ 이어폰 표준 센서 (Android 13+)\n" +
+                "Android 표준 머리 센서를 공개하는 이어폰(픽셀 버즈 프로 등)용입니다.\n\n" +
+                "헤드폰(Bose QC 등)은 머리 센서가 없어서 헤드 트래킹을 쓸 수 없습니다."
             )
             .setPositiveButton("확인", null)
             .show()
@@ -573,6 +588,15 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_BT) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                commit(settings.copy(headSource = 1))
+            } else {
+                Toast.makeText(this, "버즈에 연결하려면 '근처 기기' 권한이 필요합니다", Toast.LENGTH_LONG).show()
+            }
+            bindUi()
+            return
+        }
         if (requestCode != REQ_RECORD) return
         val idx = permissions.indexOf(Manifest.permission.RECORD_AUDIO)
         if (idx >= 0 && grantResults.getOrNull(idx) == PackageManager.PERMISSION_GRANTED) {
@@ -738,6 +762,13 @@ class MainActivity : Activity() {
         private const val REQ_PROJECTION = 10
         private const val REQ_RECORD = 11
         private const val REQ_SHIZUKU = 12
+        private const val REQ_BT = 13
+        /** 헤드 트래킹 장치 (SpatialSettings.headSource 순서) */
+        private val HEAD_SOURCES = listOf(
+            "끄기",
+            "갤럭시 버즈 (블루투스로 센서 직접 연결)",
+            "이어폰 표준 머리 센서 (Android 13+, 픽셀 버즈 등)",
+        )
         const val EXTRA_START = "start"
     }
 }

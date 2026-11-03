@@ -251,10 +251,18 @@
             android:orientation="vertical"
             android:padding="10dp">
 
-            <Switch
-                android:id="@+id/switchHead"
-                style="@style/OptionSwitch"
-                android:text="🧭 헤드 트래킹 — 고개를 돌려도 소리가 제자리에" />
+            <TextView
+                style="@style/SliderLabel"
+                android:layout_marginTop="0dp"
+                android:text="🧭 헤드 트래킹 — 고개를 돌려도 소리가 제자리에 (이어폰 센서 사용)" />
+
+            <Spinner
+                android:id="@+id/spinnerHeadSource"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="6dp"
+                android:layout_marginBottom="6dp"
+                android:background="#FF2A2A38" />
 
             <TextView
                 android:id="@+id/textHead"

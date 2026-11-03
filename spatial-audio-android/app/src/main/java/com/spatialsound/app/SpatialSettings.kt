@@ -39,8 +39,8 @@ data class SpatialSettings(
     val centerLevel: Int = 70,
     /** 헤드폰 보정 프로필 (0 = 끔, n = HeadphoneEq.profiles[n-1]) */
     val hpEq: Int = 0,
-    /** 강력 모드: 헤드 트래킹 (이어폰 센서로 고개를 돌려도 소리 위치 고정) */
-    val headTracking: Boolean = false,
+    /** 강력 모드 헤드 트래킹 장치: 0 = 끔, 1 = 갤럭시 버즈(블루투스 직접), 2 = 이어폰 표준 머리 센서(Android 13+) */
+    val headSource: Int = 0,
     /** 헤드 트래킹 방향이 반대로 느껴질 때 */
     val headInvert: Boolean = false,
 ) {
@@ -56,7 +56,7 @@ data class SpatialSettings(
             .putInt("preset", presetIndex)
             .putBoolean("strongMode", strongMode)
             .putInt("width", width)
-            .putBoolean("headTracking", headTracking)
+            .putInt("headSource", headSource)
             .putInt("frontAngle", frontAngle)
             .putInt("rearAngle", rearAngle)
             .putInt("rearLevel", rearLevel)
@@ -86,7 +86,9 @@ data class SpatialSettings(
                 presetIndex = p.getInt("preset", d.presetIndex),
                 strongMode = p.getBoolean("strongMode", d.strongMode),
                 width = p.getInt("width", d.width),
-                headTracking = p.getBoolean("headTracking", d.headTracking),
+                // 예전 버전의 켜기/끄기 스위치(표준 센서)를 새 선택으로 옮김
+                headSource = if (p.contains("headSource")) p.getInt("headSource", 0)
+                else if (p.getBoolean("headTracking", false)) 2 else 0,
                 frontAngle = p.getInt("frontAngle", d.frontAngle),
                 rearAngle = p.getInt("rearAngle", d.rearAngle),
                 rearLevel = p.getInt("rearLevel", d.rearLevel),
