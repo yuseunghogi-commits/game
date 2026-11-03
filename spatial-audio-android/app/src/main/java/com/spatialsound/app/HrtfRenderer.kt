@@ -10,16 +10,20 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * 실측 HRTF 렌더러 (주파수 영역, STFT 50% 겹침, 제로패딩 → 선형 컨볼루션과 동일).
+ * 실측 HRTF 렌더러 (주파수 영역, STFT 50% 겹침, 제로패딩 → 고정 필터는 선형 컨볼루션과 동일).
  *
- *  ■ SPEAKERS (공간 모드 · 실측): 스테레오 L/R 을 앞 가상 스피커 ±front 와 뒤 스피커 ±rear 에 놓고
- *    실제 사람 귀(더미헤드)에서 측정한 HRTF 로 들려준다.
+ *  ■ SPEAKERS (공간 모드 · 실측) — 7개 가상 스피커
+ *      앞 왼쪽/오른쪽(±front) + 가운데(0°) + 옆(±95°) + 뒤(±rear)
+ *      주파수 성분마다 ① 직접음/배경음 분리 ② 가운데 성분 추출을 해서
+ *      보컬·대사 같은 가운데 소리는 가운데 스피커로, 박수·관중·울림 같은 배경음은 옆/뒤 스피커로 보낸다.
+ *      (예전처럼 앞 소리의 복사본을 뒤로 보내지 않아서 소리가 뒤로 끌려가거나 탁해지지 않음)
  *
- *  ■ LOCALIZE (정위 모드): 소리를 주파수 성분별로 쪼개서 각 성분이 스테레오에서 얼마나 왼쪽/오른쪽에
- *    있는지 분석 → 그 성분만 정확히 해당 방향(각도)에 놓는다. 두 스피커 사이의 "흐릿한 가상 음상" 대신
- *    성분마다 진짜 방향을 줘서 어디서 소리가 나는지 훨씬 또렷하다.
- *    좌우 상관이 낮은 성분(공간 울림, 관중, 바람소리 등)은 뒤/옆으로 보내 앞쪽 소리와 분리한다.
+ *  ■ LOCALIZE (정위 모드) — 성분마다 스테레오 위치에 맞는 정확한 방향(±spread°)에 하나씩 배치,
+ *      배경음은 옆/뒤로 분리.
  *
+ *  ■ 방 버스 — 벽 반사음과 잔향을 45° 간격 8방향으로 받아 실측 HRTF 로 들려준다 (BinauralProcessor 가 채움).
+ *
+ * 모든 방향은 headYaw 만큼 반대로 돌려서 렌더링 (헤드 트래킹).
  * 지연(latency) = [WIN] 샘플 (48kHz 에서 21ms).
  */
 class HrtfRenderer(private val fs: Int, base: HrirSet) {
@@ -28,11 +32,17 @@ class HrtfRenderer(private val fs: Int, base: HrirSet) {
 
     @Volatile var mode = Mode.SPEAKERS
     @Volatile var frontAngle = 45.0
-    @Volatile var rearAngle = 125.0
-    @Volatile var rearLevel = 0.4
+    @Volatile var rearAngle = 135.0
+    /** 배경음 중 옆/뒤로 보낼 비율 (0 = 전부 앞, 1 = 전부 옆/뒤) */
+    @Volatile var rearLevel = 0.45
+    /** 가운데 스피커로 보낼 가운데 성분 비율 (0 = 가운데 스피커 없음) */
+    @Volatile var centerLevel = 0.7
     /** 정위 모드: 스테레오 끝(완전 왼쪽/오른쪽)이 몇 도에 놓일지 */
     @Volatile var spread = 90.0
     @Volatile var headYaw = 0.0
+
+    /** 검증용: 마지막 프레임에서 앞 L/R · 가운데 · 옆/뒤(배경음)로 간 에너지 */
+    @JvmField val routedEnergy = DoubleArray(3)
 
     private val fft = Fft(N)
     private val bins = N / 2 + 1
@@ -61,7 +71,7 @@ class HrtfRenderer(private val fs: Int, base: HrirSet) {
         val im = Array(set.dirs) { Array(2) { FloatArray(bins) } }
         val bufR = FloatArray(N)
         val bufI = FloatArray(N)
-        val taps = min(set.taps, N - WIN)
+        val taps = min(set.taps, N - WIN - MAX_DELAY)
         for (d in 0 until set.dirs) for (e in 0..1) {
             bufR.fill(0f); bufI.fill(0f)
             System.arraycopy(set.data[d][e], 0, bufR, 0, taps)
@@ -76,6 +86,7 @@ class HrtfRenderer(private val fs: Int, base: HrirSet) {
     private val window = FloatArray(WIN) { (0.5 - 0.5 * cos(2 * PI * it / WIN)).toFloat() } // 주기 Hann (50% 겹침 합 = 1)
     private val inL = FloatArray(WIN)
     private val inR = FloatArray(WIN)
+    private val busIn = Array(NB) { FloatArray(WIN) }
     private var inPos = WIN - HOP // 앞쪽은 0 으로 채운 상태에서 시작 → 첫 프레임까지 HOP 샘플
     private val olaL = FloatArray(N)
     private val olaR = FloatArray(N)
@@ -83,36 +94,61 @@ class HrtfRenderer(private val fs: Int, base: HrirSet) {
     private val outR = FloatArray(HOP)
     private var outPos = 0
 
-    private val xLr = FloatArray(N); private val xLi = FloatArray(N)
-    private val xRr = FloatArray(N); private val xRi = FloatArray(N)
-    private val yLr = FloatArray(N); private val yLi = FloatArray(N)
-    private val yRr = FloatArray(N); private val yRi = FloatArray(N)
+    // FFT 작업 공간 (실수 신호 두 개를 복소 FFT 하나로 묶어서 계산)
+    private val zr = FloatArray(N); private val zi = FloatArray(N)
+    private val xLr = FloatArray(bins); private val xLi = FloatArray(bins)
+    private val xRr = FloatArray(bins); private val xRi = FloatArray(bins)
+    private val bR = Array(NB) { FloatArray(bins) }; private val bI = Array(NB) { FloatArray(bins) }
+    private val yLr = FloatArray(bins); private val yLi = FloatArray(bins)
+    private val yRr = FloatArray(bins); private val yRi = FloatArray(bins)
 
-    // 정위 모드 통계 (주파수별, 프레임 간 평활)
-    private val pLL = FloatArray(bins)
-    private val pRR = FloatArray(bins)
-    private val pLRr = FloatArray(bins)
-    private val pLRi = FloatArray(bins)
-
-    // 주변음(앰비언스) 성분 버퍼
+    // 가상 스피커 신호 (주파수 영역)
+    private val fLr = FloatArray(bins); private val fLi = FloatArray(bins)
+    private val fRr = FloatArray(bins); private val fRi = FloatArray(bins)
+    private val cRr = FloatArray(bins); private val cIi = FloatArray(bins)
     private val aLr = FloatArray(bins); private val aLi = FloatArray(bins)
     private val aRr = FloatArray(bins); private val aRi = FloatArray(bins)
 
-    private val lowBin = (130.0 * N / fs).roundToInt() // 이 아래 저음은 방향 없이 가운데로 (펀치감 유지)
+    // 분석 통계 (시간 평활) + 주파수 평활본
+    private val pLL = FloatArray(bins); private val pRR = FloatArray(bins)
+    private val pLRr = FloatArray(bins); private val pLRi = FloatArray(bins)
+    private val sLL = FloatArray(bins); private val sRR = FloatArray(bins)
+    private val sLRr = FloatArray(bins); private val sLRi = FloatArray(bins)
+    private val cum = DoubleArray(bins + 1)
 
-    /** 샘플 하나 입력 → [WIN] 샘플 전의 처리 결과를 out[0], out[1] 에 */
-    fun process(l: Float, r: Float, out: FloatArray) {
+    private val lowBin = (130.0 * N / fs).roundToInt() // 이 아래 저음은 방향 처리 없이 그대로 (펀치감 유지)
+
+    // 지연(위상 회전) 표 캐시: 지연 샘플 → cos/sin
+    private val phaseCache = HashMap<Int, Array<FloatArray>>()
+    private fun phase(delay: Int): Array<FloatArray> = phaseCache.getOrPut(delay) {
+        val c = FloatArray(bins); val s = FloatArray(bins)
+        for (k in 0 until bins) {
+            val ph = -2.0 * PI * k * delay / N
+            c[k] = cos(ph).toFloat(); s[k] = sin(ph).toFloat()
+        }
+        arrayOf(c, s)
+    }
+    private val dSide = (0.004 * fs).roundToInt().coerceAtMost(MAX_DELAY)
+    private val dRear = (0.009 * fs).roundToInt().coerceAtMost(MAX_DELAY)
+
+    /**
+     * 샘플 하나 입력 → [LATENCY] 샘플 전의 처리 결과를 out[0], out[1] 에.
+     * bus: 방 버스 8개 (null 이면 없음)
+     */
+    fun process(l: Float, r: Float, bus: FloatArray?, out: FloatArray) {
         out[0] = outL[outPos]
         out[1] = outR[outPos]
         outPos++
         inL[inPos] = l
         inR[inPos] = r
+        if (bus != null) for (b in 0 until NB) busIn[b][inPos] = bus[b]
+        else for (b in 0 until NB) busIn[b][inPos] = 0f
         inPos++
         if (inPos == WIN) {
             frame()
-            // 다음 프레임을 위해 반(HOP) 만큼 밀기
             System.arraycopy(inL, HOP, inL, 0, WIN - HOP)
             System.arraycopy(inR, HOP, inR, 0, WIN - HOP)
+            for (b in 0 until NB) System.arraycopy(busIn[b], HOP, busIn[b], 0, WIN - HOP)
             inPos = WIN - HOP
             outPos = 0
         }
@@ -124,117 +160,204 @@ class HrtfRenderer(private val fs: Int, base: HrirSet) {
         return ((a / t.step).roundToInt()) % t.dirs
     }
 
+    /** 두 실수 신호 a, b 를 창을 씌워 복소 FFT 하나로 변환 → 각자의 스펙트럼 */
+    private fun fft2(a: FloatArray, b: FloatArray, ar: FloatArray, ai: FloatArray, br: FloatArray, bi: FloatArray) {
+        for (i in 0 until N) {
+            if (i < WIN) { zr[i] = a[i] * window[i]; zi[i] = b[i] * window[i] } else { zr[i] = 0f; zi[i] = 0f }
+        }
+        fft.transform(zr, zi)
+        for (k in 0 until bins) {
+            val m = (N - k) % N
+            ar[k] = 0.5f * (zr[k] + zr[m]); ai[k] = 0.5f * (zi[k] - zi[m])
+            br[k] = 0.5f * (zi[k] + zi[m]); bi[k] = 0.5f * (zr[m] - zr[k])
+        }
+    }
+
     private fun frame() {
         val t = table
-        for (i in 0 until N) {
-            if (i < WIN) {
-                xLr[i] = inL[i] * window[i]; xRr[i] = inR[i] * window[i]
-            } else {
-                xLr[i] = 0f; xRr[i] = 0f
-            }
-            xLi[i] = 0f; xRi[i] = 0f
-        }
-        fft.transform(xLr, xLi)
-        fft.transform(xRr, xRi)
+        fft2(inL, inR, xLr, xLi, xRr, xRi)
+        var hasBus = false
+        outer@ for (b in 0 until NB) for (v in busIn[b]) if (v != 0f) { hasBus = true; break@outer }
+        if (hasBus) for (p in 0 until NB / 2) fft2(busIn[2 * p], busIn[2 * p + 1], bR[2 * p], bI[2 * p], bR[2 * p + 1], bI[2 * p + 1])
 
         yLr.fill(0f); yLi.fill(0f); yRr.fill(0f); yRi.fill(0f)
+        analyse()
         if (mode == Mode.SPEAKERS) speakers(t) else localize(t)
+        if (hasBus) for (b in 0 until NB) addSource(t, bR[b], bI[b], BUS_ANGLES[b], 1f, 0)
 
-        // 실수 신호 → 켤레 대칭 채우고 역변환
-        for (k in 1 until N / 2) {
-            yLr[N - k] = yLr[k]; yLi[N - k] = -yLi[k]
-            yRr[N - k] = yRr[k]; yRi[N - k] = -yRi[k]
-        }
+        // 두 귀 출력을 복소 역FFT 하나로: w = YL + j·YR  (실수부 = 왼쪽, 허수부 = 오른쪽)
         yLi[0] = 0f; yRi[0] = 0f; yLi[N / 2] = 0f; yRi[N / 2] = 0f
-        fft.transform(yLr, yLi, inverse = true)
-        fft.transform(yRr, yRi, inverse = true)
+        for (k in 0..N / 2) {
+            zr[k] = yLr[k] - yRi[k]; zi[k] = yLi[k] + yRr[k]
+        }
+        for (k in N / 2 + 1 until N) {
+            val m = N - k
+            zr[k] = yLr[m] + yRi[m]; zi[k] = yRr[m] - yLi[m]
+        }
+        fft.transform(zr, zi, inverse = true)
 
-        // 겹쳐 더하기
-        for (i in 0 until N) { olaL[i] += yLr[i]; olaR[i] += yRr[i] }
+        for (i in 0 until N) { olaL[i] += zr[i]; olaR[i] += zi[i] }
         System.arraycopy(olaL, 0, outL, 0, HOP)
         System.arraycopy(olaR, 0, outR, 0, HOP)
         System.arraycopy(olaL, HOP, olaL, 0, N - HOP); java.util.Arrays.fill(olaL, N - HOP, N, 0f)
         System.arraycopy(olaR, HOP, olaR, 0, N - HOP); java.util.Arrays.fill(olaR, N - HOP, N, 0f)
     }
 
-    /** y += x · H(dir) · g · e^{-jωd} (d = 지연 샘플) */
+    /**
+     * 좌우 통계: 시간 평활(약 25ms) 후 주파수 방향으로도 평활(고음일수록 넓게).
+     * 짧은 평균만 쓰면 서로 관계없는 좌우 신호도 "비슷하다"고 잘못 판단하기 쉬워서 (상관 과대추정) 두 방향으로 평균.
+     */
+    private fun analyse() {
+        val a = 0.55f
+        for (k in 0 until bins) {
+            val lr = xLr[k]; val li = xLi[k]; val rr = xRr[k]; val ri = xRi[k]
+            pLL[k] = a * pLL[k] + (1 - a) * (lr * lr + li * li)
+            pRR[k] = a * pRR[k] + (1 - a) * (rr * rr + ri * ri)
+            pLRr[k] = a * pLRr[k] + (1 - a) * (lr * rr + li * ri)
+            pLRi[k] = a * pLRi[k] + (1 - a) * (li * rr - lr * ri)
+        }
+        smooth(pLL, sLL); smooth(pRR, sRR); smooth(pLRr, sLRr); smooth(pLRi, sLRi)
+    }
+
+    private fun smooth(src: FloatArray, dst: FloatArray) {
+        cum[0] = 0.0
+        for (k in 0 until bins) cum[k + 1] = cum[k] + src[k]
+        for (k in 0 until bins) {
+            val h = 1 + k / 32 // 저음 ±1칸, 고음으로 갈수록 넓게 (5kHz ≈ ±7칸)
+            val lo = max(0, k - h); val hi = min(bins - 1, k + h)
+            dst[k] = ((cum[hi + 1] - cum[lo]) / (hi - lo + 1)).toFloat()
+        }
+    }
+
+    /** y += x · H(dir) · g · e^{-jωd} */
     private fun addSource(t: Table, xr: FloatArray, xi: FloatArray, deg: Double, g: Float, delay: Int) {
         val d = dirIndex(t, deg)
         val hLr = t.re[d][0]; val hLi = t.im[d][0]
         val hRr = t.re[d][1]; val hRi = t.im[d][1]
-        for (k in 0 until bins) {
-            var ar = xr[k] * g
-            var ai = xi[k] * g
-            if (delay != 0) {
-                val ph = -2.0 * PI * k * delay / N
-                val c = cos(ph).toFloat(); val s = sin(ph).toFloat()
-                val tr = ar * c - ai * s
-                ai = ar * s + ai * c
-                ar = tr
+        if (delay == 0) {
+            for (k in 0 until bins) {
+                val ar = xr[k] * g; val ai = xi[k] * g
+                yLr[k] += ar * hLr[k] - ai * hLi[k]; yLi[k] += ar * hLi[k] + ai * hLr[k]
+                yRr[k] += ar * hRr[k] - ai * hRi[k]; yRi[k] += ar * hRi[k] + ai * hRr[k]
             }
-            yLr[k] += ar * hLr[k] - ai * hLi[k]; yLi[k] += ar * hLi[k] + ai * hLr[k]
-            yRr[k] += ar * hRr[k] - ai * hRi[k]; yRi[k] += ar * hRi[k] + ai * hRr[k]
+        } else {
+            val (c, s) = phase(delay)
+            for (k in 0 until bins) {
+                val xr0 = xr[k] * g; val xi0 = xi[k] * g
+                val ar = xr0 * c[k] - xi0 * s[k]
+                val ai = xr0 * s[k] + xi0 * c[k]
+                yLr[k] += ar * hLr[k] - ai * hLi[k]; yLi[k] += ar * hLi[k] + ai * hLr[k]
+                yRr[k] += ar * hRr[k] - ai * hRi[k]; yRi[k] += ar * hRi[k] + ai * hRr[k]
+            }
         }
     }
 
+    /** 직접음 비율 (0 = 배경음, 1 = 방향이 뚜렷한 소리) */
+    private fun directness(k: Int): Float {
+        val tot = sLL[k] + sRR[k] + 1e-20f
+        val cross = sqrt(sLRr[k] * sLRr[k] + sLRi[k] * sLRi[k])
+        val coh = (cross / sqrt(sLL[k] * sRR[k] + 1e-30f)).coerceIn(0f, 1f)
+        // 한쪽에만 있는 소리는 상관이 낮아도 방향이 뚜렷 → 직접음
+        val side = abs(sRR[k] - sLL[k]) / tot
+        // 짧은 평균에서 생기는 추정 편향 보정: 서로 무관한 좌우 신호도 상관 ~0.3, 좌우 차이 ~0.3 정도는 우연히 나옴
+        val c = ((coh - 0.3f) / 0.7f).coerceIn(0f, 1f)
+        val sd = ((side - 0.4f) / 0.6f).coerceIn(0f, 1f)
+        return max(c, sd)
+    }
+
     private fun speakers(t: Table) {
+        val cl = centerLevel.toFloat()
+        val r = rearLevel.toFloat().coerceIn(0f, 1f)
+        val frontAmb = sqrt(1f - r)
+        val surAmb = sqrt(r)
+        for (k in 0 until bins) {
+            val lr = xLr[k]; val li = xLi[k]; val rr = xRr[k]; val ri = xRi[k]
+            if (k < lowBin) {
+                fLr[k] = lr; fLi[k] = li; fRr[k] = rr; fRi[k] = ri
+                cRr[k] = 0f; cIi[k] = 0f; aLr[k] = 0f; aLi[k] = 0f; aRr[k] = 0f; aRi[k] = 0f
+                continue
+            }
+            val dir = directness(k)
+            val md = sqrt(dir); val ma = sqrt(1f - dir)
+            val ldr = lr * md; val ldi = li * md; val rdr = rr * md; val rdi = ri * md
+            // 가운데 성분: 좌우가 "같을수록"(유사도 ψ → 1) 가운데로
+            val tot = sLL[k] + sRR[k] + 1e-20f
+            val psi = (2f * sqrt(sLRr[k] * sLRr[k] + sLRi[k] * sLRi[k]) / tot).coerceIn(0f, 1f)
+            val p2 = psi * psi
+            val wc = p2 * p2 * cl
+            val cr = wc * 0.5f * (ldr + rdr); val ci = wc * 0.5f * (ldi + rdi)
+            var flr = ldr - cr; var fli = ldi - ci; var frr = rdr - cr; var fri = rdi - ci
+            // 에너지 보존 (가운데를 빼면서 줄어든 만큼 되돌림)
+            val eIn = ldr * ldr + ldi * ldi + rdr * rdr + rdi * rdi
+            val eOut = flr * flr + fli * fli + frr * frr + fri * fri + 2f * (cr * cr + ci * ci)
+            val gN = if (eOut > 1e-24f) sqrt(eIn / eOut).coerceIn(1f, 2f) else 1f
+            flr *= gN; fli *= gN; frr *= gN; fri *= gN
+            cRr[k] = cr * gN * SQRT2; cIi[k] = ci * gN * SQRT2
+            // 배경음: 일부는 앞 스피커, 나머지는 옆/뒤로
+            val alr = lr * ma; val ali = li * ma; val arr = rr * ma; val ari = ri * ma
+            fLr[k] = flr + alr * frontAmb; fLi[k] = fli + ali * frontAmb
+            fRr[k] = frr + arr * frontAmb; fRi[k] = fri + ari * frontAmb
+            aLr[k] = alr * surAmb; aLi[k] = ali * surAmb; aRr[k] = arr * surAmb; aRi[k] = ari * surAmb
+        }
+        var eF = 0.0; var eC = 0.0; var eA = 0.0
+        for (k in lowBin until bins) {
+            eF += (fLr[k] * fLr[k] + fLi[k] * fLi[k] + fRr[k] * fRr[k] + fRi[k] * fRi[k]).toDouble()
+            eC += (cRr[k] * cRr[k] + cIi[k] * cIi[k]).toDouble()
+            eA += (aLr[k] * aLr[k] + aLi[k] * aLi[k] + aRr[k] * aRr[k] + aRi[k] * aRi[k]).toDouble()
+        }
+        routedEnergy[0] = eF; routedEnergy[1] = eC; routedEnergy[2] = eA
         val f = frontAngle
-        addSource(t, xLr, xLi, -f, 1f, 0)
-        addSource(t, xRr, xRi, f, 1f, 0)
-        val rl = rearLevel.toFloat()
-        if (rl > 0.001f) {
-            val dly = (0.007 * fs).roundToInt()
-            addSource(t, xLr, xLi, -rearAngle, rl, dly)
-            addSource(t, xRr, xRi, rearAngle, rl, dly)
+        addSource(t, fLr, fLi, -f, 1f, 0)
+        addSource(t, fRr, fRi, f, 1f, 0)
+        if (cl > 0.001f) addSource(t, cRr, cIi, 0.0, 1f, 0)
+        if (r > 0.001f) {
+            addSource(t, aLr, aLi, -SIDE_ANGLE, SIDE_SHARE, dSide)
+            addSource(t, aRr, aRi, SIDE_ANGLE, SIDE_SHARE, dSide)
+            addSource(t, aLr, aLi, -rearAngle, REAR_SHARE, dRear)
+            addSource(t, aRr, aRi, rearAngle, REAR_SHARE, dRear)
         }
     }
 
     private fun localize(t: Table) {
-        val a = 0.55f // 프레임 간 평활
         val spr = spread
-        val rl = rearLevel.toFloat()
-        val ambDelay = (0.011 * fs).roundToInt()
-
+        val r = rearLevel.toFloat().coerceIn(0f, 1f)
+        val frontAmb = sqrt(1f - r)
+        val surAmb = sqrt(r)
         for (k in 0 until bins) {
             val lr = xLr[k]; val li = xLi[k]; val rr = xRr[k]; val ri = xRi[k]
             val ll = lr * lr + li * li
             val rrE = rr * rr + ri * ri
-            pLL[k] = a * pLL[k] + (1 - a) * ll
-            pRR[k] = a * pRR[k] + (1 - a) * rrE
-            // L·conj(R)
-            pLRr[k] = a * pLRr[k] + (1 - a) * (lr * rr + li * ri)
-            pLRi[k] = a * pLRi[k] + (1 - a) * (li * rr - lr * ri)
-            val tot = pLL[k] + pRR[k] + 1e-12f
-            val coh = (sqrt(pLRr[k] * pLRr[k] + pLRi[k] * pLRi[k]) / sqrt(pLL[k] * pRR[k] + 1e-20f)).coerceIn(0f, 1f)
-            // 한쪽에만 있는 소리는 상관이 낮아도 "방향이 뚜렷한 소리" → 직접음으로
-            val side = abs(pRR[k] - pLL[k]) / tot
-            val direct = max(coh, side)
+            val dir = if (k < lowBin) 1f else directness(k)
+            val md = sqrt(dir); val ma = sqrt(1f - dir)
 
-            // 직접음: 에너지를 보존하는 합 (위상 정렬된 L+R)
+            // 직접음: 에너지를 보존하는 합 (위상 정렬된 L+R) → 성분 하나를 정확한 방향에
             val sr = lr + rr; val si = li + ri
             val sumE = sr * sr + si * si
-            val norm = if (sumE > 1e-20f) sqrt((ll + rrE) / sumE).coerceAtMost(2f) else 0f
-            val dr = sr * norm * direct
-            val di = si * norm * direct
-
-            val pan = (pRR[k] - pLL[k]) / tot // -1 왼쪽 … +1 오른쪽
+            val norm = if (sumE > 1e-24f) sqrt((ll + rrE) / sumE).coerceAtMost(2f) else 0f
+            val dr = sr * norm * md
+            val di = si * norm * md
+            val tot = sLL[k] + sRR[k] + 1e-20f
+            val pan = (sRR[k] - sLL[k]) / tot // -1 왼쪽 … +1 오른쪽
             val deg = if (k < lowBin) 0.0 else spr * pan
             val d = dirIndex(t, deg)
             val hL = t.re[d][0]; val hLi = t.im[d][0]; val hR = t.re[d][1]; val hRi = t.im[d][1]
             yLr[k] += dr * hL[k] - di * hLi[k]; yLi[k] += dr * hLi[k] + di * hL[k]
             yRr[k] += dr * hR[k] - di * hRi[k]; yRi[k] += dr * hRi[k] + di * hR[k]
 
-            // 주변음 = 나머지
-            val amb = 1f - direct
-            aLr[k] = lr * amb; aLi[k] = li * amb
-            aRr[k] = rr * amb; aRi[k] = ri * amb
+            // 배경음
+            fLr[k] = lr * ma * frontAmb; fLi[k] = li * ma * frontAmb
+            fRr[k] = rr * ma * frontAmb; fRi[k] = ri * ma * frontAmb
+            aLr[k] = lr * ma * surAmb; aLi[k] = li * ma * surAmb
+            aRr[k] = rr * ma * surAmb; aRi[k] = ri * ma * surAmb
         }
-        // 주변음: 옆(±100°)과 뒤(±rear)에 나눠서 감싸는 느낌 (양은 rearLevel)
-        val g = 0.55f + 0.9f * rl
-        addSource(t, aLr, aLi, -100.0, g * 0.6f, 0)
-        addSource(t, aRr, aRi, 100.0, g * 0.6f, 0)
-        addSource(t, aLr, aLi, -rearAngle, g * 0.6f, ambDelay)
-        addSource(t, aRr, aRi, rearAngle, g * 0.6f, ambDelay)
+        addSource(t, fLr, fLi, -frontAngle, 1f, 0)
+        addSource(t, fRr, fRi, frontAngle, 1f, 0)
+        if (r > 0.001f) {
+            addSource(t, aLr, aLi, -SIDE_ANGLE, SIDE_SHARE, dSide)
+            addSource(t, aRr, aRi, SIDE_ANGLE, SIDE_SHARE, dSide)
+            addSource(t, aLr, aLi, -rearAngle, REAR_SHARE, dRear)
+            addSource(t, aRr, aRi, rearAngle, REAR_SHARE, dRear)
+        }
     }
 
     companion object {
@@ -242,5 +365,14 @@ class HrtfRenderer(private val fs: Int, base: HrirSet) {
         const val WIN = 1024
         const val HOP = WIN / 2
         const val LATENCY = WIN
+        /** 위상 회전으로 넣는 최대 지연 (샘플) — 제로패딩 여유 */
+        const val MAX_DELAY = 512
+        /** 방 버스 개수와 방향 (i × 45°) — RoomModel 과 같음 */
+        const val NB = RoomModel.BUSES
+        val BUS_ANGLES = DoubleArray(NB) { it * 360.0 / NB }
+        const val SIDE_ANGLE = 95.0
+        private val SIDE_SHARE = sqrt(0.6f)
+        private val REAR_SHARE = sqrt(0.4f)
+        private val SQRT2 = sqrt(2f)
     }
 }

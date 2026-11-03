@@ -35,6 +35,8 @@ data class SpatialSettings(
     val spread: Int = 90,
     /** 귀 맞춤 단계 0..4 (2 = 기본) */
     val earSize: Int = 2,
+    /** 공간 모드(실측): 가운데 스피커로 보낼 가운데 성분 비율 0..100 */
+    val centerLevel: Int = 70,
     /** 헤드폰 보정 프로필 (0 = 끔, n = HeadphoneEq.profiles[n-1]) */
     val hpEq: Int = 0,
     /** 강력 모드: 헤드 트래킹 (이어폰 센서로 고개를 돌려도 소리 위치 고정) */
@@ -62,6 +64,7 @@ data class SpatialSettings(
             .putInt("spread", spread)
             .putInt("earSize", earSize)
             .putInt("hpEq", hpEq)
+            .putInt("centerLevel", centerLevel)
             .putBoolean("headInvert", headInvert)
             .apply()
     }
@@ -91,6 +94,7 @@ data class SpatialSettings(
                 spread = p.getInt("spread", d.spread),
                 earSize = p.getInt("earSize", d.earSize),
                 hpEq = p.getInt("hpEq", d.hpEq),
+                centerLevel = p.getInt("centerLevel", d.centerLevel),
                 headInvert = p.getBoolean("headInvert", d.headInvert),
             )
         }

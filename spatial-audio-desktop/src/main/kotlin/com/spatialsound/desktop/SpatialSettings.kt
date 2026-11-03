@@ -14,6 +14,7 @@ data class SpatialSettings(
     val spread: Int = 90,               // 정위 모드 방향 펼침 30..120°
     val earSize: Int = 2,               // 귀 맞춤 0..4
     val hpEq: Int = 0,                  // 헤드폰 보정 (0 = 끔)
+    val centerLevel: Int = 70,          // 공간 모드: 가운데 스피커 비율 0..100
 )
 
 data class SoundPreset(val name: String, val s: SpatialSettings)

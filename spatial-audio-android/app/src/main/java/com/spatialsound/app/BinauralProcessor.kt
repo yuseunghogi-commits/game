@@ -17,9 +17,13 @@ import kotlin.math.sin
  *    - 양 귀 시간차(ITD): 머리 반지름 8.75cm 구 모델
  *    - 머리 그림자: 소리가 온 쪽 귀는 고음 +6dB, 반대쪽 귀는 고음 -20dB 까지 → 좌우가 또렷해짐
  *    - 귓바퀴 반사(pinna echo): 앞/뒤 구분 단서
- *  ■ 가상 스피커: 앞 L/R (±30°~±70°, '좌우 넓이'), 뒤 서라운드 ±110°
- *  ■ 가상의 방: 스피커마다 벽·바닥·천장 반사음 10개를 각자 도착 방향으로 HRTF 처리 (이미지 소스 근사)
+ *  ■ 가상 스피커: 앞 L/R (±각도), 뒤 서라운드 (±각도)
+ *  ■ 가상의 방: 스피커마다 벽·바닥·천장 반사음을 각자 도착 방향으로 HRTF 처리
  *  ■ 잔향: 8채널 FDN (Feedback Delay Network) — RT60 으로 방/홀 크기 조절
+ *
+ * 실측 모드(공간/정위)에서는 직접음을 HrtfRenderer(실측 HRTF, 7 스피커 업믹스)가 맡고,
+ * 방은 RoomModel(직육면체 방 거울상 반사 1·2차) + FDN 잔향을 8개 방향 버스로 모아
+ * 역시 실측 HRTF 로 렌더링한다 → 방 전체가 실제 귀 특성을 거쳐 들린다.
  *  ■ 저음 보강 + 리미터
  *
  * [process] 는 오디오 스레드 하나에서만 호출된다. [setParams] 는 아무 스레드에서나 호출 가능.
@@ -44,6 +48,12 @@ class BinauralProcessor(private val fs: Int) {
     /** 헤드폰 보정 (null = 끔) */
     private var hpEq: HeadphoneEq.Chain? = null
     private var hpEqIdx = 0
+    private var centerLevel = 0.7
+
+    // --- 실측 모드의 방: 반사음 탭 + 방향 버스 --------------------------------
+    private var roomTaps: RoomModel.Taps? = null
+    private val bus = FloatArray(HrtfRenderer.NB)
+    private var roomNorm = 1f
 
     // --- 실측 HRTF 렌더러 (모드 1, 2) ----------------------------------------
     @Volatile private var renderer: HrtfRenderer? = null
@@ -215,8 +225,12 @@ class BinauralProcessor(private val fs: Int) {
             list += place(1, rearAngle, 0.007, sur, 7000.0, true)
         }
 
-        // 방 반사음: 왼쪽 스피커 기준 (오른쪽은 좌우 대칭)
-        if (early > 0.001f) {
+        // 방 반사음
+        //  - 실측 모드: 직육면체 방 거울상 모델 → 방향 버스 → 실측 HRTF (아래 roomTaps)
+        //  - 기본 모드: 왼쪽 스피커 기준 반사음 표 (오른쪽은 좌우 대칭), 구 모양 머리 모델
+        val modeRoom = if (engineMode == 2) 0.5 else 1.0
+        roomTaps = if (useHrtf && early > 0.001f) RoomModel.build(fs, spk, roomIdx, early * 1.1 * modeRoom) else null
+        if (early > 0.001f && !useHrtf) {
             val scale = room.size
             // 정위 모드는 방향이 흐려지지 않게 반사음을 절반으로
             val g = early * 1.15 / scale.pow(0.35) * (if (engineMode == 2) 0.5 else 1.0)
@@ -232,7 +246,8 @@ class BinauralProcessor(private val fs: Int) {
         // 잔향 설정
         rt60 = room.rt60
         lateGain = (room.late * (0.4 + 0.6 * early) * (if (engineMode == 2) 0.5 else 1.0)).toFloat()
-        preDelay = samples(0.012 * room.size) + latency
+        // 실측 모드는 잔향도 렌더러(지연 LATENCY)를 거치므로 따로 늦출 필요 없음
+        preDelay = samples(0.012 * room.size) + (if (useHrtf) 0 else latency)
         revL.configure(room.size, 1.0)
         revR.configure(room.size, 1.037) // 길이를 살짝 달리해 좌우 잔향을 디코릴레이션
 
@@ -243,6 +258,12 @@ class BinauralProcessor(private val fs: Int) {
             for (r in REFLECTIONS) energy += 2 * (r[2] * g) * (r[2] * g)
         }
         wetNorm = (1.0 / kotlin.math.sqrt(energy / 2.0)).toFloat() * 0.92f
+
+        // 실측 모드 음량 보정: 직접음 1 + 반사음 에너지 + 잔향 에너지(대략)
+        val lateE = if (rt60 > 0.0) (lateGain * 0.6).pow(2) * 2.5 * rt60 else 0.0
+        // 모드별 기준 음량 보정 (측정값: 공간 모드는 가운데·옆 스피커가 더해져 약 2dB 큼) → 원음과 비슷한 크기
+        val trim = if (engineMode == 1) 0.57 else 0.72
+        roomNorm = (trim / kotlin.math.sqrt(1.0 + (roomTaps?.energy ?: 0.0) + lateE)).toFloat()
     }
 
     // --- FDN 잔향 ------------------------------------------------------------
@@ -323,6 +344,7 @@ class BinauralProcessor(private val fs: Int) {
             rearLevel = s.rearLevel / 100.0
             engineMode = s.engineMode
             spreadDeg = s.spread.toDouble()
+            centerLevel = s.centerLevel / 100.0
             earSize = s.earSize
             if (s.hpEq != hpEqIdx) {
                 hpEqIdx = s.hpEq
@@ -334,7 +356,7 @@ class BinauralProcessor(private val fs: Int) {
         }
         // 헤드 트래킹: 1.5° 이상 움직였고 이전 전환이 끝났으면 새 각도로
         val yaw = headYawDeg
-        if (oldSources == null && abs(yaw - appliedYaw) >= 1.5) {
+        if (latency == 0 && oldSources == null && abs(yaw - appliedYaw) >= 1.5) {
             appliedYaw = yaw
             rebuildWithFade()
         }
@@ -352,6 +374,7 @@ class BinauralProcessor(private val fs: Int) {
             it.frontAngle = frontAngle
             it.rearAngle = rearAngle
             it.rearLevel = rearLevel
+            it.centerLevel = centerLevel
             it.spread = spreadDeg
             it.headYaw = headYawDeg
         }
@@ -382,47 +405,75 @@ class BinauralProcessor(private val fs: Int) {
             var outL = 0f
             var outR = 0f
             if (rnd != null) {
-                // 직접음(실측 HRTF) — LATENCY 만큼 늦게 나옴. 나머지 경로도 같은 만큼 늦춘 입력을 씀.
-                rnd.process(l, r, rOut)
-                outL = rOut[0] / wetNorm
-                outR = rOut[1] / wetNorm
+                // ── 실측 모드: 방(반사음 + 잔향)을 방향 버스에 모아서 직접음과 함께 렌더러로 ──
+                java.util.Arrays.fill(bus, 0f)
+                val tp = roomTaps
+                if (tp != null) {
+                    for (i in 0 until tp.n) {
+                        val src = if (tp.input[i] == 0) bufL else bufR
+                        val x = src[(w - tp.delay[i]) and mask]
+                        tp.lp[i] += tp.lpc[i] * (x - tp.lp[i])
+                        val v = tp.lp[i] * tp.gain[i]
+                        bus[tp.busA[i]] += v * tp.wA[i]
+                        bus[tp.busB[i]] += v * tp.wB[i]
+                    }
+                }
+                if (hasLate) {
+                    val di = (w - preDelay) and mask
+                    revLpL += revInLp * (bufL[di] - revLpL)
+                    revLpR += revInLp * (bufR[di] - revLpR)
+                    revL.run(revLpL)
+                    revR.run(revLpR)
+                    // 왼쪽 소리의 잔향은 왼쪽 반공간(왼앞·왼옆·왼뒤 + 정면·정후방)에서, 오른쪽은 오른쪽에서
+                    val g = late * 0.6f
+                    for (i in 0 until FDN_N) {
+                        bus[LATE_BUS_L[i]] += g * LATE_SIGN[i] * revL.damp[i]
+                        bus[LATE_BUS_R[i]] += g * LATE_SIGN[i] * revR.damp[i]
+                    }
+                }
+                // 직접음 + 방 — LATENCY 만큼 늦게 나옴. 원음(드라이)·저음 경로도 같은 만큼 늦춘 입력을 씀.
+                rnd.process(l, r, bus, rOut)
                 val di = (w - lat) and mask
                 l = bufL[di]
                 r = bufR[di]
-            }
-            for (src in srcs) {
-                val b = when (src.input) { 0 -> bufL; 1 -> bufR; else -> bufS }
-                outL += src.gainL * ear(src.left, b, src.baseDelay, src.lpCoef)
-                outR += src.gainR * ear(src.right, b, src.baseDelay, src.lpCoef)
-            }
-            val olds = oldSources
-            if (olds != null) {
-                var oL = 0f
-                var oR = 0f
-                for (src in olds) {
+                val rn = roomNorm
+                outL = dry * l + wet * rn * rOut[0]
+                outR = dry * r + wet * rn * rOut[1]
+            } else {
+                for (src in srcs) {
                     val b = when (src.input) { 0 -> bufL; 1 -> bufR; else -> bufS }
-                    oL += src.gainL * ear(src.left, b, src.baseDelay, src.lpCoef)
-                    oR += src.gainR * ear(src.right, b, src.baseDelay, src.lpCoef)
+                    outL += src.gainL * ear(src.left, b, src.baseDelay, src.lpCoef)
+                    outR += src.gainR * ear(src.right, b, src.baseDelay, src.lpCoef)
                 }
-                val t = fadePos.toFloat() / fadeLen
-                outL = oL + (outL - oL) * t
-                outR = oR + (outR - oR) * t
-                if (++fadePos >= fadeLen) oldSources = null
-            }
+                val olds = oldSources
+                if (olds != null) {
+                    var oL = 0f
+                    var oR = 0f
+                    for (src in olds) {
+                        val b = when (src.input) { 0 -> bufL; 1 -> bufR; else -> bufS }
+                        oL += src.gainL * ear(src.left, b, src.baseDelay, src.lpCoef)
+                        oR += src.gainR * ear(src.right, b, src.baseDelay, src.lpCoef)
+                    }
+                    val t = fadePos.toFloat() / fadeLen
+                    outL = oL + (outL - oL) * t
+                    outR = oR + (outR - oR) * t
+                    if (++fadePos >= fadeLen) oldSources = null
+                }
 
-            // 잔향: 왼쪽 소리의 잔향은 주로 왼쪽 귀에, 오른쪽은 오른쪽에 (반대쪽은 REV_CROSS 만큼)
-            if (hasLate) {
-                val di = (w - preDelay) and mask
-                revLpL += revInLp * (bufL[di] - revLpL)
-                revLpR += revInLp * (bufR[di] - revLpR)
-                revL.run(revLpL)
-                revR.run(revLpR)
-                outL += late * 0.6f * (revL.outA + REV_CROSS * revR.outB)
-                outR += late * 0.6f * (revR.outA + REV_CROSS * revL.outB)
-            }
+                // 잔향: 왼쪽 소리의 잔향은 주로 왼쪽 귀에, 오른쪽은 오른쪽에 (반대쪽은 REV_CROSS 만큼)
+                if (hasLate) {
+                    val di = (w - preDelay) and mask
+                    revLpL += revInLp * (bufL[di] - revLpL)
+                    revLpR += revInLp * (bufR[di] - revLpR)
+                    revL.run(revLpL)
+                    revR.run(revLpR)
+                    outL += late * 0.6f * (revL.outA + REV_CROSS * revR.outB)
+                    outR += late * 0.6f * (revR.outA + REV_CROSS * revL.outB)
+                }
 
-            outL = dry * l + wet * wetNorm * outL
-            outR = dry * r + wet * wetNorm * outR
+                outL = dry * l + wet * wetNorm * outL
+                outR = dry * r + wet * wetNorm * outR
+            }
 
             // 저음 보강
             lowL += aBass * (l - lowL)
@@ -476,6 +527,10 @@ class BinauralProcessor(private val fs: Int) {
         private val FDN_MS = doubleArrayOf(29.7, 37.1, 41.1, 43.7, 53.3, 59.9, 67.7, 73.1)
         private val OUT_L = floatArrayOf(1f, -1f, 1f, 1f, -1f, 1f, -1f, -1f)
         private val OUT_R = floatArrayOf(1f, 1f, -1f, 1f, 1f, -1f, -1f, 1f)
+        // 실측 모드 잔향 → 방향 버스 (버스 i = i×45°: 0 정면, 2 오른쪽, 4 정후방, 6 왼쪽)
+        private val LATE_BUS_L = intArrayOf(7, 6, 5, 7, 6, 5, 0, 4)
+        private val LATE_BUS_R = intArrayOf(1, 2, 3, 1, 2, 3, 0, 4)
+        private val LATE_SIGN = floatArrayOf(1f, 1f, 1f, -1f, -1f, -1f, 1f, -1f)
 
         /** REVERB_NAMES 와 같은 순서: 없음, 작은 방, 중간 방, 큰 방, 중간 홀, 큰 홀, 플레이트 */
         private val ROOMS = arrayOf(
