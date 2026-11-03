@@ -121,7 +121,7 @@
    * MIT KEMAR HRTF (W. Gardner, K. Martin, MIT Media Lab) 확산음장 등화 compact 48kHz, 높이 -40°~+90° (ElevationSet.kt 와 동일).
    * 수평은 기존 실측(2°)을 쓰고, 여기서는 "같은 좌우 각도 수평 방향 대비 위/아래에서 올 때 달라지는 주파수 모양"만 가져온다.
    */
-  const MIT_N = 2048, MAX_ELEV_DB = 8, LN10_20 = 0.11512925;
+  const MIT_N = 2048, MAX_ELEV_DB = 6, LN10_20 = 0.11512925;
   function loadElevation(buffer) {
     const dv = new DataView(buffer);
     const magic = String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3));
@@ -155,7 +155,8 @@
       })));
     }
     smooth(db) {
-      const n = db.length, out = new Float32Array(n), cum = new Float64Array(n + 1), r = Math.pow(2, 1 / 6);
+      // 1옥타브 평활: 귀마다 다른 좁은 골짜기는 버리고 넓은 경향만 (보컬이 날카로워지는 문제 방지)
+      const n = db.length, out = new Float32Array(n), cum = new Float64Array(n + 1), r = Math.pow(2, 1 / 2);
       for (let k = 0; k < n; k++) cum[k + 1] = cum[k] + db[k];
       for (let k = 0; k < n; k++) {
         const lo = Math.max(0, Math.floor(k / r)), hi = Math.min(n - 1, Math.max(k, Math.trunc(k * r)));

@@ -24,7 +24,7 @@ class ElevationSet private constructor(
     private val az: Array<IntArray>,           // 층별 방위각 0..180 (오른쪽 +)
     private val hrir: Array<Array<Array<FloatArray>>>, // [층][방위][귀]
 ) {
-    /** 층별·방위별·귀별 주파수 크기(dB, 1/6 옥타브 평활) — 48kHz, 2048점 FFT 기준 */
+    /** 층별·방위별·귀별 주파수 크기(dB, 1옥타브 평활) — 48kHz, 2048점 FFT 기준 */
     private var magDb: Array<Array<Array<FloatArray>>>? = null
     private val mitBins = MIT_N / 2 + 1
 
@@ -48,12 +48,15 @@ class ElevationSet private constructor(
         }
     }
 
-    /** 1/3 옥타브 평활 (뾰족한 골짜기 때문에 생기는 잡음·쏘는 소리 방지) */
+    /**
+     * 1옥타브 평활: 귀 모양마다 위치가 다른 좁은 골짜기(notch)는 버리고 넓은 경향만 남김.
+     * (두 측정의 골짜기 위치가 달라 생기던 7~8.5kHz 의 좁은 봉우리 = 보컬이 날카롭게 들리던 문제 해결)
+     */
     private fun smooth(db: FloatArray): FloatArray {
         val out = FloatArray(db.size)
         val cum = DoubleArray(db.size + 1)
         for (k in db.indices) cum[k + 1] = cum[k] + db[k]
-        val r = 2.0.pow(1.0 / 6)
+        val r = 2.0.pow(1.0 / 2)
         for (k in db.indices) {
             val lo = max(0, floor(k / r).toInt()); val hi = min(db.size - 1, (k * r).toInt().coerceAtLeast(k))
             out[k] = ((cum[hi + 1] - cum[lo]) / (hi - lo + 1)).toFloat()
@@ -100,7 +103,7 @@ class ElevationSet private constructor(
 
     /**
      * 높이 단서 게인(배율, 0위상): 소리가 (azS, elS)에서 올 때 MIT 크기 ÷ 같은 좌우 각도 수평 방향(azEq) MIT 크기.
-     * fs·n 은 엔진의 STFT 크기. 400Hz 아래는 단서 없음(compact 세트가 저음에서 부정확), ±8dB 로 제한.
+     * fs·n 은 엔진의 STFT 크기. 400Hz 아래는 단서 없음(compact 세트가 저음에서 부정확), ±6dB 로 제한.
      */
     @Synchronized
     fun cueGain(azS: Double, elS: Double, azEq: Double, ear: Int, fs: Int, n: Int, out: FloatArray) {
@@ -121,7 +124,7 @@ class ElevationSet private constructor(
             val b0 = mapB0[k]; val fr = mapFr[k]
             val up = dbAt(m, wu, b0) * (1 - fr) + dbAt(m, wu, b0 + 1) * fr
             val flat = dbAt(m, wf, b0) * (1 - fr) + dbAt(m, wf, b0 + 1) * fr
-            // 두 측정(귀 크기 다름)의 골짜기 위치 차이로 특정 주파수가 튀지 않게 ±8dB 로 제한
+            // 두 측정(귀 크기 다름)의 차이로 특정 주파수가 튀지 않게 ±6dB 로 제한
             var g = (up - flat).coerceIn(-MAX_DB, MAX_DB)
             if (k < ramp) g *= ((k - lo) / (ramp - lo)).toFloat() // 400~800Hz 서서히
             out[k] = exp(g * LN10_20)
@@ -164,6 +167,6 @@ class ElevationSet private constructor(
         }
 
         private const val LN10_20 = 0.11512925f // ln(10)/20 : dB → 배율
-        private const val MAX_DB = 8f
+        private const val MAX_DB = 6f
     }
 }
