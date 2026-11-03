@@ -428,6 +428,8 @@ class BinauralProcessor(private val fs: Int) {
             it.headPitch = headPitchDeg
             it.spread = spreadDeg
             it.headYaw = headYawDeg
+            it.lowGain = 1.0 / roomNorm
+            it.bassBoost = 1.5 * bass.toDouble()
         }
         if (bypass) return
 
@@ -520,11 +522,13 @@ class BinauralProcessor(private val fs: Int) {
                 outR = dry * r + wet * wetNorm * outR
             }
 
-            // 저음 보강
-            lowL += aBass * (l - lowL)
-            lowR += aBass * (r - lowR)
-            outL += gBass * lowL
-            outR += gBass * lowR
+            // 저음 보강 — 실측 엔진은 렌더러 안에서 같은 위상으로 (HrtfRenderer.applyBass)
+            if (rnd == null) {
+                lowL += aBass * (l - lowL)
+                lowR += aBass * (r - lowR)
+                outL += gBass * lowL
+                outR += gBass * lowR
+            }
 
             // 헤드폰 보정 (헤드폰 고유 음색 상쇄)
             eq?.let {

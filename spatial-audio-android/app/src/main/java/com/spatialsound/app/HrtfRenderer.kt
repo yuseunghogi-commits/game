@@ -79,7 +79,14 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
     private val bins = N / 2 + 1
 
     // HRTF 스펙트럼 표: [dir][ear] → re/im (bins). enh = 3D 강조 (α − 1)
-    private class Table(val dirs: Int, val step: Int, val re: Array<Array<FloatArray>>, val im: Array<Array<FloatArray>>, val enh: Float = 0f)
+    private class Table(val dirs: Int, val step: Int, val re: Array<Array<FloatArray>>, val im: Array<Array<FloatArray>>, val enh: Float = 0f) {
+        /**
+         * 정면(0°) HRTF 의 위상 (귀별 cos/sin, 0~LOW_F2) — 직통 저음에 이 위상만 입혀서 HRTF 를 거친 소리와 이어 붙임.
+         * (측정 HRTF 는 저음에서 위상이 앞서 있어서(94Hz +102°, 164Hz +41°) 단순 지연으로 맞추면 160Hz 에서 상쇄됨)
+         */
+        var lowC: Array<FloatArray> = arrayOf(FloatArray(0), FloatArray(0))
+        var lowS: Array<FloatArray> = arrayOf(FloatArray(0), FloatArray(0))
+    }
     /** 귀 크기별 원본 표 + 방향마다 "앞/뒤 짝 방향과의 크기 차이(dB, 1/2 옥타브 평활)" — 3D 강조를 FFT 없이 다시 계산하려고 보관 */
     private class Base(val t: Table, val diff: Array<Array<FloatArray>>)
 
@@ -168,7 +175,7 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
                 }
             }
         }
-        return Table(t.dirs, t.step, re, im, a)
+        return Table(t.dirs, t.step, re, im, a).also { it.lowC = t.lowC; it.lowS = t.lowS }
     }
 
     private fun buildTable(set: HrirSet): Table {
@@ -185,7 +192,11 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
             System.arraycopy(bufR, 0, re[d][e], 0, bins)
             System.arraycopy(bufI, 0, im[d][e], 0, bins)
         }
-        return Table(set.dirs, set.stepDeg, re, im)
+        return Table(set.dirs, set.stepDeg, re, im).also { tb ->
+            val nLow = ((LOW_F2 * N / fs).toInt() + 1).coerceAtMost(bins)
+            tb.lowC = Array(2) { e -> FloatArray(nLow) { k -> val a = re[0][e][k]; val m = sqrt(a * a + im[0][e][k] * im[0][e][k]); if (m > 1e-12f) a / m else 1f } }
+            tb.lowS = Array(2) { e -> FloatArray(nLow) { k -> val m = sqrt(re[0][e][k] * re[0][e][k] + im[0][e][k] * im[0][e][k]); if (m > 1e-12f) im[0][e][k] / m else 0f } }
+        }
     }
 
     // --- STFT 버퍼 ----------------------------------------------------------
@@ -223,6 +234,58 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
     private val cum = DoubleArray(bins + 1)
 
     private val lowBin = (130.0 * N / fs).roundToInt() // 이 아래 저음은 방향 처리 없이 그대로 (펀치감 유지)
+
+    /**
+     * 저음 직통: 100Hz 아래는 전부, 200Hz 까지 서서히 — 가상 스피커를 거치지 않고 L → 왼쪽 귀, R → 오른쪽 귀.
+     * 가상 스피커로 보내면 좌우가 같은(모노) 저음은 두 스피커 소리가 귀에서 겹쳐 커지고, 좌우가 다른(넓은) 저음은
+     * 그렇지 않아서 넓은 저음이 3~4dB 작게 났음 (+ 지연이 다른 배경음 복사본끼리 저음에서 상쇄). 이 대역은 방향을 거의 못 느낌.
+     */
+    private val lowW = FloatArray(bins) { k ->
+        val f = k * fs.toDouble() / N
+        when { f <= LOW_F1 -> 1f; f >= LOW_F2 -> 0f; else -> (0.5 + 0.5 * cos(PI * (f - LOW_F1) / (LOW_F2 - LOW_F1))).toFloat() }
+    }
+    private val lowTop = (LOW_F2 * N / fs).toInt().coerceAtMost(bins - 1)
+    private val dLr = FloatArray(bins); private val dLi = FloatArray(bins)
+    private val dRr = FloatArray(bins); private val dRi = FloatArray(bins)
+    /** 직통 저음 배율 = 1 / roomNorm (BinauralProcessor 가 설정 → 귀에서 원음과 같은 크기) */
+    @Volatile var lowGain = 1.0
+
+    /**
+     * 저음 보강 (0 = 없음): |1 + g / (1 + j f/130Hz)| 모양을 0위상 게인으로 두 귀 출력 전체에 —
+     * 예전처럼 원음 저역통과를 시간 영역에서 더하면 HRTF 를 거친 저음과 위상이 어긋나 50Hz 근처가 오히려 깎였음.
+     */
+    @Volatile var bassBoost = 0.0
+    private var bassCurveFor = -1.0
+    private val bassCurve = FloatArray(bins) { 1f }
+    private val bassTop = (1000.0 * N / fs).toInt().coerceAtMost(bins - 1)
+
+    /** 나눠 둔 직통 저음에 정면 HRTF 위상을 입혀 두 귀에 */
+    private fun addLowDirect(t: Table) {
+        val g = lowGain.toFloat()
+        val cL = t.lowC[0]; val sL = t.lowS[0]; val cR = t.lowC[1]; val sR = t.lowS[1]
+        for (k in 0..min(lowTop, cL.size - 1)) {
+            val lr = dLr[k] * g; val li = dLi[k] * g; val rr = dRr[k] * g; val ri = dRi[k] * g
+            yLr[k] += lr * cL[k] - li * sL[k]; yLi[k] += lr * sL[k] + li * cL[k]
+            yRr[k] += rr * cR[k] - ri * sR[k]; yRi[k] += rr * sR[k] + ri * cR[k]
+        }
+    }
+
+    /** 저음 보강 곡선을 두 귀 출력에 곱함 */
+    private fun applyBass() {
+        val g = bassBoost
+        if (g <= 0.0) return
+        if (g != bassCurveFor) {
+            for (k in 0..bassTop) {
+                val x = k * fs.toDouble() / N / 130.0
+                bassCurve[k] = (sqrt((1 + g) * (1 + g) + x * x) / sqrt(1 + x * x)).toFloat()
+            }
+            bassCurveFor = g
+        }
+        for (k in 0..bassTop) {
+            val b = bassCurve[k]
+            yLr[k] *= b; yLi[k] *= b; yRr[k] *= b; yRi[k] *= b
+        }
+    }
 
     // 지연(위상 회전) 표 캐시: 지연 샘플 → cos/sin
     private val phaseCache = HashMap<Int, Array<FloatArray>>()
@@ -293,7 +356,13 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         yLr.fill(0f); yLi.fill(0f); yRr.fill(0f); yRi.fill(0f)
         analyse()
         if (mode == Mode.SPEAKERS) speakers(t) else localize(t)
-        if (hasBus) for (b in 0 until NB) addSource(t, bR[b], bI[b], BUS_ANGLES[b], 0.0, 1f, 0)
+        if (hasBus) for (b in 0 until NB) {
+            // 방(반사음·잔향)은 저음 직통 구간에서 빼서 — 낮은 저음에서 반사음끼리 상쇄되던 것(50Hz -7dB) 방지
+            val br = bR[b]; val bi = bI[b]
+            for (k in 0..lowTop) { val wh = 1f - lowW[k]; br[k] *= wh; bi[k] *= wh }
+            addSource(t, br, bi, BUS_ANGLES[b], 0.0, 1f, 0)
+        }
+        applyBass()
 
         // 두 귀 출력을 복소 역FFT 하나로: w = YL + j·YR  (실수부 = 왼쪽, 허수부 = 오른쪽)
         yLi[0] = 0f; yRi[0] = 0f; yLi[N / 2] = 0f; yRi[N / 2] = 0f
@@ -434,7 +503,10 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         val topAmb = sqrt(h * (1f - bt))
         val botAmb = sqrt(bt)
         for (k in 0 until bins) {
-            val lr = xLr[k]; val li = xLi[k]; val rr = xRr[k]; val ri = xRi[k]
+            // 저음 직통 몫(wl)은 따로 두고 나머지(wh)만 가상 스피커로
+            val wl = lowW[k]; val wh = 1f - wl
+            dLr[k] = xLr[k] * wl; dLi[k] = xLi[k] * wl; dRr[k] = xRr[k] * wl; dRi[k] = xRi[k] * wl
+            val lr = xLr[k] * wh; val li = xLi[k] * wh; val rr = xRr[k] * wh; val ri = xRi[k] * wh
             if (k < lowBin) {
                 fLr[k] = lr; fLi[k] = li; fRr[k] = rr; fRi[k] = ri
                 cRr[k] = 0f; cIi[k] = 0f; aLr[k] = 0f; aLi[k] = 0f; aRr[k] = 0f; aRi[k] = 0f
@@ -476,6 +548,7 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         addSource(t, fRr, fRi, f, elevF, 1f, 0)
         if (cl > 0.001f) addSource(t, cRr, cIi, 0.0, elevF, 1f, 0)
         addAmbience(t, surAmb, topAmb, botAmb)
+        addLowDirect(t)
     }
 
     /** 배경음 → 옆(±95°)·뒤(±rear)·천장 앞/뒤·바닥 — 서로 다른 지연으로 디코릴레이션 */
@@ -514,7 +587,9 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         val fast = elevF == 0.0 && pitchF == 0.0
         if (!fast) java.util.Arrays.fill(rowSpec, null)
         for (k in 0 until bins) {
-            val lr = xLr[k]; val li = xLi[k]; val rr = xRr[k]; val ri = xRi[k]
+            val wl = lowW[k]; val wh = 1f - wl
+            dLr[k] = xLr[k] * wl; dLi[k] = xLi[k] * wl; dRr[k] = xRr[k] * wl; dRi[k] = xRi[k] * wl
+            val lr = xLr[k] * wh; val li = xLi[k] * wh; val rr = xRr[k] * wh; val ri = xRi[k] * wh
             val ll = lr * lr + li * li
             val rrE = rr * rr + ri * ri
             val dir = if (k < lowBin) 1f else directness(k)
@@ -551,10 +626,14 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         addSource(t, fLr, fLi, -frontAngle, elevF, 1f, 0)
         addSource(t, fRr, fRi, frontAngle, elevF, 1f, 0)
         addAmbience(t, surAmb, topAmb, botAmb)
+        addLowDirect(t)
     }
 
     companion object {
         const val N = 2048
+        /** 저음 직통 구간: LOW_F1 아래 전부, LOW_F2 까지 서서히 */
+        const val LOW_F1 = 100.0
+        const val LOW_F2 = 200.0
         const val WIN = 1024
         const val HOP = WIN / 2
         const val LATENCY = WIN

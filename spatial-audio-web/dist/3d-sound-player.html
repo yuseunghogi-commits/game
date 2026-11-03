@@ -727,6 +727,8 @@ PK 196 -0.5 3.79
   const N = 2048, WIN = 1024, HOP = 512, LATENCY = WIN, MAX_DELAY = 512;
   const BUS_ANGLES = Array.from({ length: BUSES }, (_, i) => i * 360 / BUSES);
   const SIDE_ANGLE = 95;
+  /** 저음 직통 구간 (Hz): LOW_F1 아래 전부, LOW_F2 까지 서서히 */
+  const LOW_F1 = 100, LOW_F2 = 200;
   /** 천장 앞 스피커 기본 위치 ±45°·위 45°, 천장 뒤 ±135°·위 45° (7.1.4 배치), 바닥 ±45°·아래 30° */
   const HEIGHT_AZ = 45, HEIGHT_EL = 45, TOP_REAR_AZ = 135, TOP_REAR_EL = 45, BOTTOM_AZ = 45, BOTTOM_EL = -30;
   /** 3D 강조: 앞/뒤 짝과의 차이를 뒤쪽이 3/4, 앞쪽이 1/4 맡음. 최대 ±10dB */
@@ -768,6 +770,15 @@ PK 196 -0.5 3.79
       this.sLL = F(bins); this.sRR = F(bins); this.sLRr = F(bins); this.sLRi = F(bins);
       this.cum = new Float64Array(bins + 1);
       this.lowBin = Math.round(130 * N / fs);
+      // 저음 직통: 100Hz 아래 전부, 200Hz 까지 서서히 — 가상 스피커 없이 L→왼쪽 귀, R→오른쪽 귀 (넓은 저음이 작아지지 않게)
+      this.lowW = new Float32Array(bins);
+      for (let k = 0; k < bins; k++) { const f = k * fs / N; this.lowW[k] = f <= LOW_F1 ? 1 : f >= LOW_F2 ? 0 : 0.5 + 0.5 * Math.cos(PI * (f - LOW_F1) / (LOW_F2 - LOW_F1)); }
+      this.lowTop = Math.min(bins - 1, Math.floor(LOW_F2 * N / fs));
+      this.dLr = F(bins); this.dLi = F(bins); this.dRr = F(bins); this.dRi = F(bins);
+      this.lowGain = 1; // = 1/roomNorm (엔진이 설정 → 귀에서 원음과 같은 크기)
+      // 저음 보강: |1 + g/(1 + j f/130Hz)| 모양을 0위상 게인으로 두 귀 출력에 (HRTF 저음과 위상이 어긋나지 않게)
+      this.bassBoost = 0; this.bassCurveFor = -1; this.bassCurve = new Float32Array(bins).fill(1);
+      this.bassTop = Math.min(bins - 1, Math.floor(1000 * N / fs));
       this.phaseCache = new Map();
       this.dSide = Math.min(MAX_DELAY, Math.round(0.004 * fs));
       this.dRear = Math.min(MAX_DELAY, Math.round(0.009 * fs));
@@ -802,7 +813,7 @@ PK 196 -0.5 3.79
     stepEnhance(count) {
       const j = this.enhJob, t = j.b.t;
       for (let n = 0; n < count && j.d < t.dirs; n++, j.d++) { const [r2, i2] = this.enhanceDir(j.b, j.a, j.d); j.re.push(r2); j.im.push(i2); }
-      if (j.d === t.dirs) { this.table = { dirs: t.dirs, step: t.step, re: j.re, im: j.im, enh: j.a }; this.enhJob = null; }
+      if (j.d === t.dirs) { this.table = { dirs: t.dirs, step: t.step, re: j.re, im: j.im, enh: j.a, lowC: t.lowC, lowS: t.lowS }; this.enhJob = null; }
     }
 
     /** 원본 표 + 방향마다 "앞/뒤 짝 방향(θ ↔ 180°−θ)과의 크기 차이(dB, 1/2 옥타브 평활)" */
@@ -832,7 +843,7 @@ PK 196 -0.5 3.79
       if (!(amount > 0)) return t;
       const re = [], im = [];
       for (let d = 0; d < t.dirs; d++) { const [r2, i2] = this.enhanceDir(b, amount, d); re.push(r2); im.push(i2); }
-      return { dirs: t.dirs, step: t.step, re, im, enh: amount };
+      return { dirs: t.dirs, step: t.step, re, im, enh: amount, lowC: t.lowC, lowS: t.lowS };
     }
 
     enhanceDir(b, amount, d) {
@@ -867,7 +878,15 @@ PK 196 -0.5 3.79
         }
         re.push(r2); im.push(i2);
       }
-      return { dirs: set.dirs, step: set.step, re, im, enh: 0 };
+      // 정면(0°) HRTF 의 위상(귀별) — 직통 저음에 이 위상만 입혀서 HRTF 를 거친 소리와 이어 붙임
+      // (측정 HRTF 는 저음에서 위상이 앞서 있어서 단순 지연으로 맞추면 160Hz 에서 상쇄됨)
+      const nLow = Math.min(bins, Math.floor(LOW_F2 * N / this.fs) + 1), lowC = [], lowS = [];
+      for (let e = 0; e < 2; e++) {
+        const c = new Float32Array(nLow), s = new Float32Array(nLow), a = re[0][e], b = im[0][e];
+        for (let k = 0; k < nLow; k++) { const m = Math.fround(Math.sqrt(Math.fround(a[k] * a[k] + b[k] * b[k]))); c[k] = m > 1e-12 ? a[k] / m : 1; s[k] = m > 1e-12 ? b[k] / m : 0; }
+        lowC.push(c); lowS.push(s);
+      }
+      return { dirs: set.dirs, step: set.step, re, im, enh: 0, lowC, lowS };
     }
 
     phase(delay) {
@@ -950,7 +969,13 @@ PK 196 -0.5 3.79
       this.yLr.fill(0); this.yLi.fill(0); this.yRr.fill(0); this.yRi.fill(0);
       this.analyse();
       if (this.mode === 'speakers') this.speakers(t); else this.localize(t);
-      if (hasBus) for (let b = 0; b < BUSES; b++) this.addSource(t, this.bR[b], this.bI[b], BUS_ANGLES[b], 0, 1, 0);
+      if (hasBus) for (let b = 0; b < BUSES; b++) {
+        // 방(반사음·잔향)은 저음 직통 구간에서 빼서 — 낮은 저음에서 반사음끼리 상쇄되던 것 방지
+        const br = this.bR[b], bi = this.bI[b], lw = this.lowW;
+        for (let k = 0; k <= this.lowTop; k++) { const wh = Math.fround(1 - lw[k]); br[k] *= wh; bi[k] *= wh; }
+        this.addSource(t, br, bi, BUS_ANGLES[b], 0, 1, 0);
+      }
+      this.applyBass();
       const { yLr, yLi, yRr, yRi, zr, zi } = this;
       yLi[0] = 0; yRi[0] = 0; yLi[N / 2] = 0; yRi[N / 2] = 0;
       for (let k = 0; k <= N / 2; k++) { zr[k] = yLr[k] - yRi[k]; zi[k] = yLi[k] + yRr[k]; }
@@ -1063,9 +1088,12 @@ PK 196 -0.5 3.79
       const frontAmb = Math.fround(Math.sqrt(Math.fround(Math.fround((1 - r) * (1 - h)) * (1 - bt))));
       const surAmb = Math.fround(Math.sqrt(Math.fround(Math.fround(r * (1 - h)) * (1 - bt))));
       const topAmb = Math.fround(Math.sqrt(Math.fround(h * (1 - bt)))), botAmb = Math.fround(Math.sqrt(bt));
-      const { xLr, xLi, xRr, xRi, fLr, fLi, fRr, fRi, cRr, cIi, aLr, aLi, aRr, aRi, sLL, sRR, sLRr, sLRi, bins, lowBin } = this;
+      const { xLr, xLi, xRr, xRi, fLr, fLi, fRr, fRi, cRr, cIi, aLr, aLi, aRr, aRi, sLL, sRR, sLRr, sLRi, bins, lowBin, lowW, dLr, dLi, dRr, dRi } = this;
       for (let k = 0; k < bins; k++) {
-        const lr = xLr[k], li = xLi[k], rr = xRr[k], ri = xRi[k];
+        // 저음 직통 몫(wl)은 따로 두고 나머지(wh)만 가상 스피커로
+        const wl = lowW[k], wh = Math.fround(1 - wl);
+        dLr[k] = Math.fround(xLr[k] * wl); dLi[k] = Math.fround(xLi[k] * wl); dRr[k] = Math.fround(xRr[k] * wl); dRi[k] = Math.fround(xRi[k] * wl);
+        const lr = xLr[k] * wh, li = xLi[k] * wh, rr = xRr[k] * wh, ri = xRi[k] * wh;
         if (k < lowBin) {
           fLr[k] = lr; fLi[k] = li; fRr[k] = rr; fRi[k] = ri;
           cRr[k] = 0; cIi[k] = 0; aLr[k] = 0; aLi[k] = 0; aRr[k] = 0; aRi[k] = 0;
@@ -1095,6 +1123,32 @@ PK 196 -0.5 3.79
       this.addSource(t, fRr, fRi, f, ef, 1, 0);
       if (cl > 0.001) this.addSource(t, cRr, cIi, 0, ef, 1, 0);
       this.addAmbience(t, surAmb, topAmb, botAmb);
+      this.addLowDirect(t);
+    }
+
+    /** 나눠 둔 직통 저음에 정면 HRTF 위상을 입혀 두 귀에 */
+    addLowDirect(t) {
+      const g = Math.fround(this.lowGain), cL = t.lowC[0], sL = t.lowS[0], cR = t.lowC[1], sR = t.lowS[1];
+      const { dLr, dLi, dRr, dRi, yLr, yLi, yRr, yRi } = this;
+      const top = Math.min(this.lowTop, cL.length - 1);
+      for (let k = 0; k <= top; k++) {
+        const lr = dLr[k] * g, li = dLi[k] * g, rr = dRr[k] * g, ri = dRi[k] * g;
+        yLr[k] += lr * cL[k] - li * sL[k]; yLi[k] += lr * sL[k] + li * cL[k];
+        yRr[k] += rr * cR[k] - ri * sR[k]; yRi[k] += rr * sR[k] + ri * cR[k];
+      }
+    }
+
+    /** 저음 보강 곡선을 두 귀 출력에 곱함 */
+    applyBass() {
+      const g = this.bassBoost;
+      if (!(g > 0)) return;
+      const curve = this.bassCurve, top = this.bassTop;
+      if (g !== this.bassCurveFor) {
+        for (let k = 0; k <= top; k++) { const x = k * this.fs / N / 130; curve[k] = Math.sqrt((1 + g) * (1 + g) + x * x) / Math.sqrt(1 + x * x); }
+        this.bassCurveFor = g;
+      }
+      const { yLr, yLi, yRr, yRi } = this;
+      for (let k = 0; k <= top; k++) { const b = curve[k]; yLr[k] *= b; yLi[k] *= b; yRr[k] *= b; yRi[k] *= b; }
     }
 
     /** 배경음 → 옆(±95°)·뒤(±rear)·천장 앞/뒤·바닥 — 서로 다른 지연으로 디코릴레이션 */
@@ -1129,9 +1183,11 @@ PK 196 -0.5 3.79
       const topAmb = Math.fround(Math.sqrt(Math.fround(h * (1 - bt)))), botAmb = Math.fround(Math.sqrt(bt));
       const fast = this.elevF === 0 && this.pitchF === 0, row = this.rowSpec, ef = this.elevF;
       if (!fast) row.fill(null);
-      const { xLr, xLi, xRr, xRi, fLr, fLi, fRr, fRi, aLr, aLi, aRr, aRi, sLL, sRR, yLr, yLi, yRr, yRi, bins, lowBin } = this;
+      const { xLr, xLi, xRr, xRi, fLr, fLi, fRr, fRi, aLr, aLi, aRr, aRi, sLL, sRR, yLr, yLi, yRr, yRi, bins, lowBin, lowW, dLr, dLi, dRr, dRi } = this;
       for (let k = 0; k < bins; k++) {
-        const lr = xLr[k], li = xLi[k], rr = xRr[k], ri = xRi[k];
+        const wl = lowW[k], wh = Math.fround(1 - wl);
+        dLr[k] = Math.fround(xLr[k] * wl); dLi[k] = Math.fround(xLi[k] * wl); dRr[k] = Math.fround(xRr[k] * wl); dRi[k] = Math.fround(xRi[k] * wl);
+        const lr = xLr[k] * wh, li = xLi[k] * wh, rr = xRr[k] * wh, ri = xRi[k] * wh;
         const ll = lr * lr + li * li, rrE = rr * rr + ri * ri;
         const dir = k < lowBin ? 1 : this.directness(k);
         const md = Math.sqrt(dir), ma = Math.sqrt(1 - dir);
@@ -1159,6 +1215,7 @@ PK 196 -0.5 3.79
       this.addSource(t, fLr, fLi, -this.frontAngle, ef, 1, 0);
       this.addSource(t, fRr, fRi, this.frontAngle, ef, 1, 0);
       this.addAmbience(t, surAmb, topAmb, botAmb);
+      this.addLowDirect(t);
     }
   }
 
@@ -1281,6 +1338,8 @@ PK 196 -0.5 3.79
       const lateE = this.rt60 > 0 ? Math.pow(this.lateGain * 0.6, 2) * 2.5 * this.rt60 : 0;
       const trim = this.engineMode === 1 ? 0.57 : 0.72;
       this.roomNorm = Math.fround(trim / Math.sqrt(1 + (this.roomTaps ? this.roomTaps.energy : 0) + lateE));
+      rnd.lowGain = 1 / this.roomNorm;
+      rnd.bassBoost = 1.5 * Math.fround(this.bass);
     }
 
     /** 평면(채널별) 버퍼 처리. inR 이 null 이면 모노. 내부적으로 128 샘플 블록 단위 */
@@ -1347,16 +1406,13 @@ PK 196 -0.5 3.79
       // ④ 직접음 + 방 → 실측 HRTF (LATENCY 만큼 늦음)
       this.renderer.processBlock(B.l, B.r, B.bus, B.oL, B.oR, m);
       // ⑤ 원음(같은 만큼 늦춤)·저음·헤드폰 보정·켜기/끄기·리미터
-      const eq = this.hpEq, wet = this.amount, dry = 1 - this.amount, gBass = 1.5 * this.bass, rn = this.roomNorm;
+      const eq = this.hpEq, wet = this.amount, dry = 1 - this.amount, rn = this.roomNorm; // 저음 보강은 렌더러 안에서 (applyBass)
       const target = this.p.enabled ? 1 : 0;
       for (let i = 0; i < m; i++) {
         const di = (w0 + i - LATENCY) & mask;
         const dl = bufL[di], dr = bufR[di];
         let oL = dry * dl + wet * rn * B.oL[i];
         let oR = dry * dr + wet * rn * B.oR[i];
-        this.lowL += this.aBass * (dl - this.lowL);
-        this.lowR += this.aBass * (dr - this.lowR);
-        oL += gBass * this.lowL; oR += gBass * this.lowR;
         if (eq) { oL = eq.process(oL, 0); oR = eq.process(oR, 1); }
         if (this.mix !== target) this.mix = target > this.mix ? Math.min(target, this.mix + this.mixStep) : Math.max(target, this.mix - this.mixStep);
         const mx = this.mix;
