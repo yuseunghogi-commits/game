@@ -127,6 +127,23 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
      */
     @Volatile var near = 0.0
 
+    /**
+     * 8D 회전 속도 (도/초, 0 = 끔): 소리 장면 전체를 머리 둘레로 돌린다 (머리를 돌린 것처럼 yaw 에 더함).
+     * 프레임(HOP)마다 정확히 돌려서, 앱이 소리를 몇 샘플씩 넘겨주든 어느 기기에서나 같은 결과. 끄면 가까운 쪽으로 부드럽게 정면 복귀
+     */
+    @Volatile var spinDps = 0.0
+    private var rotDeg = 0.0
+
+    private fun advanceSpin() {
+        val sp = spinDps
+        if (sp > 0.0) rotDeg = (rotDeg + sp * HOP / fs) % 360.0
+        else if (rotDeg != 0.0) {
+            val back = 180.0 * HOP / fs
+            val r = ((rotDeg % 360.0) + 540.0) % 360.0 - 180.0
+            rotDeg = if (abs(r) <= back) 0.0 else r - (if (r > 0) back else -back)
+        }
+    }
+
     /** 3D 강조 0..1 (α = 1 + amount): 0 이면 실측 그대로 */
     fun setEnhance(amount: Double) {
         val a = amount.coerceIn(0.0, 1.0)
@@ -563,7 +580,8 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
 
     private fun frame() {
         val t = table
-        yawF = headYaw; pitchF = headPitch; elevF = frontElev
+        advanceSpin()
+        yawF = headYaw + rotDeg; pitchF = headPitch; elevF = frontElev
         updateTimbre(t)
         fft2(inL, inR, xLr, xLi, xRr, xRi)
         var hasBus = false

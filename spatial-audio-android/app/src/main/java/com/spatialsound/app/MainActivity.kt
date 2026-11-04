@@ -79,6 +79,8 @@ class MainActivity : Activity() {
     private lateinit var seekEnhance: SeekBar
     private lateinit var labelTimbre: TextView
     private lateinit var labelNear: TextView
+    private lateinit var labelSpin: TextView
+    private lateinit var seekSpin: SeekBar
     private lateinit var seekNear: SeekBar
     private lateinit var seekTimbre: SeekBar
     private lateinit var textHeightMore: TextView
@@ -160,6 +162,8 @@ class MainActivity : Activity() {
         seekEnhance = findViewById(R.id.seekEnhance)
         labelTimbre = findViewById(R.id.labelTimbre)
         labelNear = findViewById(R.id.labelNear)
+        labelSpin = findViewById(R.id.labelSpin)
+        seekSpin = findViewById(R.id.seekSpin)
         seekNear = findViewById(R.id.seekNear)
         seekTimbre = findViewById(R.id.seekTimbre)
         textHeightMore = findViewById(R.id.textHeightMore)
@@ -284,13 +288,14 @@ class MainActivity : Activity() {
         seekEnhance.progress = settings.enhance
         seekTimbre.progress = settings.timbre
         seekNear.progress = settings.near
+        seekSpin.progress = settings.spin
         syncPairSeeks()
         for (i in 0..2) { val (a, e) = pairOf(settings, i); speakerLayout.setHeightPair(i, a, e) }
         switchHeadPitch.isChecked = settings.headPitch
         // 높이 기능은 실측 엔진(공간·정위)에서만
         val measured = settings.engineMode != 0
         val hv = if (measured) android.view.View.VISIBLE else android.view.View.GONE
-        for (v in listOf(labelElev, seekElev, labelHeight, seekHeight, labelBottom, seekBottom, labelEnhance, seekEnhance, labelNear, seekNear, labelTimbre, seekTimbre, textHeightMore)) v.visibility = hv
+        for (v in listOf(labelElev, seekElev, labelHeight, seekHeight, labelBottom, seekBottom, labelEnhance, seekEnhance, labelSpin, seekSpin, labelNear, seekNear, labelTimbre, seekTimbre, textHeightMore)) v.visibility = hv
         heightMoreGroup.visibility = if (measured && heightMoreOpen) android.view.View.VISIBLE else android.view.View.GONE
         speakerLayout.heightLevel = if (measured) settings.heightLevel.toFloat() else 0f
         speakerLayout.bottomLevel = if (measured) settings.bottomLevel.toFloat() else 0f
@@ -331,6 +336,8 @@ class MainActivity : Activity() {
         labelHeight.text = "▲ 천장 스피커 4개 (앞 2·뒤 2): ${settings.heightLevel}% — 배경음 일부를 머리 위쪽에서"
         labelBottom.text = "▼ 바닥 스피커 2개: ${settings.bottomLevel}% — 배경음 일부를 아래쪽에서 (0이면 없음)"
         labelEnhance.text = "✨ 3D 강조: ${settings.enhance}% — 뒤는 더 뒤처럼, 위·아래는 더 위·아래처럼 (0 = 측정 그대로)"
+        labelSpin.text = if (settings.spin == 0) "🌀 8D 회전: 끔 — 올리면 소리 전체가 머리 둘레를 천천히 돕니다 (음악용)"
+        else "🌀 8D 회전: %d — 소리 전체가 머리 둘레를 %.0f초에 한 바퀴 (음악용, 0 = 끔)".format(settings.spin, 360.0 / (settings.spin * BinauralProcessor.SPIN_DPS_PER_STEP))
         labelNear.text = "🛸 스침 효과: ${settings.near}% — 한쪽으로 치우친 소리(옆을 지나가는 드론·차·총알)를 귀 바로 옆에서 " +
             "스치듯 (0 = 끔, 게임 70 · 영화관 50)"
         labelTimbre.text = "🎚 음색 보정: ${settings.timbre}% — 낮추면 3D(머리 밖) 느낌이 강하고, 높이면 원음처럼 깨끗하지만 " +
@@ -432,6 +439,7 @@ class MainActivity : Activity() {
                     bottomElev = p0.bottomElev,
                     enhance = p0.enhance,
                     near = p0.near,
+                    spin = p0.spin,
                 )
                 commit(next)
                 bindUi()
@@ -498,6 +506,7 @@ class MainActivity : Activity() {
         })
         seekEnhance.setOnSeekBarChangeListener(seekListener { v -> settings.copy(enhance = v, presetIndex = CUSTOM) })
         // 음색 보정은 프리셋과 상관없는 취향이라 프리셋을 '사용자 설정'으로 바꾸지 않음
+        seekSpin.setOnSeekBarChangeListener(seekListener { v -> settings.copy(spin = v, presetIndex = CUSTOM) })
         seekNear.setOnSeekBarChangeListener(seekListener { v -> settings.copy(near = v, presetIndex = CUSTOM) })
         seekTimbre.setOnSeekBarChangeListener(seekListener { v -> settings.copy(timbre = v) })
         textHeightMore.setOnClickListener {

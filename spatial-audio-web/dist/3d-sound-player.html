@@ -180,6 +180,7 @@ a { color: var(--accent); }
           <select id="preset"></select>
         </div>
         <div class="field"><label for="enhance">3D 강조 <span class="val" id="enhanceVal"></span></label><input type="range" id="enhance" min="0" max="100" step="1"><small>뒤는 더 뒤처럼, 위·아래는 더 위·아래처럼 (0 = 측정 그대로) · 손을 떼면 반영</small></div>
+        <div class="field"><label for="spin">8D 회전 <span class="val" id="spinVal"></span></label><input type="range" id="spin" min="0" max="100" step="1"><small>소리 전체가 머리 둘레를 천천히 돕니다 (음악용, 0 = 끔)</small></div>
         <div class="field"><label for="near">스침 효과 <span class="val" id="nearVal"></span></label><input type="range" id="near" min="0" max="100" step="1"><small>한쪽으로 치우친 소리(옆을 지나가는 드론·차·총알)를 귀 바로 옆에서 스치듯 (0 = 끔, 게임 70 · 영화관 50)</small></div>
         <div class="field"><label for="timbre">음색 보정 <span class="val" id="timbreVal"></span></label><input type="range" id="timbre" min="0" max="100" step="1"><small>낮추면 3D(머리 밖) 느낌이 강하고, 높이면 원음처럼 깨끗하지만 앞 소리가 머리 안쪽으로 (0 = v2.0, 100 = v2.1, 기본 30)</small></div>
       </section>
@@ -750,6 +751,8 @@ PK 196 -0.5 3.79
   const DEFAULT_TIMBRE = 0.3;
   /** 스침 효과 (Kotlin HrtfRenderer 와 같음): 가까운 음원 거리 0.3m, 머리 반지름, 좌우 치우침 0.5 → 0.95 에서 서서히 */
   const NEAR_R = 0.30, HEAD_A = 0.0875, SOUND_C = 343, NEAR_PAN0 = 0.5, NEAR_PAN1 = 0.95;
+  /** 8D 회전 속도: 설정 1 당 0.6°/초 (100 = 6초에 한 바퀴, 40 = 15초) */
+  const SPIN_DPS_PER_STEP = 0.6;
   const smooth01 = (x) => { const u = Math.fround(Math.min(1, Math.max(0, x))); return Math.fround(Math.fround(u * u) * Math.fround(3 - Math.fround(2 * u))); };
   /** 2종 구면 한켈 함수 h_m(x) = j_m − i·y_m (위로 점화) */
   function hankel(x, re, im, mMax) {
@@ -867,8 +870,19 @@ PK 196 -0.5 3.79
       this.timbreFor = null; this.timbreAmt = -1; this.timbreFrom = bins;
       // 스침 효과 0..1: 한쪽으로 크게 치우친 직접음을 그쪽 귀 바로 옆(0.3m)에서 (두 귀 합한 크기는 그대로, 비율만 가까운 음원처럼)
       this.near = 0;
+      // 8D 회전 속도 (도/초, 0 = 끔) — 프레임마다 정확히 돌림 (Kotlin 과 같음), 끄면 부드럽게 정면 복귀
+      this.spinDps = 0; this.rotDeg = 0;
       this.dvf = nearDvf(fs, N, NEAR_R, HEAD_A);
       this.wNearL = new Float32Array(bins); this.wNearR = new Float32Array(bins);
+    }
+
+    advanceSpin() {
+      const sp = this.spinDps;
+      if (sp > 0) this.rotDeg = (this.rotDeg + sp * HOP / this.fs) % 360;
+      else if (this.rotDeg !== 0) {
+        const back = 180 * HOP / this.fs, r = (((this.rotDeg % 360) + 540) % 360) - 180;
+        this.rotDeg = Math.abs(r) <= back ? 0 : r - (r > 0 ? back : -back);
+      }
     }
 
     /** 귀 축(왼쪽 −90°, 오른쪽 +90°)과 음원 방향 사이 각 → dvf 행 */
@@ -1212,7 +1226,8 @@ PK 196 -0.5 3.79
     frame() {
       if (this.enhJob) this.stepEnhance(8);
       const t = this.table;
-      this.yawF = this.headYaw; this.pitchF = this.headPitch; this.elevF = this.frontElev;
+      this.advanceSpin();
+      this.yawF = this.headYaw + this.rotDeg; this.pitchF = this.headPitch; this.elevF = this.frontElev;
       this.updateTimbre(t);
       this.fft2(this.inL, this.inR, this.xLr, this.xLi, this.xRr, this.xRi);
       let hasBus = false;
@@ -1512,7 +1527,7 @@ PK 196 -0.5 3.79
     virtualizerStrength: 1000, bassStrength: 250, spaceEq: 45, reverbPreset: 2, frontAngle: 45, rearAngle: 135,
     rearLevel: 45, centerLevel: 60, engineMode: 1, spread: 90, earSize: 2, hpEq: 0, enabled: true,
     frontElev: 0, heightLevel: 25, topAngle: HEIGHT_AZ, topElev: HEIGHT_EL, topRearAngle: TOP_REAR_AZ, topRearElev: TOP_REAR_EL,
-    bottomLevel: 10, bottomAngle: BOTTOM_AZ, bottomElev: BOTTOM_EL, enhance: 30, timbre: 30, near: 15,
+    bottomLevel: 10, bottomAngle: BOTTOM_AZ, bottomElev: BOTTOM_EL, enhance: 30, timbre: 30, near: 15, spin: 0,
   };
 
   class Engine {
@@ -1601,6 +1616,7 @@ PK 196 -0.5 3.79
       rnd.setEnhance(num(p.enhance, 0, 100, 0) / 100, !this.applied);
       rnd.timbre = num(p.timbre, 0, 100, DEFAULT_TIMBRE * 100) / 100;
       rnd.near = num(p.near, 0, 100, 15) / 100;
+      rnd.spinDps = num(p.spin, 0, 100, 0) * SPIN_DPS_PER_STEP; // 8D 회전 (도/초) — 렌더러가 프레임마다 돌림
       this.applied = true;
       if (p.hpEq !== this.hpEqIdx) {
         this.hpEqIdx = p.hpEq;
@@ -1819,11 +1835,15 @@ registerProcessor('spatial3d', Spatial3DProcessor);
   const LAYOUT3D = { topAngle: 45, topElev: 45, topRearAngle: 135, topRearElev: 45, bottomAngle: 45, bottomElev: -30 };
   // 안드로이드 앱과 같은 프리셋
   const PRESETS = [
-    { name: '음악 (자연스러운 입체감)', p: { virtualizerStrength: 1000, bassStrength: 250, spaceEq: 45, reverbPreset: 2, frontAngle: 45, rearAngle: 135, rearLevel: 45, centerLevel: 60, heightLevel: 25, frontElev: 0, bottomLevel: 10, enhance: 30, near: 15, ...LAYOUT3D } },
-    { name: '영화관', p: { virtualizerStrength: 1000, bassStrength: 500, spaceEq: 60, reverbPreset: 3, frontAngle: 55, rearAngle: 130, rearLevel: 65, centerLevel: 85, heightLevel: 40, frontElev: 5, bottomLevel: 20, enhance: 50, near: 50, ...LAYOUT3D } },
-    { name: '콘서트홀', p: { virtualizerStrength: 1000, bassStrength: 300, spaceEq: 55, reverbPreset: 5, frontAngle: 40, rearAngle: 140, rearLevel: 55, centerLevel: 50, heightLevel: 35, frontElev: 0, bottomLevel: 10, enhance: 30, near: 0, ...LAYOUT3D } },
-    { name: '게임 (발소리·방향감)', p: { virtualizerStrength: 1000, bassStrength: 200, spaceEq: 35, reverbPreset: 1, frontAngle: 60, rearAngle: 130, rearLevel: 50, centerLevel: 70, heightLevel: 15, frontElev: 0, bottomLevel: 15, enhance: 80, near: 70, ...LAYOUT3D } },
-    { name: '보컬·팟캐스트', p: { virtualizerStrength: 850, bassStrength: 50, spaceEq: 30, reverbPreset: 1, frontAngle: 35, rearAngle: 140, rearLevel: 20, centerLevel: 90, heightLevel: 10, frontElev: 0, bottomLevel: 0, enhance: 10, near: 0, ...LAYOUT3D } },
+    { name: '음악 (자연스러운 입체감)', p: { virtualizerStrength: 1000, bassStrength: 250, spaceEq: 45, reverbPreset: 2, frontAngle: 45, rearAngle: 135, rearLevel: 45, centerLevel: 60, heightLevel: 25, frontElev: 0, bottomLevel: 10, enhance: 30, near: 15, spin: 0, ...LAYOUT3D } },
+    { name: '영화관', p: { virtualizerStrength: 1000, bassStrength: 500, spaceEq: 60, reverbPreset: 3, frontAngle: 55, rearAngle: 130, rearLevel: 65, centerLevel: 85, heightLevel: 40, frontElev: 5, bottomLevel: 20, enhance: 50, near: 50, spin: 0, ...LAYOUT3D } },
+    { name: '콘서트홀', p: { virtualizerStrength: 1000, bassStrength: 300, spaceEq: 55, reverbPreset: 5, frontAngle: 40, rearAngle: 140, rearLevel: 55, centerLevel: 50, heightLevel: 35, frontElev: 0, bottomLevel: 10, enhance: 30, near: 0, spin: 0, ...LAYOUT3D } },
+    { name: '게임 (발소리·방향감)', p: { virtualizerStrength: 1000, bassStrength: 200, spaceEq: 35, reverbPreset: 1, frontAngle: 60, rearAngle: 130, rearLevel: 50, centerLevel: 70, heightLevel: 15, frontElev: 0, bottomLevel: 15, enhance: 80, near: 70, spin: 0, ...LAYOUT3D } },
+    { name: '보컬·팟캐스트', p: { virtualizerStrength: 850, bassStrength: 50, spaceEq: 30, reverbPreset: 1, frontAngle: 35, rearAngle: 140, rearLevel: 20, centerLevel: 90, heightLevel: 10, frontElev: 0, bottomLevel: 0, enhance: 10, near: 0, spin: 0, ...LAYOUT3D } },
+    // 확실하게 3D: 큰 방 울림 더, 앞 스피커 ±60°, 배경음 옆·뒤 더, 천장·바닥 더, 3D 강조 최대, 스침
+    { name: '🔥 강력 3D (확실하게)', p: { virtualizerStrength: 1000, bassStrength: 350, spaceEq: 70, reverbPreset: 3, frontAngle: 60, rearAngle: 130, rearLevel: 75, centerLevel: 50, heightLevel: 40, frontElev: 0, bottomLevel: 20, enhance: 100, near: 50, spin: 0, ...LAYOUT3D } },
+    // 강력 3D + 소리 전체가 머리 둘레를 15초에 한 바퀴 (음악용)
+    { name: '🌀 8D 회전 (머리 둘레를 돎)', p: { virtualizerStrength: 1000, bassStrength: 300, spaceEq: 60, reverbPreset: 3, frontAngle: 60, rearAngle: 130, rearLevel: 70, centerLevel: 50, heightLevel: 35, frontElev: 0, bottomLevel: 15, enhance: 100, near: 40, spin: 40, ...LAYOUT3D } },
   ];
   const MODE_INFO = {
     1: '방 안의 가상 스피커 7개(앞 2·가운데·옆 2·뒤 2)로 들려줍니다. 보컬은 가운데, 박수·관중·울림은 옆과 뒤로 갑니다.',
@@ -1876,7 +1896,7 @@ registerProcessor('spatial3d', Spatial3DProcessor);
     engineMode: st.engineMode, spread: st.spread, earSize: st.earSize, hpEq: st.hpEq, enabled: st.enabled,
     frontElev: st.frontElev, heightLevel: st.heightLevel, topAngle: st.topAngle, topElev: st.topElev,
     topRearAngle: st.topRearAngle, topRearElev: st.topRearElev, bottomLevel: st.bottomLevel,
-    bottomAngle: st.bottomAngle, bottomElev: st.bottomElev, enhance: st.enhance, timbre: st.timbre, near: st.near,
+    bottomAngle: st.bottomAngle, bottomElev: st.bottomElev, enhance: st.enhance, timbre: st.timbre, near: st.near, spin: st.spin,
   });
 
   async function ensureAudio() {
@@ -2225,6 +2245,7 @@ registerProcessor('spatial3d', Spatial3DProcessor);
     ['height', 'heightLevel', (v) => v + '%'],
     ['bottom', 'bottomLevel', (v) => v + '%'],
     ['enhance', 'enhance', (v) => v + '%'],
+    ['spin', 'spin', (v) => v > 0 ? Math.round(360 / (v * 0.6)) + '초에 한 바퀴' : '끔'],
     ['near', 'near', (v) => v + '%'],
     ['timbre', 'timbre', (v) => v + '%'],
     ['topAz', 'topAngle', (v) => '±' + v + '°'],

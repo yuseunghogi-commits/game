@@ -58,6 +58,8 @@ data class SpatialSettings(
     val timbre: Int = 30,
     /** 스침 효과 0..100: 한쪽으로 치우친 소리(옆을 지나가는 드론·차 등)를 귀 바로 옆에서 지나가듯 (0 = 끔) */
     val near: Int = 15,
+    /** 8D 회전 0..100: 소리 전체가 머리 둘레를 천천히 돎 (0 = 끔, 40 = 15초에 한 바퀴, 100 = 6초) — 실측 엔진에서만 */
+    val spin: Int = 0,
     /** 헤드 트래킹: 고개를 위아래로 움직이는 것도 반영 */
     val headPitch: Boolean = true,
     /** 헤드폰 보정 프로필 (0 = 끔, n = HeadphoneEq.profiles[n-1]) */
@@ -101,6 +103,7 @@ data class SpatialSettings(
             .putInt("enhance", enhance)
             .putInt("timbre", timbre)
             .putInt("near", near)
+            .putInt("spin", spin)
             .putBoolean("headPitch", headPitch)
             .putBoolean("headInvert", headInvert)
             .apply()
@@ -120,7 +123,7 @@ data class SpatialSettings(
                 bassStrength = p.getInt("bass", d.bassStrength),
                 spaceEq = p.getInt("spaceEq", d.spaceEq),
                 reverbPreset = p.getInt("reverb", d.reverbPreset),
-                presetIndex = p.getInt("preset", d.presetIndex),
+                presetIndex = savedPreset(p, d),
                 strongMode = p.getBoolean("strongMode", d.strongMode),
                 width = p.getInt("width", d.width),
                 // 예전 버전의 켜기/끄기 스위치(표준 센서)를 새 선택으로 옮김
@@ -147,14 +150,22 @@ data class SpatialSettings(
                 timbre = p.getInt("timbre", d.timbre),
                 // v2.6 에서 새로 생김: 예전 저장값엔 없으니 지금 고른 프리셋의 값으로 (게임 70 · 영화관 50 …)
                 near = if (p.contains("near")) p.getInt("near", d.near)
-                else SOUND_PRESETS.getOrNull(p.getInt("preset", d.presetIndex))?.takeIf { it.virtualizer >= 0 }?.near ?: d.near,
+                else SOUND_PRESETS.getOrNull(savedPreset(p, d))?.takeIf { it.virtualizer >= 0 }?.near ?: d.near,
+                spin = p.getInt("spin", d.spin),
                 headPitch = p.getBoolean("headPitch", d.headPitch),
                 headInvert = p.getBoolean("headInvert", d.headInvert),
             ).migrateTop(legacyTop = p.contains("topAngle") && !p.contains("topRearAngle"))
                 .migrateStrength(old = p.contains("virtualizer") && p.getInt("settingsVersion", 0) < 2)
         }
 
-        private const val SETTINGS_VERSION = 2
+        private const val SETTINGS_VERSION = 3
+
+        /** v2.7 에서 프리셋 2개(강력 3D·8D 회전)가 '사용자 설정' 앞에 들어감 → 예전 '사용자 설정'(5)은 새 자리로 */
+        private const val OLD_CUSTOM_INDEX = 5
+        private fun savedPreset(p: android.content.SharedPreferences, d: SpatialSettings): Int {
+            val i = p.getInt("preset", d.presetIndex)
+            return if (p.getInt("settingsVersion", 0) < 3 && i == OLD_CUSTOM_INDEX) SOUND_PRESETS.lastIndex else i
+        }
 
         /**
          * v1.8 에서 프리셋 3D 강도가 바뀜 (음악 85→100%, 콘서트홀 95→100%, 보컬 65→85%: 원음을 섞을 때 생기는 빗살 간섭 제거).
@@ -204,6 +215,7 @@ data class SoundPreset(
     val bottomElev: Int = -30,
     val enhance: Int = 30,
     val near: Int = 15,
+    val spin: Int = 0,
 )
 
 val SOUND_PRESETS = listOf(
@@ -215,6 +227,10 @@ val SOUND_PRESETS = listOf(
     SoundPreset("콘서트홀", 1000, 300, 55, PresetReverb.PRESET_LARGEHALL, 60, 40, 140, 55, 50, 35, 0, bottom = 10, enhance = 30, near = 0),
     SoundPreset("게임 (발소리/방향감)", 1000, 200, 35, PresetReverb.PRESET_SMALLROOM, 95, 60, 130, 50, 70, 15, 0, bottom = 15, enhance = 80, near = 70),
     SoundPreset("보컬/팟캐스트", 850, 50, 30, PresetReverb.PRESET_SMALLROOM, 30, 35, 140, 20, 90, 10, 0, bottom = 0, enhance = 10, near = 0),
+    // 확실하게 3D: 큰 방 울림 더, 앞 스피커 넓게(±60°), 배경음 옆·뒤 더, 천장·바닥 더, 3D 강조 최대, 스침
+    SoundPreset("🔥 강력 3D (확실하게)", 1000, 350, 70, PresetReverb.PRESET_LARGEROOM, 65, 60, 130, 75, 50, 40, 0, bottom = 20, enhance = 100, near = 50),
+    // 강력 3D + 소리 전체가 머리 둘레를 15초에 한 바퀴 (유튜브 '8D 음악' 같은 효과, 음악용)
+    SoundPreset("🌀 8D 회전 (머리 둘레를 돎)", 1000, 300, 60, PresetReverb.PRESET_LARGEROOM, 65, 60, 130, 70, 50, 35, 0, bottom = 15, enhance = 100, near = 40, spin = 40),
     SoundPreset("사용자 설정", -1, -1, -1, PresetReverb.PRESET_NONE, -1),
 )
 

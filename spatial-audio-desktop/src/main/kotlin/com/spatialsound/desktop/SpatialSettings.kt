@@ -27,6 +27,7 @@ data class SpatialSettings(
     val enhance: Int = 30,              // 3D 강조 0..100
     val timbre: Int = 30,               // 음색 보정 0..100 (낮을수록 3D 느낌, 높을수록 원음 음색. 0 = v2.0, 100 = v2.1)
     val near: Int = 15,                 // 스침 효과 0..100 (한쪽으로 치우친 소리를 귀 바로 옆에서 지나가듯)
+    val spin: Int = 0,                  // 8D 회전 0..100 (소리 전체가 머리 둘레를 돎, 0 = 끔)
 )
 
 data class SoundPreset(val name: String, val s: SpatialSettings)
@@ -37,6 +38,10 @@ val SOUND_PRESETS = listOf(
     SoundPreset("콘서트홀", SpatialSettings(1000, 300, 55, 5, 60, 40, 140, 55, centerLevel = 50, heightLevel = 35, frontElev = 0, bottomLevel = 10, enhance = 30, near = 0)),
     SoundPreset("게임 (발소리/방향감)", SpatialSettings(1000, 200, 35, 1, 95, 60, 130, 50, centerLevel = 70, heightLevel = 15, frontElev = 0, bottomLevel = 15, enhance = 80, near = 70)),
     SoundPreset("보컬/팟캐스트", SpatialSettings(850, 50, 30, 1, 30, 35, 140, 20, centerLevel = 90, heightLevel = 10, frontElev = 0, bottomLevel = 0, enhance = 10, near = 0)),
+    // 확실하게 3D: 큰 방 울림 더, 앞 스피커 ±60°, 배경음 옆·뒤 더, 천장·바닥 더, 3D 강조 최대, 스침
+    SoundPreset("🔥 강력 3D (확실하게)", SpatialSettings(1000, 350, 70, 3, 65, 60, 130, 75, centerLevel = 50, heightLevel = 40, frontElev = 0, bottomLevel = 20, enhance = 100, near = 50)),
+    // 강력 3D + 소리 전체가 머리 둘레를 15초에 한 바퀴 (음악용)
+    SoundPreset("🌀 8D 회전 (머리 둘레를 돎)", SpatialSettings(1000, 300, 60, 3, 65, 60, 130, 70, centerLevel = 50, heightLevel = 35, frontElev = 0, bottomLevel = 15, enhance = 100, near = 40, spin = 40)),
 )
 
 val REVERB_NAMES = listOf("없음", "작은 방", "중간 방", "큰 방", "중간 홀", "큰 홀", "플레이트")

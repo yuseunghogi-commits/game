@@ -98,6 +98,8 @@ class BinauralProcessor(private val fs: Int) {
     private var timbre = HrtfRenderer.DEFAULT_TIMBRE
     /** 스침 효과 0..1 (HrtfRenderer.near) */
     private var near = 0.0
+    /** 8D 회전: 소리 전체가 머리 둘레를 도는 속도 (도/초, 0 = 끔) — 실측 엔진(공간·정위)에서만, 렌더러가 프레임마다 돌림 */
+    private var spinDps = 0.0
 
     private var appliedYaw = 0.0
     private var oldSources: Array<Src>? = null
@@ -390,6 +392,7 @@ class BinauralProcessor(private val fs: Int) {
             enhance = s.enhance / 100.0
             timbre = s.timbre / 100.0
             near = s.near / 100.0
+            spinDps = s.spin.coerceIn(0, 100) * SPIN_DPS_PER_STEP
             earSize = s.earSize
             if (s.hpEq != hpEqIdx) {
                 hpEqIdx = s.hpEq
@@ -434,6 +437,7 @@ class BinauralProcessor(private val fs: Int) {
             it.headPitch = headPitchDeg
             it.spread = spreadDeg
             it.headYaw = headYawDeg
+            it.spinDps = spinDps
             it.lowGain = 1.0 / roomNorm
             it.bassBoost = 1.5 * bass.toDouble()
             it.timbre = timbre
@@ -600,6 +604,9 @@ class BinauralProcessor(private val fs: Int) {
         private val LATE_SIGN = floatArrayOf(1f, 1f, 1f, -1f, -1f, -1f, 1f, -1f)
 
         /** REVERB_NAMES 와 같은 순서: 없음, 작은 방, 중간 방, 큰 방, 중간 홀, 큰 홀, 플레이트 */
+        /** 8D 회전 속도: 설정 1 당 0.6°/초 (100 = 60°/초 = 6초에 한 바퀴, 40 = 15초) */
+        const val SPIN_DPS_PER_STEP = 0.6
+
         private val ROOMS = arrayOf(
             Room(0.8, 0.0, 0.0),
             Room(0.7, 0.4, 0.6),

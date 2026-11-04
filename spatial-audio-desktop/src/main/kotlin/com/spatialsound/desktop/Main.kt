@@ -89,12 +89,13 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
     private val sEnhance = slider(0, 100, settings.enhance)
     private val sTimbre = slider(0, 100, settings.timbre)
     private val sNear = slider(0, 100, settings.near)
+    private val sSpin = slider(0, 100, settings.spin)
     private val lElev = JLabel(); private val lHeight = JLabel(); private val lTopAz = JLabel(); private val lTopEl = JLabel()
     private val lTopRearAz = JLabel(); private val lTopRearEl = JLabel(); private val lBottom = JLabel()
-    private val lBottomAz = JLabel(); private val lBottomEl = JLabel(); private val lEnhance = JLabel(); private val lTimbre = JLabel(); private val lNear = JLabel()
+    private val lBottomAz = JLabel(); private val lBottomEl = JLabel(); private val lEnhance = JLabel(); private val lTimbre = JLabel(); private val lNear = JLabel(); private val lSpin = JLabel()
     /** 실측 엔진에서만 보이는 높이·3D 강조 조절 */
     private val measuredOnly: List<javax.swing.JComponent> get() = listOf(lElev, sElev, lHeight, sHeight, lTopAz, sTopAz, lTopEl, sTopEl, lTopRearAz, sTopRearAz,
-        lTopRearEl, sTopRearEl, lBottom, sBottom, lBottomAz, sBottomAz, lBottomEl, sBottomEl, lEnhance, sEnhance, lNear, sNear, lTimbre, sTimbre)
+        lTopRearEl, sTopRearEl, lBottom, sBottom, lBottomAz, sBottomAz, lBottomEl, sBottomEl, lEnhance, sEnhance, lSpin, sSpin, lNear, sNear, lTimbre, sTimbre)
     private val lFront = JLabel(); private val lRearAngle = JLabel(); private val lRearLevel = JLabel()
     private val lStrength = JLabel(); private val lWidth = JLabel(); private val lRoom = JLabel(); private val lBass = JLabel()
     private val status = JLabel(" ")
@@ -152,6 +153,7 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         row(lSpread); row(sSpread)
         row(JLabel("👂 귀 맞춤 (앞/뒤가 헷갈리면 단계를 바꿔 보세요)")); row(earBox)
         row(lEnhance); row(sEnhance)
+        row(lSpin); row(sSpin)
         row(lNear); row(sNear)
         row(lTimbre); row(sTimbre)
 
@@ -191,7 +193,7 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         }
         applyFont(root)
         reverbBox.selectedIndex = settings.reverbPreset.coerceIn(0, REVERB_NAMES.lastIndex)
-        presetBox.selectedIndex = prefs.getInt("preset", 0).coerceIn(0, SOUND_PRESETS.size)
+        presetBox.selectedIndex = savedPreset().coerceIn(0, SOUND_PRESETS.size)
         updateLabels()
         loadDevices()
 
@@ -213,11 +215,12 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
                 sBottom.value = p.bottomLevel; sBottomAz.value = p.bottomAngle; sBottomEl.value = p.bottomElev
                 sEnhance.value = p.enhance
                 sNear.value = p.near
+                sSpin.value = p.spin
                 applyingPreset = false
                 changed()
             }
         }
-        listOf(sStrength, sWidth, sRoom, sBass, sFront, sRearAngle, sRearLevel, sCenter, sElev, sHeight, sTopAz, sTopEl, sTopRearAz, sTopRearEl, sBottom, sBottomAz, sBottomEl, sEnhance, sNear, sTimbre)
+        listOf(sStrength, sWidth, sRoom, sBass, sFront, sRearAngle, sRearLevel, sCenter, sElev, sHeight, sTopAz, sTopEl, sTopRearAz, sTopRearEl, sBottom, sBottomAz, sBottomEl, sEnhance, sSpin, sNear, sTimbre)
             .forEach { s -> s.addChangeListener { changed() } }
         reverbBox.addActionListener { changed() }
         engineBox.selectedIndex = intArrayOf(1, 2, 0).indexOf(settings.engineMode).coerceAtLeast(0)
@@ -359,6 +362,7 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
             enhance = sEnhance.value,
             timbre = sTimbre.value,
             near = sNear.value,
+            spin = sSpin.value,
         )
         val measured = settings.engineMode != 0
         for (c in measuredOnly) c.isVisible = measured
@@ -400,6 +404,8 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         lBottomAz.text = "바닥 ▼ 방향: ±${sBottomAz.value}° (0 = 정면, 180 = 바로 뒤)$botOff"
         lBottomEl.text = "바닥 ▼ 높이: 아래 ${-sBottomEl.value}°"
         lEnhance.text = "✨ 3D 강조: ${sEnhance.value}% (뒤는 더 뒤처럼, 위·아래는 더 위·아래처럼 · 0 = 측정 그대로)"
+        lSpin.text = if (sSpin.value == 0) "🌀 8D 회전: 끔 (올리면 소리 전체가 머리 둘레를 천천히 돎 · 음악용)"
+            else String.format("🌀 8D 회전: %d (소리 전체가 머리 둘레를 %.0f초에 한 바퀴 · 음악용 · 0 = 끔)", sSpin.value, 360.0 / (sSpin.value * com.spatialsound.app.BinauralProcessor.SPIN_DPS_PER_STEP))
         lNear.text = "🛸 스침 효과: ${sNear.value}% (한쪽으로 치우친 소리 — 옆을 지나가는 드론·차·총알 — 를 귀 바로 옆에서 스치듯 · 0 = 끔)"
         lTimbre.text = "🎚 음색 보정: ${sTimbre.value}% (낮추면 3D·머리 밖 느낌, 높이면 원음처럼 깨끗 · 0 = v2.0, 100 = v2.1, 기본 30)"
         lRoom.text = "방 울림 (벽 반사음): ${sRoom.value}%"
@@ -522,17 +528,24 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         enhance = prefs.getInt("enhance", 30),
         timbre = prefs.getInt("timbre", 30),
         // v2.6 에서 새로 생김: 예전 저장값엔 없으니 지금 고른 프리셋의 값으로
-        near = prefs.getInt("near", SOUND_PRESETS.getOrNull(prefs.getInt("preset", 0))?.s?.near ?: 15),
+        near = prefs.getInt("near", SOUND_PRESETS.getOrNull(savedPreset())?.s?.near ?: 15),
+        spin = prefs.getInt("spin", 0),
         engineMode = prefs.getInt("engine", 1),
         spread = prefs.getInt("spread", 90),
         earSize = prefs.getInt("ear", 2),
         hpEq = prefs.getInt("hpEq", 0),
     ))
 
+    /** v2.7 에서 프리셋 2개가 '사용자 설정' 앞에 들어감 → 예전 '사용자 설정'(5)은 새 자리로 */
+    private fun savedPreset(): Int {
+        val i = prefs.getInt("preset", 0)
+        return if (prefs.getInt("ver", 0) < 3 && i == 5) SOUND_PRESETS.size else i
+    }
+
     /** v1.8: 프리셋 3D 강도 85/95/65% → 100/100/85% — 저장값이 예전 프리셋/기본값 그대로면 옮김 */
     private fun migrateStrength(s: SpatialSettings): SpatialSettings {
         if (prefs.getInt("ver", 0) >= 2 || prefs.get("strength", null) == null) return s
-        val preset = prefs.getInt("preset", 0)
+        val preset = savedPreset()
         val before = mapOf(0 to 850, 2 to 950, 4 to 650); val after = mapOf(0 to 1000, 2 to 1000, 4 to 850)
         return when {
             before[preset] == s.virtualizerStrength -> s.copy(virtualizerStrength = after.getValue(preset))
@@ -542,7 +555,7 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
     }
 
     private fun saveSettings() {
-        prefs.putInt("ver", 2)
+        prefs.putInt("ver", 3)
         prefs.putInt("strength", settings.virtualizerStrength); prefs.putInt("bass", settings.bassStrength)
         prefs.putInt("room", settings.spaceEq); prefs.putInt("reverb", settings.reverbPreset)
         prefs.putInt("width", settings.width)
@@ -555,6 +568,7 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         prefs.putInt("enhance", settings.enhance)
         prefs.putInt("timbre", settings.timbre)
         prefs.putInt("near", settings.near)
+        prefs.putInt("spin", settings.spin)
         prefs.putInt("engine", settings.engineMode); prefs.putInt("spread", settings.spread); prefs.putInt("ear", settings.earSize)
         prefs.putInt("hpEq", settings.hpEq)
     }

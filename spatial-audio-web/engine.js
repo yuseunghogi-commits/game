@@ -356,6 +356,8 @@
   const DEFAULT_TIMBRE = 0.3;
   /** 스침 효과 (Kotlin HrtfRenderer 와 같음): 가까운 음원 거리 0.3m, 머리 반지름, 좌우 치우침 0.5 → 0.95 에서 서서히 */
   const NEAR_R = 0.30, HEAD_A = 0.0875, SOUND_C = 343, NEAR_PAN0 = 0.5, NEAR_PAN1 = 0.95;
+  /** 8D 회전 속도: 설정 1 당 0.6°/초 (100 = 6초에 한 바퀴, 40 = 15초) */
+  const SPIN_DPS_PER_STEP = 0.6;
   const smooth01 = (x) => { const u = Math.fround(Math.min(1, Math.max(0, x))); return Math.fround(Math.fround(u * u) * Math.fround(3 - Math.fround(2 * u))); };
   /** 2종 구면 한켈 함수 h_m(x) = j_m − i·y_m (위로 점화) */
   function hankel(x, re, im, mMax) {
@@ -473,8 +475,19 @@
       this.timbreFor = null; this.timbreAmt = -1; this.timbreFrom = bins;
       // 스침 효과 0..1: 한쪽으로 크게 치우친 직접음을 그쪽 귀 바로 옆(0.3m)에서 (두 귀 합한 크기는 그대로, 비율만 가까운 음원처럼)
       this.near = 0;
+      // 8D 회전 속도 (도/초, 0 = 끔) — 프레임마다 정확히 돌림 (Kotlin 과 같음), 끄면 부드럽게 정면 복귀
+      this.spinDps = 0; this.rotDeg = 0;
       this.dvf = nearDvf(fs, N, NEAR_R, HEAD_A);
       this.wNearL = new Float32Array(bins); this.wNearR = new Float32Array(bins);
+    }
+
+    advanceSpin() {
+      const sp = this.spinDps;
+      if (sp > 0) this.rotDeg = (this.rotDeg + sp * HOP / this.fs) % 360;
+      else if (this.rotDeg !== 0) {
+        const back = 180 * HOP / this.fs, r = (((this.rotDeg % 360) + 540) % 360) - 180;
+        this.rotDeg = Math.abs(r) <= back ? 0 : r - (r > 0 ? back : -back);
+      }
     }
 
     /** 귀 축(왼쪽 −90°, 오른쪽 +90°)과 음원 방향 사이 각 → dvf 행 */
@@ -818,7 +831,8 @@
     frame() {
       if (this.enhJob) this.stepEnhance(8);
       const t = this.table;
-      this.yawF = this.headYaw; this.pitchF = this.headPitch; this.elevF = this.frontElev;
+      this.advanceSpin();
+      this.yawF = this.headYaw + this.rotDeg; this.pitchF = this.headPitch; this.elevF = this.frontElev;
       this.updateTimbre(t);
       this.fft2(this.inL, this.inR, this.xLr, this.xLi, this.xRr, this.xRi);
       let hasBus = false;
@@ -1118,7 +1132,7 @@
     virtualizerStrength: 1000, bassStrength: 250, spaceEq: 45, reverbPreset: 2, frontAngle: 45, rearAngle: 135,
     rearLevel: 45, centerLevel: 60, engineMode: 1, spread: 90, earSize: 2, hpEq: 0, enabled: true,
     frontElev: 0, heightLevel: 25, topAngle: HEIGHT_AZ, topElev: HEIGHT_EL, topRearAngle: TOP_REAR_AZ, topRearElev: TOP_REAR_EL,
-    bottomLevel: 10, bottomAngle: BOTTOM_AZ, bottomElev: BOTTOM_EL, enhance: 30, timbre: 30, near: 15,
+    bottomLevel: 10, bottomAngle: BOTTOM_AZ, bottomElev: BOTTOM_EL, enhance: 30, timbre: 30, near: 15, spin: 0,
   };
 
   class Engine {
@@ -1207,6 +1221,7 @@
       rnd.setEnhance(num(p.enhance, 0, 100, 0) / 100, !this.applied);
       rnd.timbre = num(p.timbre, 0, 100, DEFAULT_TIMBRE * 100) / 100;
       rnd.near = num(p.near, 0, 100, 15) / 100;
+      rnd.spinDps = num(p.spin, 0, 100, 0) * SPIN_DPS_PER_STEP; // 8D 회전 (도/초) — 렌더러가 프레임마다 돌림
       this.applied = true;
       if (p.hpEq !== this.hpEqIdx) {
         this.hpEqIdx = p.hpEq;
