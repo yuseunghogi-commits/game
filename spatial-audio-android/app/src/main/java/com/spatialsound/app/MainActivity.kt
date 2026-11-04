@@ -306,7 +306,7 @@ class MainActivity : Activity() {
         labelSpread.text = "방향 펼침: 스테레오 끝 = ±${settings.spread}° (클수록 좌우가 넓고 또렷)"
         textEngineInfo.text = ENGINE_INFO[engineToPos(settings.engineMode)]
         textHpEq.text = HeadphoneEq.profiles.getOrNull(settings.hpEq - 1)?.let {
-            "측정: ${it.source} · 보정 필터 ${it.filters.size}개 (AutoEq). 헤드폰 앱의 EQ 는 꺼 두세요."
+            "측정: ${it.source} · 보정 필터 ${it.filters.size}개 (AutoEq) · 부드럽게: 헤드폰 본래 저음은 거의 그대로, 좁은 고음 보정은 약하게. 헤드폰 앱의 EQ 는 꺼 두세요."
         } ?: "쓰는 헤드폰을 고르면 그 헤드폰 고유의 음색을 평평하게 보정해 3D 단서가 또렷해집니다." 
         labelFront.text = "앞 스피커 각도: ±${settings.frontAngle}° (작을수록 정면)"
         labelRearAngle.text = "뒤 스피커 각도: ±${settings.rearAngle}° (90°=옆, 180°=바로 뒤)"

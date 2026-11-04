@@ -64,6 +64,21 @@ object HeadphoneEq {
 
     private const val MAKEUP_MAX_DB = 3.5
 
+    /**
+     * 부드러운 보정.
+     * 측정대로 다 보정하면 (Bose QC 2023: 105Hz 아래 -4.6dB, 6.3kHz 좁은 홈 -5.7dB …) 음악의 저음이 빠지고
+     * 더미헤드 귀의 골짜기와 겹쳐 6~8kHz 가 -9dB 까지 패여서, 배경음악이 작고 필터 낀 소리로 들렸다.
+     * - 저음을 깎는 보정은 35% 만 → 헤드폰 본래 저음을 대부분 살림
+     * - 300Hz 아래를 깎는 좁은 보정은 50% 만
+     * - 1.5kHz 위의 좁은(Q>2.5) 보정은 30% 만 → 측정 장비·귀 모양마다 달라지는 부분이라 과하게 하면 오히려 색이 낌
+     */
+    fun gentleGainDb(f: Filter): Double = when {
+        f.type == "LSC" && f.gainDb < 0 -> f.gainDb * 0.35
+        f.type == "PK" && f.fc < 300 && f.gainDb < 0 -> f.gainDb * 0.5
+        f.type == "PK" && f.fc > 1500 && f.q > 2.5 -> f.gainDb * 0.3
+        else -> f.gainDb
+    }
+
     /** 스테레오 바이쿼드 묶음 (RBJ 쿡북, 배정밀도 상태) */
     class Chain(profile: Profile, fs: Int) {
         private val n = profile.filters.size
@@ -82,7 +97,7 @@ object HeadphoneEq {
         init {
             for ((i, f) in profile.filters.withIndex()) {
                 val fc = f.fc.coerceAtMost(fs * 0.45)
-                val a = 10.0.pow(f.gainDb / 40.0)
+                val a = 10.0.pow(gentleGainDb(f) / 40.0)
                 val w0 = 2 * PI * fc / fs
                 val cw = cos(w0)
                 val alpha = sin(w0) / (2 * f.q)

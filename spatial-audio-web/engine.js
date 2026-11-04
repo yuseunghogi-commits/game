@@ -299,6 +299,14 @@
     }
     return out;
   }
+  // 부드러운 보정 (Kotlin HeadphoneEq.gentleGainDb 와 같음): 측정대로 다 보정하면 음악 저음이 빠지고
+  // 더미헤드 귀의 골짜기와 겹쳐 6~8kHz 가 -9dB 까지 패여서 배경음악이 작고 필터 낀 소리로 들렸다.
+  function gentleGainDb(f) {
+    if (f.type === 'LSC' && f.gainDb < 0) return f.gainDb * 0.35;      // 헤드폰 본래 저음은 대부분 살림
+    if (f.type === 'PK' && f.fc < 300 && f.gainDb < 0) return f.gainDb * 0.5;
+    if (f.type === 'PK' && f.fc > 1500 && f.q > 2.5) return f.gainDb * 0.3; // 좁은 고음 보정은 귀마다 달라 약하게
+    return f.gainDb;
+  }
   class EqChain {
     constructor(profile, fs) {
       const n = this.n = profile.filters.length;
@@ -309,7 +317,7 @@
       this.pre = Math.pow(10, (profile.preampDb + Math.min(-profile.preampDb, 3.5)) / 20);
       profile.filters.forEach((f, i) => {
         const fc = Math.min(f.fc, fs * 0.45);
-        const a = Math.pow(10, f.gainDb / 40), w0 = 2 * PI * fc / fs, cw = Math.cos(w0);
+        const a = Math.pow(10, gentleGainDb(f) / 40), w0 = 2 * PI * fc / fs, cw = Math.cos(w0);
         const alpha = Math.sin(w0) / (2 * f.q), sa = 2 * Math.sqrt(a) * alpha;
         let b0, b1, b2, a0, a1, a2;
         if (f.type === 'LSC') {
@@ -343,6 +351,7 @@
   const SIDE_ANGLE = 95;
   /** 저음 직통 구간 (Hz): LOW_F1 아래 전부, LOW_F2 까지 서서히 */
   const LOW_F1 = 100, LOW_F2 = 200;
+  const TIMBRE_FIX = 0.7, TIMBRE_MAX_DB = 6, TIMBRE_DIRS = [0, 30, -30, 45, -45]; // 음색 보정
   /** 천장 앞 스피커 기본 위치 ±45°·위 45°, 천장 뒤 ±135°·위 45° (7.1.4 배치), 바닥 ±45°·아래 30° */
   const HEIGHT_AZ = 45, HEIGHT_EL = 45, TOP_REAR_AZ = 135, TOP_REAR_EL = 45, BOTTOM_AZ = 45, BOTTOM_EL = -30;
   /** 3D 강조: 앞/뒤 짝과의 차이를 뒤쪽이 3/4, 앞쪽이 1/4 맡음. 최대 ±10dB */
@@ -427,7 +436,7 @@
     stepEnhance(count) {
       const j = this.enhJob, t = j.b.t;
       for (let n = 0; n < count && j.d < t.dirs; n++, j.d++) { const [r2, i2] = this.enhanceDir(j.b, j.a, j.d); j.re.push(r2); j.im.push(i2); }
-      if (j.d === t.dirs) { this.table = { dirs: t.dirs, step: t.step, re: j.re, im: j.im, enh: j.a, lowC: t.lowC, lowS: t.lowS }; this.enhJob = null; }
+      if (j.d === t.dirs) { this.table = { dirs: t.dirs, step: t.step, re: j.re, im: j.im, enh: j.a, lowC: t.lowC, lowS: t.lowS, centerFix: t.centerFix }; this.enhJob = null; }
     }
 
     /** 원본 표 + 방향마다 "앞/뒤 짝 방향(θ ↔ 180°−θ)과의 크기 차이(dB, 1/2 옥타브 평활)" */
@@ -457,7 +466,7 @@
       if (!(amount > 0)) return t;
       const re = [], im = [];
       for (let d = 0; d < t.dirs; d++) { const [r2, i2] = this.enhanceDir(b, amount, d); re.push(r2); im.push(i2); }
-      return { dirs: t.dirs, step: t.step, re, im, enh: amount, lowC: t.lowC, lowS: t.lowS };
+      return { dirs: t.dirs, step: t.step, re, im, enh: amount, lowC: t.lowC, lowS: t.lowS, centerFix: t.centerFix };
     }
 
     enhanceDir(b, amount, d) {
@@ -492,6 +501,7 @@
         }
         re.push(r2); im.push(i2);
       }
+      const centerFix = this.timbreFix(set, re, im);
       // 정면(0°) HRTF 의 위상(귀별) — 직통 저음에 이 위상만 입혀서 HRTF 를 거친 소리와 이어 붙임
       // (측정 HRTF 는 저음에서 위상이 앞서 있어서 단순 지연으로 맞추면 160Hz 에서 상쇄됨)
       const nLow = Math.min(bins, Math.floor(LOW_F2 * N / this.fs) + 1), lowC = [], lowS = [];
@@ -500,7 +510,60 @@
         for (let k = 0; k < nLow; k++) { const m = Math.fround(Math.sqrt(Math.fround(a[k] * a[k] + b[k] * b[k]))); c[k] = m > 1e-12 ? a[k] / m : 1; s[k] = m > 1e-12 ? b[k] / m : 0; }
         lowC.push(c); lowS.push(s);
       }
-      return { dirs: set.dirs, step: set.step, re, im, enh: 0, lowC, lowS };
+      return { dirs: set.dirs, step: set.step, re, im, enh: 0, lowC, lowS, centerFix };
+    }
+
+    /**
+     * 음색 보정 (Kotlin HrtfRenderer.timbreFix 와 같음): 더미헤드 귀 때문에 정면 쪽이 3~5kHz 들뜨고 6~8kHz 패이는 것을
+     * 1) 정면 쪽 방향(0°·±30°·±45°) 평균으로 모든 방향에 70% 펴고 (방향끼리 차이는 그대로)
+     * 2) 남는 정면(0°) 굴곡은 가운데 스피커 전용 배율로 돌려준다.
+     */
+    timbreFix(set, re, im) {
+      const bins = N / 2 + 1, hz = this.fs / N, r3 = Math.pow(2, 1 / 6);
+      const smoothDbOf = (pw) => {
+        const db = new Float64Array(bins), sm = new Float64Array(bins);
+        for (let k = 0; k < bins; k++) db[k] = 10 * Math.log10(pw[k] + 1e-20);
+        for (let k = 1; k < bins; k++) {
+          const lo = Math.max(1, Math.floor(k / r3)), hi = Math.min(bins - 1, Math.ceil(k * r3));
+          let acc = 0; for (let j = lo; j <= hi; j++) acc += db[j];
+          sm[k] = acc / (hi - lo + 1);
+        }
+        let ref = 0, cnt = 0;
+        for (let k = 1; k < bins; k++) { const f = k * hz; if (f >= 500 && f <= 1500) { ref += sm[k]; cnt++; } }
+        ref /= cnt;
+        for (let k = 1; k < bins; k++) sm[k] -= ref;
+        return sm;
+      };
+      const gainDb = (k, dev) => {
+        const f = k * hz;
+        if (k === 0 || f < 1000) return 0;
+        const ramp = Math.min(1, Math.max(0, (f - 1000) / 1000));
+        return Math.min(TIMBRE_MAX_DB, Math.max(-TIMBRE_MAX_DB, -TIMBRE_FIX * dev * ramp));
+      };
+      const power = (d) => {
+        const p = new Float64Array(bins);
+        for (let k = 0; k < bins; k++) {
+          let acc = 0;
+          for (let e = 0; e < 2; e++) { const a = re[d][e][k], b = im[d][e][k]; acc += a * a + b * b; }
+          p[k] = acc / 2;
+        }
+        return p;
+      };
+      const pw = new Float64Array(bins);
+      for (const deg of TIMBRE_DIRS) {
+        const p = power(((((deg % 360) + 360) % 360) / set.step | 0) % set.dirs);
+        for (let k = 0; k < bins; k++) pw[k] += p[k] / TIMBRE_DIRS.length;
+      }
+      const dev = smoothDbOf(pw);
+      for (let k = 0; k < bins; k++) {
+        const m = Math.fround(Math.pow(10, gainDb(k, dev[k]) / 20));
+        if (m === 1) continue;
+        for (let d = 0; d < set.dirs; d++) for (let e = 0; e < 2; e++) { re[d][e][k] *= m; im[d][e][k] *= m; }
+      }
+      const dev0 = smoothDbOf(power(0));
+      const cf = new Float32Array(bins);
+      for (let k = 0; k < bins; k++) cf[k] = Math.pow(10, gainDb(k, dev0[k]) / 20);
+      return cf;
     }
 
     phase(delay) {
@@ -735,7 +798,11 @@
       const f = this.frontAngle, ef = this.elevF;
       this.addSource(t, fLr, fLi, -f, ef, 1, 0);
       this.addSource(t, fRr, fRi, f, ef, 1, 0);
-      if (cl > 0.001) this.addSource(t, cRr, cIi, 0, ef, 1, 0);
+      if (cl > 0.001) {
+        const cf = t.centerFix;
+        if (cf && cf.length === bins) for (let k = 0; k < bins; k++) { cRr[k] *= cf[k]; cIi[k] *= cf[k]; }
+        this.addSource(t, cRr, cIi, 0, ef, 1, 0);
+      }
       this.addAmbience(t, surAmb, topAmb, botAmb);
       this.addLowDirect(t);
     }

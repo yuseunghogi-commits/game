@@ -229,3 +229,18 @@ app/src/main/java/com/spatialsound/app/
 앱 화면 맨 아래 **오픈소스 라이선스 보기** (`app/src/main/assets/open_source_licenses.txt`):
 libadb-android (Apache-2.0 로 사용), spake2-java (LGPL-3.0, 수정 없이 사용 — 이 앱 소스가 공개되어 있어 바꿔 빌드 가능),
 Conscrypt·BoringSSL (Apache-2.0), Bouncy Castle (MIT), AndroidHiddenApiBypass (Apache-2.0), Shizuku API (MIT).
+
+## 🎚 음색 (v2.1)
+원음과 비교했을 때 "필터 낀 듯한" 소리의 원인은 두 가지였습니다 (측정: 분홍잡음, 1/6옥타브, 1kHz 기준).
+1. 측정용 더미헤드(KEMAR) 귀 모양: 정면 소리가 3~5kHz +3~5dB, 6~8kHz -4~6dB
+2. 헤드폰 보정을 측정대로 100% 적용: Bose QC 2023 은 6.3kHz 좁은 홈 -5.7dB 가 1번과 겹쳐 -9dB 구멍, 저음 -4.6dB
+
+| Bose 보정 켬 | 가운데(대사·노래) 최대 굴곡 | 가운데 평균 | 넓은 소리 평균 | 배경음악-대사 |
+|---|---|---|---|---|
+| v2.0 | -9.2dB (6.3kHz) | 5.2dB | 2.7dB | -0.3dB |
+| v2.1 | -4.0dB | 2.3dB | 1.2dB | +1.1dB |
+
+- `HrtfRenderer.timbreFix`: 정면 쪽 방향(0°·±30°·±45°) 평균 응답을 1/3옥타브 평활 → 1kHz 위를 70% 편 곡선을 모든 방향에 곱함
+  (방향끼리 차이 = 3D 단서는 그대로), 남은 정면(0°) 굴곡은 가운데 스피커에만 70% 더
+- `HeadphoneEq.gentleGainDb`: 저음 깎기 35%, 300Hz 아래 깎기 50%, 1.5kHz 위 좁은(Q>2.5) 보정 30%
+

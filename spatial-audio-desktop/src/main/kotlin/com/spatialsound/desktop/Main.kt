@@ -372,7 +372,7 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         lStrength.text = "3D 강도: ${sStrength.value / 10}%"
         lSpread.text = "방향 펼침: 스테레오 끝 = ±${sSpread.value}°"
         hpEqInfo.text = com.spatialsound.app.HeadphoneEq.profiles.getOrNull(hpEqBox.selectedIndex - 1)
-            ?.let { "측정: ${it.source} · 필터 ${it.filters.size}개 (AutoEq)" } ?: " "
+            ?.let { "측정: ${it.source} · 필터 ${it.filters.size}개 (AutoEq, 부드럽게: 본래 저음 유지)" } ?: " "
         lWidth.text = "좌우 분리 (반대쪽 귀로 새는 소리 줄이기): ${sWidth.value}%"
         lFront.text = "앞 스피커 각도: ±${sFront.value}° (작을수록 정면)"
         lRearAngle.text = "뒤 스피커 각도: ±${sRearAngle.value}° (90°=옆, 180°=바로 뒤)"

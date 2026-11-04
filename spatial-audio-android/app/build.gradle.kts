@@ -23,8 +23,8 @@ android {
         applicationId = "com.spatialsound.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 21
-        versionName = "2.0"
+        versionCode = 22
+        versionName = "2.1"
     }
 
     // 서명 키: CI 가 SPATIAL_SIGN_STORE 로 항상 같은 키를 넘겨 준다 (덮어쓰기·자동 업데이트에 필요).
