@@ -443,11 +443,26 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         if (e.isRunning) {
             engine = e
             status.text = "✅ 3D 적용 중 (${e.sampleRate} Hz) — Windows 출력이 'CABLE Input'인지 확인"
+            statusTimer.restart()
         }
         refreshButton()
     }
 
+    /** 실행 중 상태: 지연(장치 완충 + 엔진 처리)·끊김 횟수 — 끊김이 생기면 완충을 스스로 늘림 */
+    private val statusTimer = javax.swing.Timer(1000) {
+        val e = engine
+        if (e == null || !e.isRunning) return@Timer
+        // 실측 엔진(공간·정위)은 처리 지연 1024 샘플이 더 있음
+        val engineMs = if (settings.engineMode != 0) com.spatialsound.app.HrtfRenderer.LATENCY * 1000.0 / e.sampleRate.coerceAtLeast(1) else 0.0
+        val drop = if (e.dropouts == 0) "끊김 없음" else "끊김 ${e.dropouts}회 → 여유를 늘렸어요"
+        status.text = String.format(
+            "✅ 3D 적용 중 (%d Hz · 지연 %.0fms · %s) — Windows 출력이 'CABLE Input'인지 확인",
+            e.sampleRate, e.bufferMs + engineMs, drop,
+        )
+    }
+
     private fun stopEngine() {
+        statusTimer.stop()
         engine?.stop(); engine = null
         status.text = "⏹ 정지됨"
         refreshButton()
