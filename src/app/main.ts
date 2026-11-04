@@ -244,6 +244,7 @@ async function act(name: string, el: HTMLElement) {
   else if (name === 'bailout') issue(state, { kind: 'bailout' });
   else if (name === 'quicksave') { await saveSlot('m1'); return; }
   else if (name === 'continue') { const slot = latestSlot(); if (slot) { await loadSlot(slot); return; } }
+  else if (name === 'casual') { try { localStorage.setItem('planetary-grid.mode', 'casual'); } catch { /* 무시 */ } location.reload(); }
   else if (name === 'export') download(`planetary-grid-day${dayOf(state.step) + 1}.pgsave`, exportText(state));
   else if (name === 'import') {
     const text = await pickFile();

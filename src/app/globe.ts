@@ -17,6 +17,8 @@ export interface Globe {
   focus(lat: number, lon: number): void;
   /** 타이틀(새 게임) 화면: 천천히 자동 회전 */
   setIdle(on: boolean): void;
+  /** 위도·경도 → 화면 좌표 (보이지 않으면 null). 떠오르는 수익 숫자용 */
+  project(lat: number, lon: number): { x: number; y: number } | null;
   labels: HTMLElement;
 }
 
@@ -133,9 +135,9 @@ export async function createGlobe(
         vec3 col = day * (0.04 + 1.08 * lit) * mix(1.0, shade, 1.0 - water * 0.85);
         // 바다: 햇빛 반사(물결 노이즈) + 비스듬한 각도의 하늘빛
         vec3 wn = normalize(n0 + (vec3(fbm(vP * 140.0 + time * 0.00004), fbm(vP * 140.0 + 7.3), 0.0) - 0.5) * 0.08);
-        float spec = pow(max(dot(reflect(-L, wn), V), 0.0), 60.0);
+        float spec = pow(max(dot(reflect(-L, wn), V), 0.0), 180.0);
         float fres = pow(1.0 - max(dot(n0, V), 0.0), 4.0);
-        col += water * (vec3(1.0, 0.93, 0.8) * spec * 1.1 * lit + vec3(0.16, 0.32, 0.5) * fres * 0.6 * lit);
+        col += water * (vec3(1.0, 0.93, 0.8) * spec * 0.7 * lit + vec3(0.16, 0.32, 0.5) * fres * 0.6 * lit);
         // 해 질 녘 띠 (명암 경계)
         col += vec3(0.55, 0.25, 0.08) * exp(-pow(l0 * 7.0, 2.0)) * 0.22;
         col += night * (1.0 - smoothstep(-0.25, 0.05, l0)) * 1.45;
@@ -151,7 +153,7 @@ export async function createGlobe(
         }
         float isSel = float(float(id) == selected);
         col = mix(col, vec3(0.95, 0.7, 0.28), isSel * land * 0.10);
-        col = mix(col, isSel > 0.5 ? vec3(1.0, 0.72, 0.3) : vec3(0.85, 0.95, 1.0), edge * land * (0.12 + 0.25 * near + 0.45 * isSel));
+        col = mix(col, isSel > 0.5 ? vec3(1.0, 0.72, 0.3) : vec3(0.85, 0.95, 1.0), edge * land * (0.14 + 0.08 * near + 0.45 * isSel));
         float rim = pow(1.0 - max(dot(n0, V), 0.0), 3.0);
         col += vec3(0.25, 0.55, 0.9) * rim * (0.12 + 0.55 * lit);
         if (mode > 0.5 && mode < 1.5) col = day;
@@ -234,6 +236,7 @@ export async function createGlobe(
     g.rotateY(((f.id * 137) % 360) * (Math.PI / 180));
     g.userData.facId = f.id;
     g.scale.multiplyScalar(regionPx < 1 ? 0.6 + 0.4 * regionPx : 1);
+    g.userData.baseScale = g.scale.x;
     facGroup.add(g);
     const rec = { g, type: f.type, size: f.size, modules: f.modules };
     facMeshes.set(f.id, rec);
@@ -359,7 +362,7 @@ export async function createGlobe(
     planetMat.uniforms.camDist.value = camDist;
     planetMat.uniforms.time.value = time;
     planetMat.uniforms.selected.value = selectedId ?? -1;
-    (clouds.material as THREE.MeshLambertMaterial).opacity = 0.55 * (0.25 + 0.75 * Math.min(1, Math.max(0, (camDist - 1.3) / 1.2)));
+    (clouds.material as THREE.MeshLambertMaterial).opacity = 0.5 * Math.min(1, Math.max(0.12, (camDist - 1.6) / 1.4));
     // 지역 색칠 (지도 표시): 표식 대신 지역 면 전체를 칠한다
     const ovVals = overlayValues();
     for (let i = 0; i < regionTint.length; i++) {
@@ -369,6 +372,9 @@ export async function createGlobe(
       regionTint[i].set(c.r, c.g, c.b, overlay === 'mine' ? (v > 0 ? 0.25 + 0.35 * v : 0) : 0.42);
     }
     const ringScale = Math.max(0.35, Math.min(1, (camDist - 1.0) / 2.0));
+    // 가까이 볼수록 시설 모형을 작게 (멀리서는 잘 보이게 과장, 가까이서는 땅에 맞게)
+    const modelScale = Math.max(0.3, Math.min(1, (camDist - 0.9) / 2.2));
+    for (const g of facGroup.children) g.scale.setScalar((g.userData.baseScale ?? 1) * modelScale);
 
     // 라벨 위치 (뒷면이면 숨김). 지역이 많으면 가까이 볼 때나 내 지역만 이름을 띄운다.
     const camDir = camera.position.clone().normalize();
@@ -440,6 +446,12 @@ export async function createGlobe(
     labels,
     update(next, selected, ov, fac) { state = next; selectedId = selected; if (ov) overlay = ov; selectedFac = fac ?? null; },
     focus(lat, lon) { focusTarget = vec(lat, lon).normalize(); focusDist = Math.min(camera.position.length(), 2.15); },
+    project(lat, lon) {
+      const p = vec(lat, lon, 1.02);
+      if (p.clone().normalize().dot(camera.position.clone().normalize()) < 0.2) return null;
+      p.project(camera);
+      return { x: (p.x * 0.5 + 0.5) * host.clientWidth, y: (-p.y * 0.5 + 0.5) * host.clientHeight };
+    },
     setIdle(on) { controls.autoRotate = on; controls.autoRotateSpeed = 0.35; labels.style.opacity = on ? '0' : '1'; },
     dispose() { stopped = true; window.removeEventListener('resize', onResize); controls.dispose(); renderer.dispose(); },
   };

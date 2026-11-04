@@ -109,10 +109,35 @@ function substation(g: THREE.Group) {
   g.add(mesh(G.box, MAT.glow, 0.3 * U, 0.05 * U, 0.3 * U, 0, 0.62 * U, 0));
 }
 
-const BUILDERS: Record<TypeId, (g: THREE.Group) => void> = { thermal, nuclear, solar, wind, storage, substation };
+function hydro(g: THREE.Group) {
+  // 댐: 휜 벽 + 호수 + 발전동
+  const wall = mesh(G.box, MAT.concrete, 3.2 * U, 1.4 * U, 0.4 * U, 0, 0, 0);
+  g.add(wall);
+  g.add(mesh(G.box, MAT.panel, 3.0 * U, 0.08 * U, 2.0 * U, 0, 1.1 * U, -1.2 * U));
+  g.add(mesh(G.box, MAT.dark, 0.9 * U, 0.6 * U, 0.6 * U, 0, 0, 0.6 * U));
+  g.add(mesh(G.box, MAT.glow, 2.4 * U, 0.06 * U, 0.05 * U, 0, 1.0 * U, 0.22 * U));
+}
+
+function fusion(g: THREE.Group) {
+  g.add(mesh(G.cyl, MAT.concrete, 1.8 * U, 0.4 * U, 1.8 * U, 0, 0, 0));
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(1.1 * U, 0.35 * U, 10, 28), MAT.white);
+  ring.userData.base = MAT.white;
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.9 * U;
+  g.add(ring);
+  const core = new THREE.Mesh(G.lamp, MAT.glow);
+  core.userData.base = MAT.glow;
+  core.scale.setScalar(0.45 * U);
+  core.position.y = 0.9 * U;
+  g.add(core);
+  g.add(mesh(G.cyl, MAT.steel, 0.12 * U, 2.2 * U, 0.12 * U, 1.6 * U, 0, 0));
+}
+
+export type ModelType = TypeId | 'hydro' | 'fusion';
+const BUILDERS: Record<ModelType, (g: THREE.Group) => void> = { thermal, nuclear, solar, wind, storage, substation, hydro, fusion };
 const SIZE_SCALE: Record<SizeId, number> = { small: 0.75, medium: 1, large: 1.35 };
 
-export function buildFacilityModel(type: TypeId, size: SizeId, modules: number): THREE.Group {
+export function buildFacilityModel(type: ModelType, size: SizeId, modules: number): THREE.Group {
   const g = new THREE.Group();
   const body = new THREE.Group();
   BUILDERS[type](body);

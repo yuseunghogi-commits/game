@@ -490,7 +490,7 @@ export function newGameView(f: NewGameForm): string {
     <div class="ng-row"><div class="ng-sec"><h3>지도 크기 <span class="h-note">12가 표준 기록</span></h3><div class="seg">${MAP_SIZES.map((n) => `<button data-ng-regions="${n}" class="${f.regionCount === n ? 'on' : ''}">${n}개 지역</button>`).join('')}</div></div>
     <div class="ng-sec"><h3>행성 시드</h3><div class="seg"><button data-ng-seed="20261101" class="${f.seed === 20261101 ? 'on' : ''}">기본 행성</button><button data-ng-seed="random" class="${f.seed !== 20261101 ? 'on' : ''}">${f.seed !== 20261101 ? `무작위 (${f.seed})` : '무작위'}</button></div></div></div>
     ${f.regionCount > 12 ? `<div class="note">지역이 많을수록 지역 하나가 작아집니다 (수요 ×${Math.max(0.35, Math.sqrt(12 / f.regionCount)).toFixed(2)}, 송전 거리 짧음). 기록은 「사용자 지정 규칙」으로 분류됩니다.</div>` : ''}
-    <div class="ng-acts"><button class="btn ghost" data-modal="settings">설정</button><button class="btn ghost" data-modal="saves">불러오기</button><span class="spacer"></span>${f.hasSave ? '<button class="btn" data-act="continue">이어하기</button>' : ''}<button class="btn primary big" data-act="start">시작</button></div>
+    <div class="ng-acts"><button class="btn ghost" data-act="casual" title="쉽고 빠른 성장형 모드">간편 모드로</button><button class="btn ghost" data-modal="settings">설정</button><button class="btn ghost" data-modal="saves">불러오기</button><span class="spacer"></span>${f.hasSave ? '<button class="btn" data-act="continue">이어하기</button>' : ''}<button class="btn primary big" data-act="start">시작</button></div>
   </div>`;
 }
 

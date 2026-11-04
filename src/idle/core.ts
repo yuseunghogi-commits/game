@@ -113,9 +113,12 @@ export function newIdle(seed = 20261101, now = Date.now()): IdleState {
   const order = unlockOrder(seed);
   const regions: RegionS[] = regionDefs(seed).map(() => ({ unlocked: false, slots: Array.from({ length: START_SLOTS }, () => ({ type: null, level: 0 })), surgeUntil: 0 }));
   regions[order[0]].unlocked = true;
+  // 시작 지역이 아침 9시가 되도록 (첫 태양광이 바로 돈을 벌게)
+  const lon = regionDefs(seed)[order[0]].lon;
+  const start = ((((0.375 - lon / 360) % 1) + 1) % 1) * DAY_SECONDS;
   return {
-    v: 1, seed, money: 15, earned: 0, lifetime: 0, stars: 0, prestiges: 0, time: DAY_SECONDS * 0.3, regions, order, research: [], quest: 0,
-    boostUntil: 0, boostReadyAt: 0, nextSurgeAt: 120, rng: (seed ^ 0x2545f491) >>> 0, savedAt: now, builds: 0, levelups: 0,
+    v: 1, seed, money: 15, earned: 0, lifetime: 0, stars: 0, prestiges: 0, time: start, regions, order, research: [], quest: 0,
+    boostUntil: 0, boostReadyAt: 0, nextSurgeAt: start + 120, rng: (seed ^ 0x2545f491) >>> 0, savedAt: now, builds: 0, levelups: 0,
   };
 }
 
