@@ -87,8 +87,10 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
          */
         var lowC: Array<FloatArray> = arrayOf(FloatArray(0), FloatArray(0))
         var lowS: Array<FloatArray> = arrayOf(FloatArray(0), FloatArray(0))
-        /** 가운데 스피커(대사·노래) 전용 음색 보정 배율 (bins) — [timbreFix] 참고 */
-        var centerFix: FloatArray = FloatArray(0)
+        /** 음색 보정 곡선 (dB, 세기 1 기준, bins): 모든 방향 공통 → 두 귀 출력에 곱함 — [timbreCurves] 참고 */
+        var timbreDb: FloatArray = FloatArray(0)
+        /** 가운데 스피커(대사·노래)만 추가로 펴는 곡선 (dB, 세기 1 기준, bins) */
+        var centerDb: FloatArray = FloatArray(0)
     }
     /** 귀 크기별 원본 표 + 방향마다 "앞/뒤 짝 방향과의 크기 차이(dB, 1/2 옥타브 평활)" — 3D 강조를 FFT 없이 다시 계산하려고 보관 */
     private class Base(val t: Table, val diff: Array<Array<FloatArray>>)
@@ -109,6 +111,13 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         earIdx = i
         requestRebuild()
     }
+
+    /**
+     * 음색 보정 세기 0..1 — 0 = 더미헤드 측정 그대로 (3D 느낌 가장 강함, 정면 소리에 귀 굴곡이 남음 = v2.0),
+     * 1 = 정면 쪽 굴곡을 [TIMBRE_FIX] 만큼 + 가운데 소리는 더 (음색 가장 깨끗, 앞 소리가 머리 안쪽으로 = v2.1).
+     * 표를 다시 만들 필요 없이 바로 반영.
+     */
+    @Volatile var timbre = DEFAULT_TIMBRE
 
     /** 3D 강조 0..1 (α = 1 + amount): 0 이면 실측 그대로 */
     fun setEnhance(amount: Double) {
@@ -178,19 +187,20 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
                 }
             }
         }
-        return Table(t.dirs, t.step, re, im, a).also { it.lowC = t.lowC; it.lowS = t.lowS; it.centerFix = t.centerFix }
+        return Table(t.dirs, t.step, re, im, a).also { it.lowC = t.lowC; it.lowS = t.lowS; it.timbreDb = t.timbreDb; it.centerDb = t.centerDb }
     }
 
     /**
-     * 음색 보정 ("필터 낀 듯한" 소리 줄이기).
+     * 음색 보정 곡선 ("필터 낀 듯한" 소리 줄이기) — 표는 그대로 두고 곡선만 만든다. 실제 적용은 [timbre] 세기만큼 재생 중에.
      *
      * 측정용 더미헤드의 귀 모양 때문에 정면 쪽 소리는 3~5kHz 가 3~5dB 들뜨고 6~8kHz 가 4~6dB 패인다.
-     * 원음과 비교하면 이 굴곡이 필터를 거친 소리처럼 들려서:
-     * 1) 정면 쪽 방향들(0°·±30°·±45°) 평균 응답을 1/3옥타브로 평활해 1kHz 위를 [TIMBRE_FIX] 만큼 편다.
-     *    모든 방향에 같은 곡선을 곱하므로 방향끼리의 차이(좌우·앞뒤·위아래 단서)는 그대로.
-     * 2) 그래도 남는 정면(0°) 골짜기는 가운데 스피커(대사·노래)에만 [TIMBRE_FIX] 만큼 더 펴는 배율을 돌려준다.
+     * 원음과 비교하면 이 굴곡이 필터를 거친 소리처럼 들리지만, 바로 이 굴곡이 "앞에서, 머리 밖에서" 들리게 하는 단서이기도
+     * 해서 (v2.1 처럼 다 펴면 앞 소리가 머리 안에서 들림 = 3D 느낌이 약해짐) 세기를 사용자가 고르게 한다.
+     * 1) 정면 쪽 방향들(0°·±30°·±45°) 평균 응답을 1/3옥타브로 평활해 1kHz 위를 [TIMBRE_FIX] 만큼 펴는 곡선.
+     *    모든 방향에 같은 곡선을 곱하므로 방향끼리의 차이(좌우·앞뒤·위아래 단서)는 그대로 → 두 귀 출력에 한 번에 곱해도 같음.
+     * 2) 그래도 남는 정면(0°) 골짜기를 가운데 스피커(대사·노래)에만 [TIMBRE_FIX] 만큼 더 펴는 곡선.
      */
-    private fun timbreFix(set: HrirSet, re: Array<Array<FloatArray>>, im: Array<Array<FloatArray>>): FloatArray {
+    private fun timbreCurves(set: HrirSet, re: Array<Array<FloatArray>>, im: Array<Array<FloatArray>>): Pair<FloatArray, FloatArray> {
         val hz = fs.toDouble() / N
         val r3 = 2.0.pow(1.0 / 6)
         fun smoothDbOf(pw: DoubleArray): DoubleArray {
@@ -226,14 +236,13 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
             for (k in 0 until bins) pw[k] += p[k] / TIMBRE_DIRS.size
         }
         val dev = smoothDbOf(pw)
-        for (k in 0 until bins) {
-            val m = 10.0.pow(gainDb(k, dev[k]) / 20).toFloat()
-            if (m == 1f) continue
-            for (d in 0 until set.dirs) for (e in 0..1) { re[d][e][k] *= m; im[d][e][k] *= m }
-        }
-        // 2) 보정 뒤 정면(0°)에 남은 굴곡 → 가운데 스피커 전용 배율
-        val dev0 = smoothDbOf(power(0))
-        return FloatArray(bins) { k -> 10.0.pow(gainDb(k, dev0[k]) / 20).toFloat() }
+        val g = FloatArray(bins) { k -> gainDb(k, dev[k]).toFloat() }
+        // 2) 1) 을 다 적용했을 때 정면(0°)에 남는 굴곡 → 가운데 스피커 전용
+        val p0 = power(0)
+        for (k in 0 until bins) p0[k] *= 10.0.pow(g[k] / 10.0)
+        val dev0 = smoothDbOf(p0)
+        val c = FloatArray(bins) { k -> gainDb(k, dev0[k]).toFloat() }
+        return g to c
     }
 
     private fun buildTable(set: HrirSet): Table {
@@ -250,9 +259,10 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
             System.arraycopy(bufR, 0, re[d][e], 0, bins)
             System.arraycopy(bufI, 0, im[d][e], 0, bins)
         }
-        val cFix = timbreFix(set, re, im)
+        val (tDb, cDb) = timbreCurves(set, re, im)
         return Table(set.dirs, set.stepDeg, re, im).also { tb ->
-            tb.centerFix = cFix
+            tb.timbreDb = tDb
+            tb.centerDb = cDb
             val nLow = ((LOW_F2 * N / fs).toInt() + 1).coerceAtMost(bins)
             tb.lowC = Array(2) { e -> FloatArray(nLow) { k -> val a = re[0][e][k]; val m = sqrt(a * a + im[0][e][k] * im[0][e][k]); if (m > 1e-12f) a / m else 1f } }
             tb.lowS = Array(2) { e -> FloatArray(nLow) { k -> val m = sqrt(re[0][e][k] * re[0][e][k] + im[0][e][k] * im[0][e][k]); if (m > 1e-12f) im[0][e][k] / m else 0f } }
@@ -347,6 +357,37 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         }
     }
 
+    // 음색 보정 배율: 세기나 표가 바뀔 때만 다시 계산 (1 이 아닌 칸은 timbreFrom 부터)
+    private val timbreGain = FloatArray(bins) { 1f }
+    private val centerGain = FloatArray(bins) { 1f }
+    private var timbreFor: Table? = null
+    private var timbreAmt = -1.0
+    private var timbreFrom = bins
+
+    private fun updateTimbre(t: Table) {
+        val s = timbre.coerceIn(0.0, 1.0)
+        if (t === timbreFor && s == timbreAmt) return
+        timbreFor = t; timbreAmt = s
+        val g = t.timbreDb; val c = t.centerDb
+        var first = bins
+        for (k in 0 until bins) {
+            val gd = if (g.size == bins) g[k] else 0f
+            val cd = if (c.size == bins) c[k] else 0f
+            timbreGain[k] = if (gd == 0f) 1f else 10.0.pow(s * gd / 20.0).toFloat()
+            centerGain[k] = if (cd == 0f) 1f else 10.0.pow(s * cd / 20.0).toFloat()
+            if (first == bins && (gd != 0f || cd != 0f)) first = k
+        }
+        timbreFrom = if (s > 0.0) first else bins
+    }
+
+    /** 음색 보정 (모든 방향 공통 곡선) — 두 귀 출력에 한 번에 */
+    private fun applyTimbre() {
+        for (k in timbreFrom until bins) {
+            val m = timbreGain[k]
+            yLr[k] *= m; yLi[k] *= m; yRr[k] *= m; yRi[k] *= m
+        }
+    }
+
     // 지연(위상 회전) 표 캐시: 지연 샘플 → cos/sin
     private val phaseCache = HashMap<Int, Array<FloatArray>>()
     private fun phase(delay: Int): Array<FloatArray> = phaseCache.getOrPut(delay) {
@@ -408,6 +449,7 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
     private fun frame() {
         val t = table
         yawF = headYaw; pitchF = headPitch; elevF = frontElev
+        updateTimbre(t)
         fft2(inL, inR, xLr, xLi, xRr, xRi)
         var hasBus = false
         outer@ for (b in 0 until NB) for (v in busIn[b]) if (v != 0f) { hasBus = true; break@outer }
@@ -423,6 +465,7 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
             addSource(t, br, bi, BUS_ANGLES[b], 0.0, 1f, 0)
         }
         applyBass()
+        applyTimbre()
 
         // 두 귀 출력을 복소 역FFT 하나로: w = YL + j·YR  (실수부 = 왼쪽, 허수부 = 오른쪽)
         yLi[0] = 0f; yRi[0] = 0f; yLi[N / 2] = 0f; yRi[N / 2] = 0f
@@ -607,8 +650,7 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         addSource(t, fLr, fLi, -f, elevF, 1f, 0)
         addSource(t, fRr, fRi, f, elevF, 1f, 0)
         if (cl > 0.001f) {
-            val cf = t.centerFix
-            if (cf.size == bins) for (k in 0 until bins) { cRr[k] *= cf[k]; cIi[k] *= cf[k] }
+            for (k in timbreFrom until bins) { val m = centerGain[k]; cRr[k] *= m; cIi[k] *= m }
             addSource(t, cRr, cIi, 0.0, elevF, 1f, 0)
         }
         addAmbience(t, surAmb, topAmb, botAmb)
@@ -707,8 +749,10 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         const val NB = RoomModel.BUSES
         val BUS_ANGLES = DoubleArray(NB) { it * 360.0 / NB }
         const val SIDE_ANGLE = 95.0
-        /** 음색 보정 세기 (0 = 측정 그대로, 1 = 정면 쪽을 완전히 평평하게) */
+        /** 음색 보정 곡선이 정면 쪽 굴곡을 펴는 비율 (세기 [timbre] = 1 일 때. 1.0 이면 완전히 평평하게) */
         private const val TIMBRE_FIX = 0.7
+        /** 음색 보정 기본 세기 — 3D 느낌(정면 귀 단서)을 대부분 남기고 깊은 골짜기만 조금 메움 */
+        const val DEFAULT_TIMBRE = 0.3
         private const val TIMBRE_MAX_DB = 6.0
         private val TIMBRE_DIRS = intArrayOf(0, 30, -30, 45, -45)
         /** 천장 앞 스피커 기본 위치: 좌우 ±45°, 위 45° (7.1.4 배치) */

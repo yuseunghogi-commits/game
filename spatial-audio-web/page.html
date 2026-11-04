@@ -180,6 +180,7 @@ a { color: var(--accent); }
           <select id="preset"></select>
         </div>
         <div class="field"><label for="enhance">3D 강조 <span class="val" id="enhanceVal"></span></label><input type="range" id="enhance" min="0" max="100" step="1"><small>뒤는 더 뒤처럼, 위·아래는 더 위·아래처럼 (0 = 측정 그대로) · 손을 떼면 반영</small></div>
+        <div class="field"><label for="timbre">음색 보정 <span class="val" id="timbreVal"></span></label><input type="range" id="timbre" min="0" max="100" step="1"><small>낮추면 3D(머리 밖) 느낌이 강하고, 높이면 원음처럼 깨끗하지만 앞 소리가 머리 안쪽으로 (0 = v2.0, 100 = v2.1, 기본 30)</small></div>
       </section>
 
       <section class="card" aria-labelledby="h-sound">
@@ -321,7 +322,7 @@ registerProcessor('spatial3d', Spatial3DProcessor);
     engineMode: st.engineMode, spread: st.spread, earSize: st.earSize, hpEq: st.hpEq, enabled: st.enabled,
     frontElev: st.frontElev, heightLevel: st.heightLevel, topAngle: st.topAngle, topElev: st.topElev,
     topRearAngle: st.topRearAngle, topRearElev: st.topRearElev, bottomLevel: st.bottomLevel,
-    bottomAngle: st.bottomAngle, bottomElev: st.bottomElev, enhance: st.enhance,
+    bottomAngle: st.bottomAngle, bottomElev: st.bottomElev, enhance: st.enhance, timbre: st.timbre,
   });
 
   async function ensureAudio() {
@@ -670,6 +671,7 @@ registerProcessor('spatial3d', Spatial3DProcessor);
     ['height', 'heightLevel', (v) => v + '%'],
     ['bottom', 'bottomLevel', (v) => v + '%'],
     ['enhance', 'enhance', (v) => v + '%'],
+    ['timbre', 'timbre', (v) => v + '%'],
     ['topAz', 'topAngle', (v) => '±' + v + '°'],
     ['topEl', 'topElev', (v) => '위 ' + v + '°'],
     ['topRearAz', 'topRearAngle', (v) => '±' + v + '°'],
@@ -695,7 +697,8 @@ registerProcessor('spatial3d', Spatial3DProcessor);
   for (const [id, key] of sliders) {
     // 3D 강조는 HRTF 표를 다시 계산하므로 끄는 동안이 아니라 손을 뗄 때 엔진에 반영 (소리 끊김 방지)
     const live = key !== 'enhance';
-    $(id).addEventListener('input', () => { st[key] = +$(id).value; if (key !== 'spread') st.presetIndex = -1; syncUi(); if (live) sendParams(); });
+    // 퍼짐(정위 모드)·음색 보정은 프리셋과 상관없는 조절이라 프리셋을 '사용자 설정'으로 바꾸지 않음
+    $(id).addEventListener('input', () => { st[key] = +$(id).value; if (key !== 'spread' && key !== 'timbre') st.presetIndex = -1; syncUi(); if (live) sendParams(); });
     $(id).addEventListener('change', () => { if (!live) sendParams(); save(); });
   }
   $('roomSize').addEventListener('change', () => { st.reverbPreset = +$('roomSize').value; st.presetIndex = -1; syncUi(); sendParams(); save(); });

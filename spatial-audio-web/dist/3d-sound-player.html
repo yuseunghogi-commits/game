@@ -180,6 +180,7 @@ a { color: var(--accent); }
           <select id="preset"></select>
         </div>
         <div class="field"><label for="enhance">3D 강조 <span class="val" id="enhanceVal"></span></label><input type="range" id="enhance" min="0" max="100" step="1"><small>뒤는 더 뒤처럼, 위·아래는 더 위·아래처럼 (0 = 측정 그대로) · 손을 떼면 반영</small></div>
+        <div class="field"><label for="timbre">음색 보정 <span class="val" id="timbreVal"></span></label><input type="range" id="timbre" min="0" max="100" step="1"><small>낮추면 3D(머리 밖) 느낌이 강하고, 높이면 원음처럼 깨끗하지만 앞 소리가 머리 안쪽으로 (0 = v2.0, 100 = v2.1, 기본 30)</small></div>
       </section>
 
       <section class="card" aria-labelledby="h-sound">
@@ -743,7 +744,9 @@ PK 196 -0.5 3.79
   const SIDE_ANGLE = 95;
   /** 저음 직통 구간 (Hz): LOW_F1 아래 전부, LOW_F2 까지 서서히 */
   const LOW_F1 = 100, LOW_F2 = 200;
-  const TIMBRE_FIX = 0.7, TIMBRE_MAX_DB = 6, TIMBRE_DIRS = [0, 30, -30, 45, -45]; // 음색 보정
+  const TIMBRE_FIX = 0.7, TIMBRE_MAX_DB = 6, TIMBRE_DIRS = [0, 30, -30, 45, -45]; // 음색 보정 곡선 (세기 1 = v2.1)
+  /** 음색 보정 기본 세기 — 3D 느낌(정면 귀 단서)을 대부분 남기고 깊은 골짜기만 조금 메움 */
+  const DEFAULT_TIMBRE = 0.3;
   /** 천장 앞 스피커 기본 위치 ±45°·위 45°, 천장 뒤 ±135°·위 45° (7.1.4 배치), 바닥 ±45°·아래 30° */
   const HEIGHT_AZ = 45, HEIGHT_EL = 45, TOP_REAR_AZ = 135, TOP_REAR_EL = 45, BOTTOM_AZ = 45, BOTTOM_EL = -30;
   /** 3D 강조: 앞/뒤 짝과의 차이를 뒤쪽이 3/4, 앞쪽이 1/4 맡음. 최대 ±10dB */
@@ -802,6 +805,32 @@ PK 196 -0.5 3.79
       this.dBottom = Math.min(MAX_DELAY, Math.round(0.0025 * fs));
       this.gainTmp = new Float64Array(this.bins);
       this.routedEnergy = [0, 0, 0];
+      // 음색 보정 세기 0..1 (0 = 측정 그대로·3D 가장 강함 = v2.0, 1 = 정면 굴곡을 폄·음색 가장 깨끗 = v2.1). 표를 다시 안 만들고 바로 반영
+      this.timbre = DEFAULT_TIMBRE;
+      this.timbreGain = new Float32Array(bins).fill(1); this.centerGain = new Float32Array(bins).fill(1);
+      this.timbreFor = null; this.timbreAmt = -1; this.timbreFrom = bins;
+    }
+
+    /** 음색 보정 배율: 세기나 표가 바뀔 때만 다시 계산 (1 이 아닌 칸은 timbreFrom 부터) */
+    updateTimbre(t) {
+      const s = Math.min(1, Math.max(0, +this.timbre || 0));
+      if (t === this.timbreFor && s === this.timbreAmt) return;
+      this.timbreFor = t; this.timbreAmt = s;
+      const bins = this.bins, g = t.timbreDb, c = t.centerDb, tg = this.timbreGain, cg = this.centerGain;
+      let first = bins;
+      for (let k = 0; k < bins; k++) {
+        const gd = g && g.length === bins ? g[k] : 0, cd = c && c.length === bins ? c[k] : 0;
+        tg[k] = gd === 0 ? 1 : Math.pow(10, s * gd / 20);
+        cg[k] = cd === 0 ? 1 : Math.pow(10, s * cd / 20);
+        if (first === bins && (gd !== 0 || cd !== 0)) first = k;
+      }
+      this.timbreFrom = s > 0 ? first : bins;
+    }
+
+    /** 음색 보정 (모든 방향 공통 곡선) — 두 귀 출력에 한 번에 */
+    applyTimbre() {
+      const { yLr, yLi, yRr, yRi } = this, m = this.timbreGain;
+      for (let k = this.timbreFrom; k < this.bins; k++) { const g = m[k]; yLr[k] *= g; yLi[k] *= g; yRr[k] *= g; yRi[k] *= g; }
     }
 
     setEarSize(idx) {
@@ -828,7 +857,7 @@ PK 196 -0.5 3.79
     stepEnhance(count) {
       const j = this.enhJob, t = j.b.t;
       for (let n = 0; n < count && j.d < t.dirs; n++, j.d++) { const [r2, i2] = this.enhanceDir(j.b, j.a, j.d); j.re.push(r2); j.im.push(i2); }
-      if (j.d === t.dirs) { this.table = { dirs: t.dirs, step: t.step, re: j.re, im: j.im, enh: j.a, lowC: t.lowC, lowS: t.lowS, centerFix: t.centerFix }; this.enhJob = null; }
+      if (j.d === t.dirs) { this.table = { dirs: t.dirs, step: t.step, re: j.re, im: j.im, enh: j.a, lowC: t.lowC, lowS: t.lowS, timbreDb: t.timbreDb, centerDb: t.centerDb }; this.enhJob = null; }
     }
 
     /** 원본 표 + 방향마다 "앞/뒤 짝 방향(θ ↔ 180°−θ)과의 크기 차이(dB, 1/2 옥타브 평활)" */
@@ -858,7 +887,7 @@ PK 196 -0.5 3.79
       if (!(amount > 0)) return t;
       const re = [], im = [];
       for (let d = 0; d < t.dirs; d++) { const [r2, i2] = this.enhanceDir(b, amount, d); re.push(r2); im.push(i2); }
-      return { dirs: t.dirs, step: t.step, re, im, enh: amount, lowC: t.lowC, lowS: t.lowS, centerFix: t.centerFix };
+      return { dirs: t.dirs, step: t.step, re, im, enh: amount, lowC: t.lowC, lowS: t.lowS, timbreDb: t.timbreDb, centerDb: t.centerDb };
     }
 
     enhanceDir(b, amount, d) {
@@ -893,7 +922,7 @@ PK 196 -0.5 3.79
         }
         re.push(r2); im.push(i2);
       }
-      const centerFix = this.timbreFix(set, re, im);
+      const [timbreDb, centerDb] = this.timbreCurves(set, re, im);
       // 정면(0°) HRTF 의 위상(귀별) — 직통 저음에 이 위상만 입혀서 HRTF 를 거친 소리와 이어 붙임
       // (측정 HRTF 는 저음에서 위상이 앞서 있어서 단순 지연으로 맞추면 160Hz 에서 상쇄됨)
       const nLow = Math.min(bins, Math.floor(LOW_F2 * N / this.fs) + 1), lowC = [], lowS = [];
@@ -902,15 +931,16 @@ PK 196 -0.5 3.79
         for (let k = 0; k < nLow; k++) { const m = Math.fround(Math.sqrt(Math.fround(a[k] * a[k] + b[k] * b[k]))); c[k] = m > 1e-12 ? a[k] / m : 1; s[k] = m > 1e-12 ? b[k] / m : 0; }
         lowC.push(c); lowS.push(s);
       }
-      return { dirs: set.dirs, step: set.step, re, im, enh: 0, lowC, lowS, centerFix };
+      return { dirs: set.dirs, step: set.step, re, im, enh: 0, lowC, lowS, timbreDb, centerDb };
     }
 
     /**
-     * 음색 보정 (Kotlin HrtfRenderer.timbreFix 와 같음): 더미헤드 귀 때문에 정면 쪽이 3~5kHz 들뜨고 6~8kHz 패이는 것을
-     * 1) 정면 쪽 방향(0°·±30°·±45°) 평균으로 모든 방향에 70% 펴고 (방향끼리 차이는 그대로)
-     * 2) 남는 정면(0°) 굴곡은 가운데 스피커 전용 배율로 돌려준다.
+     * 음색 보정 곡선 (Kotlin HrtfRenderer.timbreCurves 와 같음) — 표는 그대로, 곡선(dB, 세기 1 기준)만 만든다.
+     * 더미헤드 귀 때문에 정면 쪽이 3~5kHz 들뜨고 6~8kHz 패이는 것을 (이 굴곡이 '앞에서·머리 밖에서' 단서이기도 해서 세기는 사용자가)
+     * 1) 정면 쪽 방향(0°·±30°·±45°) 평균으로 모든 방향에 70% 펴는 곡선 (방향끼리 차이는 그대로 → 두 귀 출력에 곱함)
+     * 2) 1) 을 다 적용했을 때 남는 정면(0°) 굴곡을 가운데 스피커에만 더 펴는 곡선.
      */
-    timbreFix(set, re, im) {
+    timbreCurves(set, re, im) {
       const bins = N / 2 + 1, hz = this.fs / N, r3 = Math.pow(2, 1 / 6);
       const smoothDbOf = (pw) => {
         const db = new Float64Array(bins), sm = new Float64Array(bins);
@@ -947,15 +977,14 @@ PK 196 -0.5 3.79
         for (let k = 0; k < bins; k++) pw[k] += p[k] / TIMBRE_DIRS.length;
       }
       const dev = smoothDbOf(pw);
-      for (let k = 0; k < bins; k++) {
-        const m = Math.fround(Math.pow(10, gainDb(k, dev[k]) / 20));
-        if (m === 1) continue;
-        for (let d = 0; d < set.dirs; d++) for (let e = 0; e < 2; e++) { re[d][e][k] *= m; im[d][e][k] *= m; }
-      }
-      const dev0 = smoothDbOf(power(0));
-      const cf = new Float32Array(bins);
-      for (let k = 0; k < bins; k++) cf[k] = Math.pow(10, gainDb(k, dev0[k]) / 20);
-      return cf;
+      const g = new Float32Array(bins);
+      for (let k = 0; k < bins; k++) g[k] = gainDb(k, dev[k]);
+      const p0 = power(0);
+      for (let k = 0; k < bins; k++) p0[k] *= Math.pow(10, g[k] / 10);
+      const dev0 = smoothDbOf(p0);
+      const c = new Float32Array(bins);
+      for (let k = 0; k < bins; k++) c[k] = gainDb(k, dev0[k]);
+      return [g, c];
     }
 
     phase(delay) {
@@ -1031,6 +1060,7 @@ PK 196 -0.5 3.79
       if (this.enhJob) this.stepEnhance(8);
       const t = this.table;
       this.yawF = this.headYaw; this.pitchF = this.headPitch; this.elevF = this.frontElev;
+      this.updateTimbre(t);
       this.fft2(this.inL, this.inR, this.xLr, this.xLi, this.xRr, this.xRi);
       let hasBus = false;
       outer: for (let b = 0; b < BUSES; b++) { const a = this.busIn[b]; for (let i = 0; i < WIN; i++) if (a[i] !== 0) { hasBus = true; break outer; } }
@@ -1045,6 +1075,7 @@ PK 196 -0.5 3.79
         this.addSource(t, br, bi, BUS_ANGLES[b], 0, 1, 0);
       }
       this.applyBass();
+      this.applyTimbre();
       const { yLr, yLi, yRr, yRi, zr, zi } = this;
       yLi[0] = 0; yRi[0] = 0; yLi[N / 2] = 0; yRi[N / 2] = 0;
       for (let k = 0; k <= N / 2; k++) { zr[k] = yLr[k] - yRi[k]; zi[k] = yLi[k] + yRr[k]; }
@@ -1191,8 +1222,8 @@ PK 196 -0.5 3.79
       this.addSource(t, fLr, fLi, -f, ef, 1, 0);
       this.addSource(t, fRr, fRi, f, ef, 1, 0);
       if (cl > 0.001) {
-        const cf = t.centerFix;
-        if (cf && cf.length === bins) for (let k = 0; k < bins; k++) { cRr[k] *= cf[k]; cIi[k] *= cf[k]; }
+        const cg = this.centerGain;
+        for (let k = this.timbreFrom; k < bins; k++) { cRr[k] *= cg[k]; cIi[k] *= cg[k]; }
         this.addSource(t, cRr, cIi, 0, ef, 1, 0);
       }
       this.addAmbience(t, surAmb, topAmb, botAmb);
@@ -1307,7 +1338,7 @@ PK 196 -0.5 3.79
     virtualizerStrength: 1000, bassStrength: 250, spaceEq: 45, reverbPreset: 2, frontAngle: 45, rearAngle: 135,
     rearLevel: 45, centerLevel: 60, engineMode: 1, spread: 90, earSize: 2, hpEq: 0, enabled: true,
     frontElev: 0, heightLevel: 25, topAngle: HEIGHT_AZ, topElev: HEIGHT_EL, topRearAngle: TOP_REAR_AZ, topRearElev: TOP_REAR_EL,
-    bottomLevel: 10, bottomAngle: BOTTOM_AZ, bottomElev: BOTTOM_EL, enhance: 30,
+    bottomLevel: 10, bottomAngle: BOTTOM_AZ, bottomElev: BOTTOM_EL, enhance: 30, timbre: 30,
   };
 
   class Engine {
@@ -1394,6 +1425,7 @@ PK 196 -0.5 3.79
       rnd.setEarSize(p.earSize);
       // 처음 설정은 바로, 그 뒤 바뀔 때는 오디오가 끊기지 않게 나눠서 계산
       rnd.setEnhance(num(p.enhance, 0, 100, 0) / 100, !this.applied);
+      rnd.timbre = num(p.timbre, 0, 100, DEFAULT_TIMBRE * 100) / 100;
       this.applied = true;
       if (p.hpEq !== this.hpEqIdx) {
         this.hpEqIdx = p.hpEq;
@@ -1667,7 +1699,7 @@ registerProcessor('spatial3d', Spatial3DProcessor);
     engineMode: st.engineMode, spread: st.spread, earSize: st.earSize, hpEq: st.hpEq, enabled: st.enabled,
     frontElev: st.frontElev, heightLevel: st.heightLevel, topAngle: st.topAngle, topElev: st.topElev,
     topRearAngle: st.topRearAngle, topRearElev: st.topRearElev, bottomLevel: st.bottomLevel,
-    bottomAngle: st.bottomAngle, bottomElev: st.bottomElev, enhance: st.enhance,
+    bottomAngle: st.bottomAngle, bottomElev: st.bottomElev, enhance: st.enhance, timbre: st.timbre,
   });
 
   async function ensureAudio() {
@@ -2016,6 +2048,7 @@ registerProcessor('spatial3d', Spatial3DProcessor);
     ['height', 'heightLevel', (v) => v + '%'],
     ['bottom', 'bottomLevel', (v) => v + '%'],
     ['enhance', 'enhance', (v) => v + '%'],
+    ['timbre', 'timbre', (v) => v + '%'],
     ['topAz', 'topAngle', (v) => '±' + v + '°'],
     ['topEl', 'topElev', (v) => '위 ' + v + '°'],
     ['topRearAz', 'topRearAngle', (v) => '±' + v + '°'],
@@ -2041,7 +2074,8 @@ registerProcessor('spatial3d', Spatial3DProcessor);
   for (const [id, key] of sliders) {
     // 3D 강조는 HRTF 표를 다시 계산하므로 끄는 동안이 아니라 손을 뗄 때 엔진에 반영 (소리 끊김 방지)
     const live = key !== 'enhance';
-    $(id).addEventListener('input', () => { st[key] = +$(id).value; if (key !== 'spread') st.presetIndex = -1; syncUi(); if (live) sendParams(); });
+    // 퍼짐(정위 모드)·음색 보정은 프리셋과 상관없는 조절이라 프리셋을 '사용자 설정'으로 바꾸지 않음
+    $(id).addEventListener('input', () => { st[key] = +$(id).value; if (key !== 'spread' && key !== 'timbre') st.presetIndex = -1; syncUi(); if (live) sendParams(); });
     $(id).addEventListener('change', () => { if (!live) sendParams(); save(); });
   }
   $('roomSize').addEventListener('change', () => { st.reverbPreset = +$('roomSize').value; st.presetIndex = -1; syncUi(); sendParams(); save(); });

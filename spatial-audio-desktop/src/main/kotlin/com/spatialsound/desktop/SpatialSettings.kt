@@ -25,6 +25,7 @@ data class SpatialSettings(
     val bottomAngle: Int = 45,          // 바닥 스피커 좌우 각도 ±0..180°
     val bottomElev: Int = -30,          // 바닥 스피커 높이 -40..-10°
     val enhance: Int = 30,              // 3D 강조 0..100
+    val timbre: Int = 30,               // 음색 보정 0..100 (낮을수록 3D 느낌, 높을수록 원음 음색. 0 = v2.0, 100 = v2.1)
 )
 
 data class SoundPreset(val name: String, val s: SpatialSettings)

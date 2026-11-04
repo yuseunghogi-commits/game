@@ -54,6 +54,8 @@ data class SpatialSettings(
     val bottomElev: Int = -30,
     /** 3D 강조 0..100: 앞/뒤·위/아래 귓바퀴 단서를 키움 (0 = 실측 그대로) */
     val enhance: Int = 30,
+    /** 음색 보정 0..100: 높이면 원음처럼 깨끗한 음색, 낮추면 3D(머리 밖) 느낌이 강함 (0 = v2.0, 100 = v2.1) */
+    val timbre: Int = 30,
     /** 헤드 트래킹: 고개를 위아래로 움직이는 것도 반영 */
     val headPitch: Boolean = true,
     /** 헤드폰 보정 프로필 (0 = 끔, n = HeadphoneEq.profiles[n-1]) */
@@ -95,6 +97,7 @@ data class SpatialSettings(
             .putInt("bottomAngle", bottomAngle)
             .putInt("bottomElev", bottomElev)
             .putInt("enhance", enhance)
+            .putInt("timbre", timbre)
             .putBoolean("headPitch", headPitch)
             .putBoolean("headInvert", headInvert)
             .apply()
@@ -138,6 +141,7 @@ data class SpatialSettings(
                 bottomAngle = p.getInt("bottomAngle", d.bottomAngle),
                 bottomElev = p.getInt("bottomElev", d.bottomElev),
                 enhance = p.getInt("enhance", d.enhance),
+                timbre = p.getInt("timbre", d.timbre),
                 headPitch = p.getBoolean("headPitch", d.headPitch),
                 headInvert = p.getBoolean("headInvert", d.headInvert),
             ).migrateTop(legacyTop = p.contains("topAngle") && !p.contains("topRearAngle"))

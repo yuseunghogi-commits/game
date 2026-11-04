@@ -77,6 +77,8 @@ class MainActivity : Activity() {
     private lateinit var seekBottomElev: SeekBar
     private lateinit var labelEnhance: TextView
     private lateinit var seekEnhance: SeekBar
+    private lateinit var labelTimbre: TextView
+    private lateinit var seekTimbre: SeekBar
     private lateinit var textHeightMore: TextView
     private lateinit var heightMoreGroup: android.widget.LinearLayout
     private var heightMoreOpen = false
@@ -154,6 +156,8 @@ class MainActivity : Activity() {
         seekBottomElev = findViewById(R.id.seekBottomElev)
         labelEnhance = findViewById(R.id.labelEnhance)
         seekEnhance = findViewById(R.id.seekEnhance)
+        labelTimbre = findViewById(R.id.labelTimbre)
+        seekTimbre = findViewById(R.id.seekTimbre)
         textHeightMore = findViewById(R.id.textHeightMore)
         heightMoreGroup = findViewById(R.id.heightMoreGroup)
         switchHeadPitch = findViewById(R.id.switchHeadPitch)
@@ -274,13 +278,14 @@ class MainActivity : Activity() {
         seekHeight.progress = settings.heightLevel
         seekBottom.progress = settings.bottomLevel
         seekEnhance.progress = settings.enhance
+        seekTimbre.progress = settings.timbre
         syncPairSeeks()
         for (i in 0..2) { val (a, e) = pairOf(settings, i); speakerLayout.setHeightPair(i, a, e) }
         switchHeadPitch.isChecked = settings.headPitch
         // 높이 기능은 실측 엔진(공간·정위)에서만
         val measured = settings.engineMode != 0
         val hv = if (measured) android.view.View.VISIBLE else android.view.View.GONE
-        for (v in listOf(labelElev, seekElev, labelHeight, seekHeight, labelBottom, seekBottom, labelEnhance, seekEnhance, textHeightMore)) v.visibility = hv
+        for (v in listOf(labelElev, seekElev, labelHeight, seekHeight, labelBottom, seekBottom, labelEnhance, seekEnhance, labelTimbre, seekTimbre, textHeightMore)) v.visibility = hv
         heightMoreGroup.visibility = if (measured && heightMoreOpen) android.view.View.VISIBLE else android.view.View.GONE
         speakerLayout.heightLevel = if (measured) settings.heightLevel.toFloat() else 0f
         speakerLayout.bottomLevel = if (measured) settings.bottomLevel.toFloat() else 0f
@@ -321,6 +326,8 @@ class MainActivity : Activity() {
         labelHeight.text = "▲ 천장 스피커 4개 (앞 2·뒤 2): ${settings.heightLevel}% — 배경음 일부를 머리 위쪽에서"
         labelBottom.text = "▼ 바닥 스피커 2개: ${settings.bottomLevel}% — 배경음 일부를 아래쪽에서 (0이면 없음)"
         labelEnhance.text = "✨ 3D 강조: ${settings.enhance}% — 뒤는 더 뒤처럼, 위·아래는 더 위·아래처럼 (0 = 측정 그대로)"
+        labelTimbre.text = "🎚 음색 보정: ${settings.timbre}% — 낮추면 3D(머리 밖) 느낌이 강하고, 높이면 원음처럼 깨끗하지만 " +
+            "앞 소리가 머리 안쪽으로 (0 = v2.0, 100 = v2.1, 기본 30)"
         val topOff = if (settings.heightLevel == 0) " · 지금 꺼짐 (천장 0%)" else ""
         val botOff = if (settings.bottomLevel == 0) " · 지금 꺼짐 (바닥 0%)" else ""
         labelTopAngle.text = "천장 앞 ▲ 방향: ±${settings.topAngle}° (0 = 정면, 90 = 머리 옆)$topOff"
@@ -482,6 +489,8 @@ class MainActivity : Activity() {
             settings.copy(bottomLevel = v, presetIndex = CUSTOM)
         })
         seekEnhance.setOnSeekBarChangeListener(seekListener { v -> settings.copy(enhance = v, presetIndex = CUSTOM) })
+        // 음색 보정은 프리셋과 상관없는 취향이라 프리셋을 '사용자 설정'으로 바꾸지 않음
+        seekTimbre.setOnSeekBarChangeListener(seekListener { v -> settings.copy(timbre = v) })
         textHeightMore.setOnClickListener {
             heightMoreOpen = !heightMoreOpen
             heightMoreGroup.visibility = if (heightMoreOpen) android.view.View.VISIBLE else android.view.View.GONE

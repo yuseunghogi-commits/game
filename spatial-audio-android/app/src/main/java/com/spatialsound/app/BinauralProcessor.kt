@@ -94,6 +94,8 @@ class BinauralProcessor(private val fs: Int) {
     private var bottomAz = HrtfRenderer.BOTTOM_AZ
     private var bottomEl = HrtfRenderer.BOTTOM_EL
     private var enhance = 0.0
+    /** 음색 보정 세기 0..1 (HrtfRenderer.timbre) */
+    private var timbre = HrtfRenderer.DEFAULT_TIMBRE
 
     private var appliedYaw = 0.0
     private var oldSources: Array<Src>? = null
@@ -384,6 +386,7 @@ class BinauralProcessor(private val fs: Int) {
             bottomAz = s.bottomAngle.toDouble().coerceIn(0.0, 180.0)
             bottomEl = s.bottomElev.toDouble().coerceIn(-45.0, -5.0)
             enhance = s.enhance / 100.0
+            timbre = s.timbre / 100.0
             earSize = s.earSize
             if (s.hpEq != hpEqIdx) {
                 hpEqIdx = s.hpEq
@@ -430,6 +433,7 @@ class BinauralProcessor(private val fs: Int) {
             it.headYaw = headYawDeg
             it.lowGain = 1.0 / roomNorm
             it.bassBoost = 1.5 * bass.toDouble()
+            it.timbre = timbre
         }
         if (bypass) return
 

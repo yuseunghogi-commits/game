@@ -191,6 +191,16 @@
                 android:max="100" />
 
             <TextView
+                android:id="@+id/labelTimbre"
+                style="@style/SliderLabel" />
+
+            <SeekBar
+                android:id="@+id/seekTimbre"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100" />
+
+            <TextView
                 style="@style/SliderLabel"
                 android:text="🔊 스피커 배치 — 끌어서 옮기세요 (🟣 앞 / 🔵 뒤 / ▲ 천장 / ▼ 바닥). 안쪽일수록 높고, 실선 원 바깥은 아래" />
 
