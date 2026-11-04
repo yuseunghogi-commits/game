@@ -1,0 +1,30 @@
+{
+  "name": "3D 사운드",
+  "short_name": "3D 사운드",
+  "description": "헤드폰용 3D 입체 음향 — PC 크롬·엣지의 다른 탭 소리와 저장된 음악·영상",
+  "lang": "ko",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#111513",
+  "theme_color": "#111513",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
