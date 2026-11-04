@@ -152,7 +152,7 @@ function questCard(): string {
 
 function modalView(): string {
   if (ui.modal === 'title') {
-    const fresh = s.builds === 0 && s.prestiges === 0;
+    const fresh = s.builds === 0 && s.prestiges === 0 && s.lifetime < 100;
     return `<div class="ng title-card"><div class="ng-title">PLANETARY <b>GRID</b></div>
       <div class="ng-sub">발전소를 짓고, 키우고, 행성 전체로 뻗어 나가세요.</div>
       <div class="ng-acts col"><button class="btn primary big" data-act="play">${fresh ? '시작하기' : '이어하기'}</button>
@@ -287,7 +287,7 @@ document.addEventListener('click', (ev) => {
     if (!r && C.milestoneCount(sl.level) > before) { sound.play('done'); flash(`${C.BMAP[sl.type!].name} Lv ${sl.level} — 출력 2배!`); }
   } else if (d.demolish) { if (confirm('이 시설을 철거할까요? 레벨과 투자금은 돌아오지 않습니다.')) result(C.demolish(s, ri, Number(d.demolish))); }
   else if (d.research) { const r = C.doResearch(s, d.research); result(r, 'done'); if (!r) { const n = C.RESEARCH.find((x) => x.id === d.research)!; flash(`연구 완료: ${n.name} — ${n.desc}`); } }
-  else if (d.modal) { ui.modal = d.modal as Ui['modal']; sound.play('click'); }
+  else if (d.modal) { if (ui.modal === 'offline') ui.offline = null; ui.modal = d.modal as Ui['modal']; sound.play('click'); }
   else if (d.set) {
     const [k, v] = d.set.split(':');
     const prevQ = settings.quality;
@@ -319,7 +319,7 @@ async function act(a: string) {
     const r = C.prestige(s);
     result(r, 'done');
     if (!r) { ui.modal = 'none'; ui.tab = 'region'; ui.region = s.order[0]; save(); await buildGlobe(); flash(`상장 완료 — ★ ${s.stars}`); }
-  } else if (a === 'play') { ui.modal = 'none'; sound.unlock(); }
+  } else if (a === 'play') { ui.modal = ui.offline && ui.offline.money > 0 ? 'offline' : 'none'; sound.unlock(); }
   else if (a === 'reset') {
     if (confirm('정말 처음부터 다시 시작할까요? 지금 진행(명성 포함)이 지워집니다.')) { s = C.newIdle(); save(); ui.modal = 'none'; ui.region = s.order[0]; await buildGlobe(); }
   } else if (a === 'deep') {
