@@ -4,10 +4,18 @@ name: Keep APK signing key
 # 이 워크플로는 캐시를 한 번 읽기만 해서(몇 초) 보관 기간을 연장한다. 빌드는 하지 않는다.
 # - 주 2회 자동 실행(예약 실행은 기본 브랜치에서만 동작) + 예약 작업에서 workflow_dispatch 로 실행
 # - 이 파일을 바꿔 푸시해도 한 번 실행 (워크플로 등록용)
+# - 키를 잃었을 때만: 직접 실행하면서 create_if_missing 을 켜면 새 키를 만든다.
+#   그 뒤 release.yml 의 EXPECTED_CERT_SHA256 을 새 값으로 바꾸고, 사용자는 앱을 한 번 지우고 설치해야 한다.
+#   (빌드·릴리스 워크플로는 키를 만들지 않는다 — 몰래 새 키로 배포되는 일이 없도록)
 on:
   schedule:
     - cron: "23 19 * * 0,3"
   workflow_dispatch:
+    inputs:
+      create_if_missing:
+        description: "키가 없을 때만 새 키 만들기 (설치된 앱은 한 번 지우고 다시 설치해야 함)"
+        type: boolean
+        default: false
   push:
     paths:
       - ".github/workflows/keep-signing-key.yml"
@@ -17,9 +25,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Touch signing key cache
+        id: key
         uses: actions/cache/restore@v4
         with:
           path: ~/.spatial-sign
           key: spatial-sound-signing-v2
-          fail-on-cache-miss: true
-      - run: ls -la ~/.spatial-sign
+      - name: Key found
+        if: steps.key.outputs.cache-hit == 'true'
+        run: |
+          ls -la ~/.spatial-sign
+          keytool -list -v -keystore ~/.spatial-sign/release.p12 -storepass spatialsound | grep -m1 "SHA256:"
+      - name: Key missing
+        if: steps.key.outputs.cache-hit != 'true' && inputs.create_if_missing != true
+        run: |
+          echo "::error::APK 서명 키 캐시가 없습니다 (이 캐시는 ccr-101057d7-9ssg5d 브랜치와 기본 브랜치에서만 읽힘). 다른 브랜치에서 실행했다면 그 브랜치에서 다시 실행하세요."
+          exit 1
+      - name: Create new key
+        if: steps.key.outputs.cache-hit != 'true' && inputs.create_if_missing == true
+        run: |
+          mkdir -p ~/.spatial-sign
+          keytool -genkeypair -keystore ~/.spatial-sign/release.p12 -storetype PKCS12 -alias spatialsound \
+            -keyalg RSA -keysize 2048 -validity 36500 -storepass spatialsound -keypass spatialsound -dname "CN=3DSound"
+          keytool -list -v -keystore ~/.spatial-sign/release.p12 -storepass spatialsound | grep -m1 "SHA256:"
+          echo "::warning::새 서명 키를 만들었습니다 — release.yml 의 EXPECTED_CERT_SHA256 을 위 SHA256 값(콜론 없이 소문자)으로 바꾸고, 설치된 앱은 한 번 지우고 설치하도록 안내하세요"
+      - name: Save new key
+        if: steps.key.outputs.cache-hit != 'true' && inputs.create_if_missing == true
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.spatial-sign
+          key: spatial-sound-signing-v2

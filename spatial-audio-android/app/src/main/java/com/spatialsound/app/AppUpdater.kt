@@ -41,6 +41,8 @@ object AppUpdater {
     const val ACTION_INSTALL_STATUS = "com.spatialsound.app.INSTALL_STATUS"
     private const val CH_UPDATE = "app_update"
     const val NID_UPDATE = 41
+    /** '업데이트 완료' 안내 — 설치 결과(성공)가 늦게 와서 NID_UPDATE 를 지워도 남도록 따로 */
+    const val NID_UPDATED = 42
 
     data class Release(
         val version: String,
@@ -362,7 +364,7 @@ object AppUpdater {
 
     // --- 알림 (설치 상태) ----------------------------------------------------
 
-    fun notify(ctx: Context, title: String, text: String, intent: PendingIntent?) {
+    fun notify(ctx: Context, title: String, text: String, intent: PendingIntent?, id: Int = NID_UPDATE) {
         val nm = ctx.getSystemService(NotificationManager::class.java)
         if (nm.getNotificationChannel(CH_UPDATE) == null) {
             nm.createNotificationChannel(NotificationChannel(CH_UPDATE, "앱 업데이트", NotificationManager.IMPORTANCE_HIGH))
@@ -374,6 +376,6 @@ object AppUpdater {
             .setStyle(Notification.BigTextStyle().bigText(text))
             .setAutoCancel(true)
         if (intent != null) b.setContentIntent(intent)
-        nm.notify(NID_UPDATE, b.build())
+        nm.notify(id, b.build())
     }
 }

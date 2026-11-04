@@ -13,6 +13,10 @@ permissions:
 jobs:
   android:
     runs-on: ubuntu-latest
+    env:
+      # 지금까지 배포한 APK 의 서명 인증서 (v2.0~). 다른 키로 서명되면 설치된 앱이 업데이트를 못 받으므로 릴리스를 멈춘다.
+      # 키를 일부러 바꿀 때만 이 값을 새 인증서 값으로 바꾼다 (그때는 사용자가 앱을 한 번 지우고 설치해야 함)
+      EXPECTED_CERT_SHA256: 069319a88c46f1e88f71838b8a96dd488714a7bee5c8ad9896a97f96a1707e40
     defaults:
       run:
         working-directory: spatial-audio-android
@@ -25,9 +29,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       # 서명 키를 항상 같게 (덮어쓰기 설치·앱 자동 업데이트에 필요)
       # - 저장소 비밀값 APK_SIGNING_SECRET 이 있으면 그 값에서 항상 같은 키를 만든다 (영구)
-      # - 없으면 Actions 캐시에 보관한 키를 쓴다 (7일 넘게 빌드가 없으면 캐시가 지워질 수 있음)
+      # - 없으면 Actions 캐시에 보관한 키를 '읽기만' 한다. 여기서는 절대 새 키를 만들지 않는다
+      #   (새 키로 배포하면 이미 설치된 앱이 업데이트를 못 받음). 캐시는 만든 브랜치(ccr-101057d7-9ssg5d)와
+      #   기본 브랜치에서만 읽힌다. 키를 새로 만들어야 할 때만 keep-signing-key 워크플로를 create_if_missing 으로 실행
       - name: Restore signing key
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ~/.spatial-sign
           key: spatial-sound-signing-v2
@@ -39,20 +45,25 @@ jobs:
             python3 -m venv /tmp/signvenv && /tmp/signvenv/bin/pip -q install cryptography
             /tmp/signvenv/bin/python ../.github/scripts/apk_signing_key.py "$HOME/.spatial-sign-secret/key.p12" spatialsound
             echo "SPATIAL_SIGN_STORE=$HOME/.spatial-sign-secret/key.p12" >> "$GITHUB_ENV"
-          else
-            mkdir -p "$HOME/.spatial-sign"
-            if [ ! -f "$HOME/.spatial-sign/release.p12" ]; then
-              keytool -genkeypair -keystore "$HOME/.spatial-sign/release.p12" -storetype PKCS12 -alias spatialsound \
-                -keyalg RSA -keysize 2048 -validity 36500 -storepass spatialsound -keypass spatialsound -dname "CN=3DSound"
-              echo "::warning::새 서명 키를 만들었습니다 — 이전 빌드와 서명이 달라 한 번은 앱을 지우고 설치해야 합니다"
-            fi
+          elif [ -f "$HOME/.spatial-sign/release.p12" ]; then
             echo "SPATIAL_SIGN_STORE=$HOME/.spatial-sign/release.p12" >> "$GITHUB_ENV"
+          else
+            echo "::error::APK 서명 키(Actions 캐시 spatial-sound-signing-v2)를 찾지 못해 릴리스를 멈춥니다. 새 키로 배포하면 이미 설치된 앱이 업데이트를 못 받습니다. 이 캐시는 ccr-101057d7-9ssg5d 브랜치와 기본 브랜치에서만 읽히니 그 브랜치에서 릴리스하세요. 키를 잃었다면 keep-signing-key 워크플로를 create_if_missing 으로 실행하고 EXPECTED_CERT_SHA256 을 바꾼 뒤, 사용자에게 앱을 한 번 지우고 설치하라고 안내해야 합니다."
+            exit 1
           fi
       - run: |
           chmod +x gradlew
           ./gradlew --no-daemon assembleRelease
           cp app/build/outputs/apk/release/app-release.apk ../3DSound-Android.apk
-          "$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)/apksigner" verify --print-certs ../3DSound-Android.apk | grep -E "SHA-256" || true
+      - name: Check signing certificate
+        run: |
+          got=$("$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)/apksigner" verify --print-certs ../3DSound-Android.apk \
+            | sed -n 's/.*certificate SHA-256 digest: \([0-9a-f]*\).*/\1/p' | head -1)
+          echo "서명 인증서 SHA-256: $got"
+          if [ "$got" != "$EXPECTED_CERT_SHA256" ]; then
+            echo "::error::APK 서명 인증서($got)가 지금까지 배포한 것($EXPECTED_CERT_SHA256)과 달라 릴리스를 멈춥니다 — 이대로 배포하면 설치된 앱이 업데이트를 못 받습니다"
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: android

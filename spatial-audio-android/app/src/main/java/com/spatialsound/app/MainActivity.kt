@@ -768,8 +768,9 @@ class MainActivity : Activity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQ_NOTIF_PAIR) {
+            // 거부하면(특히 두 번 거부해서 더 이상 묻지도 않는 상태) 알림 설정 화면으로 안내 — 막다른 길이 없도록
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) showDumpHelp()
-            else Toast.makeText(this, "알림을 허용해야 페어링 코드를 입력할 수 있어요", Toast.LENGTH_LONG).show()
+            else showNotificationsOff()
             return
         }
         if (requestCode == REQ_BT) {
@@ -823,22 +824,13 @@ class MainActivity : Activity() {
                 .setPositiveButton("계속") { _, _ ->
                     requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIF_PAIR)
                 }
+                .setNeutralButton("다른 방법") { _, _ -> showOtherWays() }
                 .setNegativeButton("닫기", null)
                 .show()
             return
         }
         if (!getSystemService(android.app.NotificationManager::class.java).areNotificationsEnabled()) {
-            AlertDialog.Builder(this)
-                .setTitle("알림이 꺼져 있어요")
-                .setMessage("페어링 코드를 알림에서 입력하므로 이 앱의 알림을 켜 주세요.")
-                .setPositiveButton("알림 설정 열기") { _, _ ->
-                    runCatching {
-                        startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                            .putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
-                    }
-                }
-                .setNegativeButton("닫기", null)
-                .show()
+            showNotificationsOff()
             return
         }
         if (!WirelessAdb.developerOptionsOn(this)) {
@@ -870,6 +862,31 @@ class MainActivity : Activity() {
             return
         }
         showPairSteps()
+    }
+
+    /** 알림이 막혀 있을 때: 알림 설정을 열어 켜도록 (돌아와서 '권한 받기'를 다시 누르면 이어서 진행) */
+    private fun showNotificationsOff() {
+        AlertDialog.Builder(this)
+            .setTitle("알림이 꺼져 있어요")
+            .setMessage(
+                "페어링 코드(6자리)를 알림에서 입력하므로 이 앱의 알림을 켜야 합니다.\n\n" +
+                    "[알림 설정 열기] → '알림 허용' 켜기 → 이 앱으로 돌아와 '권한 받기'를 다시 누르세요."
+            )
+            .setPositiveButton("알림 설정 열기") { _, _ ->
+                runCatching {
+                    startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                        .putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
+                }.onFailure {
+                    // 알림 설정 화면이 없는 기기 → 앱 정보 화면
+                    runCatching {
+                        startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            android.net.Uri.fromParts("package", packageName, null)))
+                    }
+                }
+            }
+            .setNeutralButton("다른 방법") { _, _ -> showOtherWays() }
+            .setNegativeButton("닫기", null)
+            .show()
     }
 
     private fun showPairSteps() {

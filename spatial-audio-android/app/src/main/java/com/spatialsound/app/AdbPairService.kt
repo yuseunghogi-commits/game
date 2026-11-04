@@ -41,6 +41,10 @@ class AdbPairService : Service() {
         private const val NID_INPUT = 32
         /** 이 시간 안에 끝내지 못하면 알아서 종료 */
         private const val GIVE_UP_MS = 15 * 60_000L
+        private const val PREFS = "adb_pair"
+        /** 무선 디버깅이 꺼져 있던 것을 본 시각 — 실패 후 다시 시도해도(새 서비스) 끝나면 꺼 주려고 기억 */
+        private const val KEY_WE_ENABLED = "wifiDebugOffSeenAt"
+        private const val WE_ENABLED_VALID_MS = 24 * 3600_000L
 
         @Volatile
         var running = false
@@ -62,8 +66,12 @@ class AdbPairService : Service() {
     private var pairPort = -1
     private var busy = false
     private var done = false
-    /** 시작할 때 무선 디버깅이 꺼져 있었으면, 끝나고 다시 꺼 준다 */
+    /** 이 과정(또는 하루 안의 이전 시도) 때문에 무선 디버깅을 켰으면, 끝나고 다시 꺼 준다 */
+    @Volatile
     private var turnOffAfter = false
+    /** 실제로 꺼졌는지 (끈 뒤 확인) */
+    @Volatile
+    private var turnedOff = false
     private val giveUp = Runnable { finish(removeNotifications = true) }
 
     private val nm get() = getSystemService(NotificationManager::class.java)
@@ -95,7 +103,14 @@ class AdbPairService : Service() {
         }
         running = true
         done = false
-        turnOffAfter = !WirelessAdb.wirelessDebuggingOn(this)
+        turnedOff = false
+        // 지금 꺼져 있으면 기억해 둔다. 첫 시도가 실패해서 무선 디버깅이 켜진 채로 다시 시도해도,
+        // 그 기억으로 끝나고 다시 꺼 준다 (서비스는 시도마다 새로 만들어지므로 저장해 둠)
+        val p = getSharedPreferences(PREFS, MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        if (!WirelessAdb.wirelessDebuggingOn(this)) p.edit().putLong(KEY_WE_ENABLED, now).apply()
+        val seen = p.getLong(KEY_WE_ENABLED, 0L)
+        turnOffAfter = seen > 0 && now - seen in 0 until WE_ENABLED_VALID_MS
         val wait = waitNotification("설정 → 개발자 옵션 → 무선 디버깅 → '페어링 코드로 기기 페어링'을 누르세요")
         try {
             if (Build.VERSION.SDK_INT >= 29) {
@@ -165,6 +180,9 @@ class AdbPairService : Service() {
                 Log.w(TAG, "페어링 실패", pairErr)
                 main.post {
                     busy = false
+                    // 창이 닫혔는데 mDNS 가 '사라짐'을 놓쳤으면 옛 포트로만 계속 시도하게 되므로,
+                    // 다음 코드는 포트를 다시 찾아서 (창이 그대로면 바로 다시 찾음)
+                    pairPort = -1
                     if (!running) return@post
                     postInput(
                         "페어링 실패 — 코드를 다시 확인하세요. 창이 닫혔다면 '페어링 코드로 기기 페어링'을 다시 눌러 새 코드로",
@@ -202,13 +220,25 @@ class AdbPairService : Service() {
                 Thread.sleep(1500)
             }
         }
-        if (ok && turnOffAfter) {
-            // 이 과정 때문에 켠 무선 디버깅은 다시 꺼 둔다 (권한은 그대로 유지됨)
-            runCatching { WirelessAdb.shell(this, "settings put global adb_wifi_enabled 0", 4000) }
+        if (ok) {
+            if (turnOffAfter) {
+                // 이 과정 때문에 켠 무선 디버깅은 다시 꺼 둔다 (권한은 그대로 유지됨)
+                runCatching { WirelessAdb.shell(this, "settings put global adb_wifi_enabled 0", 4000) }
+                turnedOff = waitWirelessOff()
+            }
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().remove(KEY_WE_ENABLED).apply()
         }
         WirelessAdb.disconnect()
         if (!ok && lastErr != null) throw lastErr
         return ok
+    }
+
+    private fun waitWirelessOff(): Boolean {
+        repeat(15) {
+            if (!WirelessAdb.wirelessDebuggingOn(this)) return true
+            Thread.sleep(200)
+        }
+        return false
     }
 
     private fun waitForDump(): Boolean {
@@ -221,7 +251,11 @@ class AdbPairService : Service() {
 
     private fun onSuccess() {
         done = true
-        val off = if (turnOffAfter) "\n무선 디버깅은 다시 꺼 두었습니다 (앞으로 필요 없음)." else ""
+        val off = when {
+            !turnOffAfter -> ""
+            turnedOff -> "\n무선 디버깅은 다시 꺼 두었습니다 (앞으로 필요 없음)."
+            else -> "\n무선 디버깅이 아직 켜져 있으면 설정 → 개발자 옵션에서 꺼 주세요 (앞으로 필요 없음)."
+        }
         val n = Notification.Builder(this, CH_INPUT)
             .setSmallIcon(R.drawable.ic_headphones)
             .setContentTitle("✅ 권한 받기 완료!")

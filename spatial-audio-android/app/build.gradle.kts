@@ -15,6 +15,14 @@ dependencies {
     implementation("dev.rikka.shizuku:provider:13.1.5")
 }
 
+// 앱 버전 = 저장소 맨 위 RELEASE_VERSION (릴리스 태그와 항상 같아야 업데이트 확인이 맞음 — 손으로 쓰지 않음)
+// versionCode = 주*10000 + 부*100 + 수 (2.2 → 20200). v2.1 까지는 손으로 22 를 썼으므로 항상 그보다 큼
+val releaseVersion: String = rootProject.file("../RELEASE_VERSION").readText().trim()
+val releaseCode: Int = releaseVersion.split('.', '-', ' ')
+    .map { p -> p.takeWhile { it.isDigit() }.toIntOrNull() ?: 0 }
+    .let { v -> v.getOrElse(0) { 0 } * 10000 + v.getOrElse(1) { 0 } * 100 + v.getOrElse(2) { 0 } }
+    .also { require(it > 22) { "RELEASE_VERSION '$releaseVersion' → versionCode $it 는 이미 낸 22 보다 커야 합니다" } }
+
 android {
     namespace = "com.spatialsound.app"
     compileSdk = 34
@@ -23,8 +31,8 @@ android {
         applicationId = "com.spatialsound.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 22
-        versionName = "2.1"
+        versionCode = releaseCode
+        versionName = releaseVersion
     }
 
     // 서명 키: CI 가 SPATIAL_SIGN_STORE 로 항상 같은 키를 넘겨 준다 (덮어쓰기·자동 업데이트에 필요).

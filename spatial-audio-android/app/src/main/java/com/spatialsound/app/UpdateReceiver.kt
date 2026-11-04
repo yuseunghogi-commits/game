@@ -25,9 +25,12 @@ class UpdateReceiver : BroadcastReceiver() {
                     Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
                 )
+                // 설치 결과(성공)가 이 방송보다 늦게 오기도 하므로, 그쪽이 지우지 않는 별도 번호로
+                ctx.getSystemService(NotificationManager::class.java).cancel(AppUpdater.NID_UPDATE)
                 AppUpdater.notify(
                     ctx, "✅ v${AppUpdater.currentVersion(ctx)} 업데이트 완료",
                     "눌러서 3D 사운드 열기 (업데이트하면서 꺼졌다면 다시 켜 주세요)", open,
+                    id = AppUpdater.NID_UPDATED,
                 )
             }
         }
