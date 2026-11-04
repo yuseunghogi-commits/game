@@ -191,6 +191,16 @@
                 android:max="100" />
 
             <TextView
+                android:id="@+id/labelNear"
+                style="@style/SliderLabel" />
+
+            <SeekBar
+                android:id="@+id/seekNear"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100" />
+
+            <TextView
                 android:id="@+id/labelTimbre"
                 style="@style/SliderLabel" />
 

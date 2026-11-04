@@ -7,6 +7,7 @@ import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.floor
+import kotlin.math.ln
 import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.min
@@ -119,6 +120,12 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
      * 표를 다시 만들 필요 없이 바로 반영.
      */
     @Volatile var timbre = DEFAULT_TIMBRE
+
+    /**
+     * 스침 효과 0..1 — 한쪽으로 크게 치우친 직접음(옆을 지나가는 차·드론 등)을 그쪽 귀 바로 옆([NEAR_R])에서 들리게.
+     * 가까운 음원은 가까운 귀가 훨씬 크게 듣는다 (구 모양 머리 계산: 30cm 에서 두 귀 차이 +7~9dB). 두 귀 합한 크기는 그대로
+     */
+    @Volatile var near = 0.0
 
     /** 3D 강조 0..1 (α = 1 + amount): 0 이면 실측 그대로 */
     fun setEnhance(amount: Double) {
@@ -416,6 +423,55 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         }
     }
 
+    // 스침 효과: 가까운 음원의 머리 효과 변화 [귀와 음원 사이 각 0..180°, 5° 간격][bins] (선형 크기)
+    private val dvf: Array<FloatArray> = nearDvf(fs, N, NEAR_R, HEAD_A)
+    // 앞 스피커 칸마다 스침 정도 (왼쪽/오른쪽) — 0 이면 그 칸은 원래 앞 스피커 자리
+    private val wNearL = FloatArray(bins); private val wNearR = FloatArray(bins)
+
+    /** 귀 축(왼쪽 −90°, 오른쪽 +90°)과 음원 방향 사이 각 → dvf 행 */
+    private fun thetaRow(deg: Double): Int {
+        val a = abs((((deg % 360.0) + 540.0) % 360.0) - 180.0)
+        return (a / 5.0).roundToInt().coerceIn(0, dvf.size - 1)
+    }
+
+    /**
+     * 앞 스피커 (±f). 스침 정도 w 가 있는 칸은 그 칸의 방향을 옆(±90°) 쪽으로 옮기고 가까운 음원처럼 만든다.
+     * 같은 소리를 두 자리로 나누면 두 귀에서 서로 간섭해(4kHz 에서 두 귀 차이 11 → 3dB) 칸마다 방향 하나만 쓴다.
+     */
+    private fun addFront(t: Table, xr: FloatArray, xi: FloatArray, f: Double, left: Boolean, w: FloatArray) {
+        val sign = if (left) -1.0 else 1.0
+        var any = false
+        for (k in lowBin until bins) if (w[k] > 0f) { any = true; break }
+        if (!any) { addSource(t, xr, xi, sign * f, elevF, 1f, 0); return }
+        val fast = elevF == 0.0 && pitchF == 0.0
+        if (!fast) java.util.Arrays.fill(rowSpec, null)
+        for (k in 0 until bins) {
+            val ar = xr[k]; val ai = xi[k]
+            if (ar == 0f && ai == 0f) continue
+            val wk = w[k]
+            val deg = sign * (f + wk * (90.0 - f))
+            val hL: FloatArray; val hLi: FloatArray; val hR: FloatArray; val hRi: FloatArray
+            if (fast) {
+                val d = dirIndex(t, deg)
+                hL = t.re[d][0]; hLi = t.im[d][0]; hR = t.re[d][1]; hRi = t.im[d][1]
+            } else {
+                val idx = ((((deg % 360.0) + 360.0) % 360.0) / 2.0).roundToInt() % 180
+                val sp = rowSpec[idx] ?: specFor(t, idx * 2.0, elevF).also { rowSpec[idx] = it }
+                hL = sp.lr; hLi = sp.li; hR = sp.rr; hRi = sp.ri
+            }
+            var gl = 1f; var gr = 1f
+            if (wk > 0f) {
+                val head = deg - yawF
+                val dL = dvf[thetaRow(head + 90.0)][k]; val dR = dvf[thetaRow(head - 90.0)][k]
+                val pl = hL[k] * hL[k] + hLi[k] * hLi[k]; val pr = hR[k] * hR[k] + hRi[k] * hRi[k]
+                val c = sqrt((pl + pr) / (dL * dL * pl + dR * dR * pr + 1e-30f))
+                gl = 1f + wk * (c * dL - 1f); gr = 1f + wk * (c * dR - 1f)
+            }
+            yLr[k] += (ar * hL[k] - ai * hLi[k]) * gl; yLi[k] += (ar * hLi[k] + ai * hL[k]) * gl
+            yRr[k] += (ar * hR[k] - ai * hRi[k]) * gr; yRi[k] += (ar * hRi[k] + ai * hR[k]) * gr
+        }
+    }
+
     // 음색 보정 배율: 세기나 표가 바뀔 때만 다시 계산 (1 이 아닌 칸은 timbreFrom 부터)
     private val timbreGain = FloatArray(bins) { 1f }
     private val centerGain = FloatArray(bins) { 1f }
@@ -664,7 +720,9 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         val surAmb = sqrt(r * (1f - h) * (1f - bt))
         val topAmb = sqrt(h * (1f - bt))
         val botAmb = sqrt(bt)
+        val nr = near.toFloat().coerceIn(0f, 1f)
         for (k in 0 until bins) {
+            wNearL[k] = 0f; wNearR[k] = 0f
             // 저음 직통 몫(wl)은 따로 두고 나머지(wh)만 가상 스피커로
             val wl = lowW[k]; val wh = 1f - wl
             dLr[k] = xLr[k] * wl; dLi[k] = xLi[k] * wl; dRr[k] = xRr[k] * wl; dRi[k] = xRi[k] * wl
@@ -692,6 +750,12 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
             val gN = if (eOut > 1e-24f) sqrt(eIn / eOut).coerceIn(1f, 2f) else 1f
             flr *= gN; fli *= gN; frr *= gN; fri *= gN
             cRr[k] = cr * gN * SQRT2; cIi[k] = ci * gN * SQRT2
+            // 스침 효과: 한쪽으로 크게 치우친 칸은 그쪽 앞 스피커 소리를 귀 바로 옆(가까운 음원)으로 옮길 정도
+            if (nr > 0f) {
+                val pan = (sRR[k] - sLL[k]) / tot
+                val w = nr * smooth01((abs(pan) - NEAR_PAN0) / (NEAR_PAN1 - NEAR_PAN0))
+                if (pan < 0f) wNearL[k] = w else wNearR[k] = w
+            }
             // 배경음: 일부는 앞 스피커, 나머지는 옆·뒤·천장으로 (aL/aR 는 나누기 전 배경음)
             val alr = lr * ma; val ali = li * ma; val arr = rr * ma; val ari = ri * ma
             fLr[k] = flr + alr * frontAmb; fLi[k] = fli + ali * frontAmb
@@ -706,8 +770,8 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         }
         routedEnergy[0] = eF; routedEnergy[1] = eC; routedEnergy[2] = eA
         val f = frontAngle
-        addSource(t, fLr, fLi, -f, elevF, 1f, 0)
-        addSource(t, fRr, fRi, f, elevF, 1f, 0)
+        addFront(t, fLr, fLi, f, left = true, w = wNearL)
+        addFront(t, fRr, fRi, f, left = false, w = wNearR)
         if (cl > 0.001f) {
             for (k in timbreFrom until bins) { val m = centerGain[k]; cRr[k] *= m; cIi[k] *= m }
             addSource(t, cRr, cIi, 0.0, elevF, 1f, 0)
@@ -751,6 +815,7 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         val botAmb = sqrt(bt)
         val fast = elevF == 0.0 && pitchF == 0.0
         if (!fast) java.util.Arrays.fill(rowSpec, null)
+        val nr = near.toFloat().coerceIn(0f, 1f)
         for (k in 0 until bins) {
             val wl = lowW[k]; val wh = 1f - wl
             dLr[k] = xLr[k] * wl; dLi[k] = xLi[k] * wl; dRr[k] = xRr[k] * wl; dRi[k] = xRi[k] * wl
@@ -779,8 +844,20 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
                 val sp = rowSpec[idx] ?: specFor(t, idx * 2.0, elevF).also { rowSpec[idx] = it }
                 hL = sp.lr; hLi = sp.li; hR = sp.rr; hRi = sp.ri
             }
-            yLr[k] += dr * hL[k] - di * hLi[k]; yLi[k] += dr * hLi[k] + di * hL[k]
-            yRr[k] += dr * hR[k] - di * hRi[k]; yRi[k] += dr * hRi[k] + di * hR[k]
+            // 스침 효과: 한쪽으로 크게 치우친 성분은 가까운 음원처럼 (두 귀 합한 에너지는 그대로, 비율만)
+            var gl = 1f; var gr = 1f
+            if (nr > 0f && k >= lowBin) {
+                val w = nr * smooth01((abs(pan) - NEAR_PAN0) / (NEAR_PAN1 - NEAR_PAN0))
+                if (w > 0f) {
+                    val head = deg - yawF
+                    val dL = dvf[thetaRow(head + 90.0)][k]; val dR = dvf[thetaRow(head - 90.0)][k]
+                    val pl = hL[k] * hL[k] + hLi[k] * hLi[k]; val pr = hR[k] * hR[k] + hRi[k] * hRi[k]
+                    val c = sqrt((pl + pr) / (dL * dL * pl + dR * dR * pr + 1e-30f))
+                    gl = 1f + w * (c * dL - 1f); gr = 1f + w * (c * dR - 1f)
+                }
+            }
+            yLr[k] += (dr * hL[k] - di * hLi[k]) * gl; yLi[k] += (dr * hLi[k] + di * hL[k]) * gl
+            yRr[k] += (dr * hR[k] - di * hRi[k]) * gr; yRi[k] += (dr * hRi[k] + di * hR[k]) * gr
 
             // 배경음
             fLr[k] = lr * ma * frontAmb; fLi[k] = li * ma * frontAmb
@@ -814,6 +891,85 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         const val DEFAULT_TIMBRE = 0.3
         private const val TIMBRE_MAX_DB = 6.0
         private val TIMBRE_DIRS = intArrayOf(0, 30, -30, 45, -45)
+        /** 스침 효과: 가까운 음원 거리 (m) 와 머리 반지름 (m) */
+        const val NEAR_R = 0.30
+        const val HEAD_A = 0.0875
+        private const val SOUND_C = 343.0
+        /** 좌우 치우침이 이 범위를 넘을수록 (0.5 → 0.95) 스침 효과를 더 */
+        private const val NEAR_PAN0 = 0.5f
+        private const val NEAR_PAN1 = 0.95f
+
+        private fun smooth01(x: Float): Float { val u = x.coerceIn(0f, 1f); return u * u * (3f - 2f * u) }
+
+        /** 2종 구면 한켈 함수 h_m(x) = j_m − i·y_m, m = 0..mMax (위로 점화 — y 가 커서 안정) */
+        private fun hankel(x: Double, re: DoubleArray, im: DoubleArray, mMax: Int) {
+            val sx = sin(x); val cx = cos(x)
+            re[0] = sx / x; im[0] = cx / x
+            re[1] = sx / (x * x) - cx / x; im[1] = cx / (x * x) + sx / x
+            for (m in 1 until mMax) {
+                re[m + 1] = (2 * m + 1) / x * re[m] - re[m - 1]
+                im[m + 1] = (2 * m + 1) / x * im[m] - im[m - 1]
+            }
+        }
+
+        /**
+         * 가까운 점음원(거리 r)이 구 모양 머리(반지름 a) 표면의 귀에 만드는 효과 변화 |H(ρ)| / |H(∞)|
+         * (Duda & Martens 1998 — 각 거리에서 머리 중심 자유음장으로 정규화). [귀와 음원 사이 각 0..180° 5° 간격][bins], 선형.
+         * 곡선이 매끄러워서 50Hz~fs/2 로그 간격 72점에서 계산하고 bins 로 보간.
+         */
+        private fun nearDvf(fs: Int, n: Int, r: Double, a: Double): Array<FloatArray> {
+            val bins = n / 2 + 1
+            val rho = r / a
+            val nf = 72; val fLo = 50.0; val fHi = fs / 2.0
+            val angles = 37
+            val tab = Array(angles) { DoubleArray(nf) }
+            for (fi in 0 until nf) {
+                val f = fLo * (fHi / fLo).pow(fi / (nf - 1.0))
+                val mu = 2 * PI * f * a / SOUND_C
+                val mMax = min(400, (mu * rho).toInt() + 40)
+                val hr = DoubleArray(mMax + 2); val hi = DoubleArray(mMax + 2)
+                val gr = DoubleArray(mMax + 2); val gi = DoubleArray(mMax + 2)
+                hankel(mu, hr, hi, mMax + 1); hankel(mu * rho, gr, gi, mMax + 1)
+                for (ai in 0 until angles) {
+                    val x = cos(Math.toRadians(ai * 5.0))
+                    var p0 = 1.0; var p1 = x
+                    var snR = 0.0; var snI = 0.0; var sfR = 0.0; var sfI = 0.0
+                    for (m in 0..mMax) {
+                        val pm = if (m == 0) p0 else p1
+                        val dR: Double; val dI: Double
+                        if (m == 0) { dR = -hr[1]; dI = -hi[1] } else { dR = hr[m - 1] - (m + 1) / mu * hr[m]; dI = hi[m - 1] - (m + 1) / mu * hi[m] }
+                        val den = dR * dR + dI * dI
+                        val invR = dR / den; val invI = -dI / den
+                        val cm = (2 * m + 1) * pm
+                        // 가까이: cm · h_m(μρ) / h'_m(μ)
+                        val tR = cm * (gr[m] * invR - gi[m] * invI); val tI = cm * (gr[m] * invI + gi[m] * invR)
+                        snR += tR; snI += tI
+                        // 멀리: cm · i^(m+1) / h'_m(μ)
+                        when ((m + 1) % 4) {
+                            0 -> { sfR += cm * invR; sfI += cm * invI }
+                            1 -> { sfR -= cm * invI; sfI += cm * invR }
+                            2 -> { sfR -= cm * invR; sfI -= cm * invI }
+                            else -> { sfR += cm * invI; sfI -= cm * invR }
+                        }
+                        if (m >= 1) { val p2 = ((2 * m + 1) * x * p1 - m * p0) / (m + 1); p0 = p1; p1 = p2 }
+                        if (m > mu * rho + 10 && abs(tR) + abs(tI) < 1e-12 * (abs(snR) + abs(snI))) break
+                    }
+                    val nearM = (rho / mu) * sqrt(snR * snR + snI * snI)
+                    val farM = sqrt(sfR * sfR + sfI * sfI) / (mu * mu)
+                    tab[ai][fi] = 20 * log10(nearM / farM)
+                }
+            }
+            val lg = ln(fHi / fLo)
+            return Array(angles) { ai ->
+                FloatArray(bins) { k ->
+                    val f = k * fs.toDouble() / n
+                    val pos = if (f <= fLo) 0.0 else (ln(f / fLo) / lg * (nf - 1)).coerceAtMost(nf - 1.0)
+                    val i0 = floor(pos).toInt().coerceAtMost(nf - 2); val u = pos - i0
+                    10.0.pow((tab[ai][i0] * (1 - u) + tab[ai][i0 + 1] * u) / 20).toFloat()
+                }
+            }
+        }
+
         /** 천장 앞 스피커 기본 위치: 좌우 ±45°, 위 45° (7.1.4 배치) */
         const val HEIGHT_AZ = 45.0
         const val HEIGHT_EL = 45.0

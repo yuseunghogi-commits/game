@@ -354,6 +354,61 @@
   const TIMBRE_FIX = 0.7, TIMBRE_MAX_DB = 6, TIMBRE_DIRS = [0, 30, -30, 45, -45]; // 음색 보정 곡선 (세기 1 = v2.1)
   /** 음색 보정 기본 세기 — 3D 느낌(정면 귀 단서)을 대부분 남기고 깊은 골짜기만 조금 메움 */
   const DEFAULT_TIMBRE = 0.3;
+  /** 스침 효과 (Kotlin HrtfRenderer 와 같음): 가까운 음원 거리 0.3m, 머리 반지름, 좌우 치우침 0.5 → 0.95 에서 서서히 */
+  const NEAR_R = 0.30, HEAD_A = 0.0875, SOUND_C = 343, NEAR_PAN0 = 0.5, NEAR_PAN1 = 0.95;
+  const smooth01 = (x) => { const u = Math.fround(Math.min(1, Math.max(0, x))); return Math.fround(Math.fround(u * u) * Math.fround(3 - Math.fround(2 * u))); };
+  /** 2종 구면 한켈 함수 h_m(x) = j_m − i·y_m (위로 점화) */
+  function hankel(x, re, im, mMax) {
+    const sx = Math.sin(x), cx = Math.cos(x);
+    re[0] = sx / x; im[0] = cx / x;
+    re[1] = sx / (x * x) - cx / x; im[1] = cx / (x * x) + sx / x;
+    for (let m = 1; m < mMax; m++) { re[m + 1] = (2 * m + 1) / x * re[m] - re[m - 1]; im[m + 1] = (2 * m + 1) / x * im[m] - im[m - 1]; }
+  }
+  /** 가까운 점음원이 구 모양 머리 표면의 귀에 만드는 효과 변화 |H(ρ)|/|H(∞)| (Duda & Martens 1998) — [0..180° 5° 간격][bins] */
+  function nearDvf(fs, n, r, a) {
+    const bins = n / 2 + 1, rho = r / a, nf = 72, fLo = 50, fHi = fs / 2, angles = 37;
+    const tab = Array.from({ length: angles }, () => new Float64Array(nf));
+    for (let fi = 0; fi < nf; fi++) {
+      const f = fLo * Math.pow(fHi / fLo, fi / (nf - 1));
+      const mu = 2 * PI * f * a / SOUND_C;
+      const mMax = Math.min(400, Math.trunc(mu * rho) + 40);
+      const hr = new Float64Array(mMax + 2), hi = new Float64Array(mMax + 2), gr = new Float64Array(mMax + 2), gi = new Float64Array(mMax + 2);
+      hankel(mu, hr, hi, mMax + 1); hankel(mu * rho, gr, gi, mMax + 1);
+      for (let ai = 0; ai < angles; ai++) {
+        const x = Math.cos(ai * 5 * 0.017453292519943295);
+        let p0 = 1, p1 = x, snR = 0, snI = 0, sfR = 0, sfI = 0;
+        for (let m = 0; m <= mMax; m++) {
+          const pm = m === 0 ? p0 : p1;
+          let dR, dI;
+          if (m === 0) { dR = -hr[1]; dI = -hi[1]; } else { dR = hr[m - 1] - (m + 1) / mu * hr[m]; dI = hi[m - 1] - (m + 1) / mu * hi[m]; }
+          const den = dR * dR + dI * dI, invR = dR / den, invI = -dI / den, cm = (2 * m + 1) * pm;
+          const tR = cm * (gr[m] * invR - gi[m] * invI), tI = cm * (gr[m] * invI + gi[m] * invR);
+          snR += tR; snI += tI;
+          switch ((m + 1) % 4) {
+            case 0: sfR += cm * invR; sfI += cm * invI; break;
+            case 1: sfR -= cm * invI; sfI += cm * invR; break;
+            case 2: sfR -= cm * invR; sfI -= cm * invI; break;
+            default: sfR += cm * invI; sfI -= cm * invR;
+          }
+          if (m >= 1) { const p2 = ((2 * m + 1) * x * p1 - m * p0) / (m + 1); p0 = p1; p1 = p2; }
+          if (m > mu * rho + 10 && Math.abs(tR) + Math.abs(tI) < 1e-12 * (Math.abs(snR) + Math.abs(snI))) break;
+        }
+        const nearM = (rho / mu) * Math.sqrt(snR * snR + snI * snI), farM = Math.sqrt(sfR * sfR + sfI * sfI) / (mu * mu);
+        tab[ai][fi] = 20 * Math.log10(nearM / farM);
+      }
+    }
+    const lg = Math.log(fHi / fLo);
+    return tab.map((row) => {
+      const out = new Float32Array(bins);
+      for (let k = 0; k < bins; k++) {
+        const f = k * fs / n;
+        const pos = f <= fLo ? 0 : Math.min(nf - 1, Math.log(f / fLo) / lg * (nf - 1));
+        const i0 = Math.min(nf - 2, Math.floor(pos)), u = pos - i0;
+        out[k] = Math.pow(10, (row[i0] * (1 - u) + row[i0 + 1] * u) / 20);
+      }
+      return out;
+    });
+  }
   /** 천장 앞 스피커 기본 위치 ±45°·위 45°, 천장 뒤 ±135°·위 45° (7.1.4 배치), 바닥 ±45°·아래 30° */
   const HEIGHT_AZ = 45, HEIGHT_EL = 45, TOP_REAR_AZ = 135, TOP_REAR_EL = 45, BOTTOM_AZ = 45, BOTTOM_EL = -30;
   /** 3D 강조: 앞/뒤 짝과의 차이를 뒤쪽이 3/4, 앞쪽이 1/4 맡음. 최대 ±10dB */
@@ -416,6 +471,52 @@
       this.timbre = DEFAULT_TIMBRE;
       this.timbreGain = new Float32Array(bins).fill(1); this.centerGain = new Float32Array(bins).fill(1);
       this.timbreFor = null; this.timbreAmt = -1; this.timbreFrom = bins;
+      // 스침 효과 0..1: 한쪽으로 크게 치우친 직접음을 그쪽 귀 바로 옆(0.3m)에서 (두 귀 합한 크기는 그대로, 비율만 가까운 음원처럼)
+      this.near = 0;
+      this.dvf = nearDvf(fs, N, NEAR_R, HEAD_A);
+      this.wNearL = new Float32Array(bins); this.wNearR = new Float32Array(bins);
+    }
+
+    /** 귀 축(왼쪽 −90°, 오른쪽 +90°)과 음원 방향 사이 각 → dvf 행 */
+    thetaRow(deg) {
+      const a = Math.abs((((deg % 360) + 540) % 360) - 180);
+      return Math.min(this.dvf.length - 1, Math.max(0, Math.round(a / 5)));
+    }
+
+    /** 앞 스피커 (±f) — 스침 정도가 있는 칸은 방향을 옆(±90°)쪽으로 옮기고 가까운 음원처럼 (칸마다 방향 하나 → 간섭 없음) */
+    addFront(t, xr, xi, f, left, w) {
+      const sign = left ? -1 : 1, bins = this.bins, lowBin = this.lowBin;
+      let any = false;
+      for (let k = lowBin; k < bins; k++) if (w[k] > 0) { any = true; break; }
+      if (!any) { this.addSource(t, xr, xi, sign * f, this.elevF, 1, 0); return; }
+      const fast = this.elevF === 0 && this.pitchF === 0, row = this.rowSpec, ef = this.elevF, dvf = this.dvf;
+      if (!fast) row.fill(null);
+      const { yLr, yLi, yRr, yRi } = this;
+      for (let k = 0; k < bins; k++) {
+        const ar = xr[k], ai = xi[k];
+        if (ar === 0 && ai === 0) continue;
+        const wk = w[k], deg = sign * (f + wk * (90 - f));
+        let hL, hLi, hR, hRi;
+        if (fast) {
+          const d = this.dirIndex(t, deg);
+          hL = t.re[d][0]; hLi = t.im[d][0]; hR = t.re[d][1]; hRi = t.im[d][1];
+        } else {
+          const idx = Math.round((((deg % 360) + 360) % 360) / 2) % 180;
+          let sp = row[idx];
+          if (!sp) { sp = this.specFor(t, idx * 2, ef); row[idx] = sp; }
+          hL = sp.lr; hLi = sp.li; hR = sp.rr; hRi = sp.ri;
+        }
+        let gl = 1, gr = 1;
+        if (wk > 0) {
+          const head = deg - this.yawF;
+          const dL = dvf[this.thetaRow(head + 90)][k], dR = dvf[this.thetaRow(head - 90)][k];
+          const pl = hL[k] * hL[k] + hLi[k] * hLi[k], pr = hR[k] * hR[k] + hRi[k] * hRi[k];
+          const c = Math.sqrt((pl + pr) / (dL * dL * pl + dR * dR * pr + 1e-30));
+          gl = 1 + wk * (c * dL - 1); gr = 1 + wk * (c * dR - 1);
+        }
+        yLr[k] += (ar * hL[k] - ai * hLi[k]) * gl; yLi[k] += (ar * hLi[k] + ai * hL[k]) * gl;
+        yRr[k] += (ar * hR[k] - ai * hRi[k]) * gr; yRi[k] += (ar * hRi[k] + ai * hR[k]) * gr;
+      }
     }
 
     /** 음색 보정 배율: 세기나 표가 바뀔 때만 다시 계산 (1 이 아닌 칸은 timbreFrom 부터) */
@@ -847,7 +948,9 @@
       const surAmb = Math.fround(Math.sqrt(Math.fround(Math.fround(r * (1 - h)) * (1 - bt))));
       const topAmb = Math.fround(Math.sqrt(Math.fround(h * (1 - bt)))), botAmb = Math.fround(Math.sqrt(bt));
       const { xLr, xLi, xRr, xRi, fLr, fLi, fRr, fRi, cRr, cIi, aLr, aLi, aRr, aRi, sLL, sRR, sLRr, sLRi, bins, lowBin, lowW, dLr, dLi, dRr, dRi } = this;
+      const nr = Math.fround(Math.min(1, Math.max(0, this.near))), wNL = this.wNearL, wNR = this.wNearR;
       for (let k = 0; k < bins; k++) {
+        wNL[k] = 0; wNR[k] = 0;
         // 저음 직통 몫(wl)은 따로 두고 나머지(wh)만 가상 스피커로
         const wl = lowW[k], wh = Math.fround(1 - wl);
         dLr[k] = Math.fround(xLr[k] * wl); dLi[k] = Math.fround(xLi[k] * wl); dRr[k] = Math.fround(xRr[k] * wl); dRi[k] = Math.fround(xRi[k] * wl);
@@ -871,14 +974,20 @@
         const gN = eOut > 1e-24 ? Math.min(2, Math.max(1, Math.sqrt(eIn / eOut))) : 1;
         flr *= gN; fli *= gN; frr *= gN; fri *= gN;
         cRr[k] = cr * gN * SQRT2; cIi[k] = ci * gN * SQRT2;
+        // 스침 효과: 한쪽으로 크게 치우친 칸은 그쪽 앞 스피커 소리를 귀 바로 옆(가까운 음원)으로 옮길 정도
+        if (nr > 0) {
+          const pan = (sRR[k] - sLL[k]) / tot;
+          const w = Math.fround(nr * smooth01((Math.abs(pan) - NEAR_PAN0) / (NEAR_PAN1 - NEAR_PAN0)));
+          if (pan < 0) wNL[k] = w; else wNR[k] = w;
+        }
         const alr = lr * ma, ali = li * ma, arr = rr * ma, ari = ri * ma;
         fLr[k] = flr + alr * frontAmb; fLi[k] = fli + ali * frontAmb;
         fRr[k] = frr + arr * frontAmb; fRi[k] = fri + ari * frontAmb;
         aLr[k] = alr; aLi[k] = ali; aRr[k] = arr; aRi[k] = ari;
       }
       const f = this.frontAngle, ef = this.elevF;
-      this.addSource(t, fLr, fLi, -f, ef, 1, 0);
-      this.addSource(t, fRr, fRi, f, ef, 1, 0);
+      this.addFront(t, fLr, fLi, f, true, wNL);
+      this.addFront(t, fRr, fRi, f, false, wNR);
       if (cl > 0.001) {
         const cg = this.centerGain;
         for (let k = this.timbreFrom; k < bins; k++) { cRr[k] *= cg[k]; cIi[k] *= cg[k]; }
@@ -946,6 +1055,7 @@
       const fast = this.elevF === 0 && this.pitchF === 0, row = this.rowSpec, ef = this.elevF;
       if (!fast) row.fill(null);
       const { xLr, xLi, xRr, xRi, fLr, fLi, fRr, fRi, aLr, aLi, aRr, aRi, sLL, sRR, yLr, yLi, yRr, yRi, bins, lowBin, lowW, dLr, dLi, dRr, dRi } = this;
+      const nr = Math.fround(Math.min(1, Math.max(0, this.near))), dvf = this.dvf;
       for (let k = 0; k < bins; k++) {
         const wl = lowW[k], wh = Math.fround(1 - wl);
         dLr[k] = Math.fround(xLr[k] * wl); dLi[k] = Math.fround(xLi[k] * wl); dRr[k] = Math.fround(xRr[k] * wl); dRi[k] = Math.fround(xRi[k] * wl);
@@ -969,8 +1079,20 @@
           if (!sp) { sp = this.specFor(t, idx * 2, ef); row[idx] = sp; }
           hL = sp.lr; hLi = sp.li; hR = sp.rr; hRi = sp.ri;
         }
-        yLr[k] += dr * hL[k] - di * hLi[k]; yLi[k] += dr * hLi[k] + di * hL[k];
-        yRr[k] += dr * hR[k] - di * hRi[k]; yRi[k] += dr * hRi[k] + di * hR[k];
+        // 스침 효과: 한쪽으로 크게 치우친 성분은 가까운 음원처럼 (두 귀 합한 에너지는 그대로, 비율만)
+        let gl = 1, gr = 1;
+        if (nr > 0 && k >= lowBin) {
+          const w = Math.fround(nr * smooth01((Math.abs(pan) - NEAR_PAN0) / (NEAR_PAN1 - NEAR_PAN0)));
+          if (w > 0) {
+            const head = deg - this.yawF;
+            const dL = dvf[this.thetaRow(head + 90)][k], dR = dvf[this.thetaRow(head - 90)][k];
+            const pl = hL[k] * hL[k] + hLi[k] * hLi[k], pr = hR[k] * hR[k] + hRi[k] * hRi[k];
+            const c = Math.sqrt((pl + pr) / (dL * dL * pl + dR * dR * pr + 1e-30));
+            gl = 1 + w * (c * dL - 1); gr = 1 + w * (c * dR - 1);
+          }
+        }
+        yLr[k] += (dr * hL[k] - di * hLi[k]) * gl; yLi[k] += (dr * hLi[k] + di * hL[k]) * gl;
+        yRr[k] += (dr * hR[k] - di * hRi[k]) * gr; yRi[k] += (dr * hRi[k] + di * hR[k]) * gr;
         fLr[k] = lr * ma * frontAmb; fLi[k] = li * ma * frontAmb; fRr[k] = rr * ma * frontAmb; fRi[k] = ri * ma * frontAmb;
         aLr[k] = lr * ma; aLi[k] = li * ma; aRr[k] = rr * ma; aRi[k] = ri * ma;
       }
@@ -996,7 +1118,7 @@
     virtualizerStrength: 1000, bassStrength: 250, spaceEq: 45, reverbPreset: 2, frontAngle: 45, rearAngle: 135,
     rearLevel: 45, centerLevel: 60, engineMode: 1, spread: 90, earSize: 2, hpEq: 0, enabled: true,
     frontElev: 0, heightLevel: 25, topAngle: HEIGHT_AZ, topElev: HEIGHT_EL, topRearAngle: TOP_REAR_AZ, topRearElev: TOP_REAR_EL,
-    bottomLevel: 10, bottomAngle: BOTTOM_AZ, bottomElev: BOTTOM_EL, enhance: 30, timbre: 30,
+    bottomLevel: 10, bottomAngle: BOTTOM_AZ, bottomElev: BOTTOM_EL, enhance: 30, timbre: 30, near: 15,
   };
 
   class Engine {
@@ -1084,6 +1206,7 @@
       // 처음 설정은 바로, 그 뒤 바뀔 때는 오디오가 끊기지 않게 나눠서 계산
       rnd.setEnhance(num(p.enhance, 0, 100, 0) / 100, !this.applied);
       rnd.timbre = num(p.timbre, 0, 100, DEFAULT_TIMBRE * 100) / 100;
+      rnd.near = num(p.near, 0, 100, 15) / 100;
       this.applied = true;
       if (p.hpEq !== this.hpEqIdx) {
         this.hpEqIdx = p.hpEq;
