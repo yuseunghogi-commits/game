@@ -235,6 +235,12 @@ app/src/main/java/com/spatialsound/app/
 libadb-android (Apache-2.0 로 사용), spake2-java (LGPL-3.0, 수정 없이 사용 — 이 앱 소스가 공개되어 있어 바꿔 빌드 가능),
 Conscrypt·BoringSSL (Apache-2.0), Bouncy Castle (MIT), AndroidHiddenApiBypass (Apache-2.0), Shizuku API (MIT).
 
+## 👂 좌우 대칭 (v2.4)
+측정 HRIR(KEMAR)은 두 귀가 완전히 같지 않아서 (왼쪽 귀 θ vs 오른쪽 귀 −θ: 정면 6.3kHz -3.1dB, 90° 10kHz -4.6dB·16kHz -4.2dB,
+250~500Hz -0.7dB, 정면 두 귀 시간차 -12.9µs) 같은 소리가 왼쪽에서 더 먹먹하게 들렸습니다.
+`HrtfRenderer.symmetrize`: 짝마다 크기 차이(dB)를 1/6옥타브 평활해 반씩 나눠 맞추고, 정면 ±20° 에서 잰 시간 치우침을
+두 귀에 반씩 선형 위상으로 되돌림 → 엔진 출력 가운데 소리 좌우 차이 최대 0.3dB, 두 귀 시간차 -0.1µs.
+
 ## 🎚 음색 (v2.1 → v2.3 음색 보정 슬라이더)
 원음과 비교했을 때 "필터 낀 듯한" 소리의 원인은 두 가지였습니다 (측정: 분홍잡음, 1/6옥타브, 1kHz 기준).
 1. 측정용 더미헤드(KEMAR) 귀 모양: 정면 소리가 3~5kHz +3~5dB, 6~8kHz -4~6dB

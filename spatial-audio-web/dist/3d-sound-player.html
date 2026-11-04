@@ -922,6 +922,7 @@ PK 196 -0.5 3.79
         }
         re.push(r2); im.push(i2);
       }
+      this.symmetrize(set, re, im);
       const [timbreDb, centerDb] = this.timbreCurves(set, re, im);
       // 정면(0°) HRTF 의 위상(귀별) — 직통 저음에 이 위상만 입혀서 HRTF 를 거친 소리와 이어 붙임
       // (측정 HRTF 는 저음에서 위상이 앞서 있어서 단순 지연으로 맞추면 160Hz 에서 상쇄됨)
@@ -932,6 +933,56 @@ PK 196 -0.5 3.79
         lowC.push(c); lowS.push(s);
       }
       return { dirs: set.dirs, step: set.step, re, im, enh: 0, lowC, lowS, timbreDb, centerDb };
+    }
+
+    /**
+     * 좌우 대칭 맞추기 (Kotlin HrtfRenderer.symmetrize 와 같음) — 측정 더미헤드의 두 귀가 조금씩 달라서 왼쪽 귀가 더 먹먹했다
+     * (왼쪽 귀 θ vs 오른쪽 귀 −θ: 정면 6.3kHz -3.1dB, 옆 10~16kHz -4dB, 저음 -0.7dB, 정면에서 왼쪽 귀가 13µs 먼저).
+     * 1) 크기: 두 응답의 dB 차이를 1/6옥타브로 평활해 반씩 나눠 가운데로  2) 시간: 정면 쪽(±20°) 치우침을 반씩 나눠 없앰
+     */
+    symmetrize(set, re, im) {
+      const bins = N / 2 + 1, dirs = set.dirs, r6 = Math.pow(2, 1 / 12);
+      const half = new Float64Array(bins), c = new Float64Array(bins + 1);
+      for (let d = 0; d < dirs; d++) {
+        const m = (dirs - d) % dirs;
+        const ar = re[d][0], ai = im[d][0], br = re[m][1], bi = im[m][1];
+        for (let k = 0; k < bins; k++) {
+          const pa = ar[k] * ar[k] + ai[k] * ai[k] + 1e-20;
+          const pb = br[k] * br[k] + bi[k] * bi[k] + 1e-20;
+          half[k] = 5 * Math.log10(pb / pa); // (B dB − A dB) / 2
+        }
+        for (let k = 0; k < bins; k++) c[k + 1] = c[k] + half[k];
+        for (let k = 0; k < bins; k++) {
+          const lo = Math.floor(k / r6), hi = Math.min(bins - 1, Math.ceil(k * r6));
+          const g = (c[hi + 1] - c[lo]) / (hi - lo + 1);
+          const ga = Math.fround(Math.pow(10, g / 20)), gb = Math.fround(Math.pow(10, -g / 20));
+          ar[k] *= ga; ai[k] *= ga; br[k] *= gb; bi[k] *= gb;
+        }
+      }
+      // 정면 쪽 짝들의 두 귀 시간차 평균 = 치우침 (300~1200Hz 위상차, + = 왼쪽 귀가 늦음)
+      const hz = this.fs / N, k0 = Math.ceil(300 / hz), k1 = Math.floor(1200 / hz), span = Math.trunc(20 / set.step);
+      let acc = 0, cnt = 0;
+      for (let j = -span; j <= span; j++) {
+        const d = ((j % dirs) + dirs) % dirs;
+        for (let k = k0; k <= k1; k++) {
+          const lr = re[d][0][k], li = im[d][0][k], rr = re[d][1][k], ri = im[d][1][k];
+          acc += -Math.atan2(li * rr - lr * ri, lr * rr + li * ri) / (2 * PI * k * hz); cnt++;
+        }
+      }
+      const bias = cnt > 0 ? acc / cnt : 0;
+      if (Math.abs(bias) < 1e-7) return;
+      // 왼쪽 귀를 −bias/2, 오른쪽 귀를 +bias/2 만큼 늦춤 (선형 위상)
+      const f = Math.fround;
+      for (let k = 0; k < bins; k++) {
+        const w = 2 * PI * k * hz * (bias / 2);
+        const cl = f(Math.cos(w)), sl = f(Math.sin(w));
+        for (let d = 0; d < dirs; d++) {
+          const L0 = re[d][0], L1 = im[d][0], R0 = re[d][1], R1 = im[d][1];
+          const lr = L0[k], li = L1[k], rr = R0[k], ri = R1[k];
+          L0[k] = f(lr * cl) - f(li * sl); L1[k] = f(lr * sl) + f(li * cl);
+          R0[k] = f(rr * cl) + f(ri * sl); R1[k] = f(ri * cl) - f(rr * sl);
+        }
+      }
     }
 
     /**

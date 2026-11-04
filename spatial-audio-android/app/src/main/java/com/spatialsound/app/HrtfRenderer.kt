@@ -2,6 +2,7 @@ package com.spatialsound.app
 
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.exp
@@ -245,6 +246,63 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
         return g to c
     }
 
+    /**
+     * 좌우 대칭 맞추기 — 측정 더미헤드의 두 귀(마이크 감도·귓바퀴·머리 위치)가 조금씩 달라서 같은 소리가
+     * 왼쪽 귀에서 더 먹먹하게 들렸다 (왼쪽 귀 θ vs 오른쪽 귀 −θ: 정면 6.3kHz -3.1dB, 옆 10~16kHz -4dB,
+     * 250~500Hz -0.7dB, 정면에서 왼쪽 귀가 13µs 먼저). 원래 같아야 하는 짝이므로
+     * 1) 크기: 두 응답의 dB 차이를 1/6옥타브로 평활해 반씩 나눠 가운데로 (귓바퀴 단서의 세부는 각자 그대로)
+     * 2) 시간: 정면 쪽(±20°)에서 잰 두 귀 시간 치우침을 반씩 나눠 없앰 (선형 위상, 방향마다 같은 값)
+     */
+    private fun symmetrize(set: HrirSet, re: Array<Array<FloatArray>>, im: Array<Array<FloatArray>>) {
+        val dirs = set.dirs
+        val r6 = 2.0.pow(1.0 / 12)
+        val half = DoubleArray(bins)
+        val c = DoubleArray(bins + 1)
+        for (d in 0 until dirs) {
+            val m = (dirs - d) % dirs
+            val ar = re[d][0]; val ai = im[d][0]; val br = re[m][1]; val bi = im[m][1]
+            for (k in 0 until bins) {
+                val pa = ar[k].toDouble() * ar[k] + ai[k].toDouble() * ai[k] + 1e-20
+                val pb = br[k].toDouble() * br[k] + bi[k].toDouble() * bi[k] + 1e-20
+                half[k] = 5.0 * log10(pb / pa) // (B dB − A dB) / 2
+            }
+            for (k in 0 until bins) c[k + 1] = c[k] + half[k]
+            for (k in 0 until bins) {
+                val lo = floor(k / r6).toInt(); val hi = min(bins - 1, ceil(k * r6).toInt())
+                val g = (c[hi + 1] - c[lo]) / (hi - lo + 1)
+                val ga = 10.0.pow(g / 20).toFloat(); val gb = 10.0.pow(-g / 20).toFloat()
+                ar[k] *= ga; ai[k] *= ga; br[k] *= gb; bi[k] *= gb
+            }
+        }
+        // 정면 쪽 짝들의 두 귀 시간차 평균 = 치우침 (짝끼리 진짜 시간차는 서로 지워짐). 300~1200Hz 위상차로
+        val hz = fs.toDouble() / N
+        val k0 = ceil(300.0 / hz).toInt(); val k1 = floor(1200.0 / hz).toInt()
+        var acc = 0.0; var cnt = 0
+        val span = 20 / set.stepDeg
+        for (j in -span..span) {
+            val d = ((j % dirs) + dirs) % dirs
+            for (k in k0..k1) {
+                val lr = re[d][0][k].toDouble(); val li = im[d][0][k].toDouble()
+                val rr = re[d][1][k].toDouble(); val ri = im[d][1][k].toDouble()
+                // 위상(L · conj R) = φL − φR → 왼쪽 귀가 늦은 시간 = −(φL − φR)/ω
+                acc += -atan2(li * rr - lr * ri, lr * rr + li * ri) / (2 * PI * k * hz); cnt++
+            }
+        }
+        val bias = if (cnt > 0) acc / cnt else 0.0 // 초, + = 왼쪽 귀가 늦음
+        if (abs(bias) < 1e-7) return
+        // 왼쪽 귀를 −bias/2 만큼, 오른쪽 귀를 +bias/2 만큼 늦춤 (지연 τ = e^{−jωτ})
+        for (k in 0 until bins) {
+            val w = 2 * PI * k * hz * (bias / 2)
+            val cl = cos(w).toFloat(); val sl = sin(w).toFloat() // 왼쪽: e^{+jω·bias/2}
+            for (d in 0 until dirs) {
+                val lr = re[d][0][k]; val li = im[d][0][k]
+                re[d][0][k] = lr * cl - li * sl; im[d][0][k] = lr * sl + li * cl
+                val rr = re[d][1][k]; val ri = im[d][1][k]
+                re[d][1][k] = rr * cl + ri * sl; im[d][1][k] = ri * cl - rr * sl
+            }
+        }
+    }
+
     private fun buildTable(set: HrirSet): Table {
         val f = Fft(N)
         val re = Array(set.dirs) { Array(2) { FloatArray(bins) } }
@@ -259,6 +317,7 @@ class HrtfRenderer(private val fs: Int, base: HrirSet, private val elev: Elevati
             System.arraycopy(bufR, 0, re[d][e], 0, bins)
             System.arraycopy(bufI, 0, im[d][e], 0, bins)
         }
+        symmetrize(set, re, im)
         val (tDb, cDb) = timbreCurves(set, re, im)
         return Table(set.dirs, set.stepDeg, re, im).also { tb ->
             tb.timbreDb = tDb
