@@ -459,8 +459,9 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
         refreshButton()
     }
 
-    /** 실행 중 상태: 지연(장치 완충 + 엔진 처리)·끊김 횟수 — 끊김이 생기면 완충을 스스로 늘림 */
-    private val statusTimer = javax.swing.Timer(1000) {
+    /** 실행 중 상태: 지연(장치 완충 + 엔진 처리)·끊김 횟수 — 끊김이 생기면 완충을 스스로 늘림.
+     *  (lazy: 이 선언이 init 블록보다 아래에 있어서, 혹시 init 에서 startEngine() 을 부르게 되더라도 초기화 전 접근이 안 되게) */
+    private val statusTimer: javax.swing.Timer by lazy { javax.swing.Timer(1000) {
         val e = engine
         if (e == null || !e.isRunning) return@Timer
         // 실측 엔진(공간·정위)은 처리 지연 1024 샘플이 더 있음
@@ -470,7 +471,7 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
             "✅ 3D 적용 중 (%d Hz · 지연 %.0fms · %s) — Windows 출력이 'CABLE Input'인지 확인",
             e.sampleRate, e.bufferMs + engineMs, drop,
         )
-    }
+    } }
 
     private fun stopEngine() {
         statusTimer.stop()
