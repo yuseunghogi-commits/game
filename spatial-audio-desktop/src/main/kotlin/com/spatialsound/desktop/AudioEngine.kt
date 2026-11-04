@@ -101,10 +101,15 @@ class AudioEngine(
         val outCap = outLine.bufferSize / 4
         var started = false
         try {
-            // 장치를 돌리기 전에: 실측 HRTF 표를 만들고(첫 블록에서 0.1~0.3초 걸림) 처리 코드를 데워 둠
-            // → 시작하자마자 한 번 끊기던 것 방지
+            // 장치를 돌리기 전에: 처리 코드를 데우고, 실측 HRTF 표가 다른 스레드에서 다 만들어질 때까지(0.1~0.3초) 기다림
+            // (표가 재생 중에 준비되면 그 순간 출력 경로가 바뀌어 한 번 끊김) → 시작하자마자 끊기던 것 방지
             val warm = FloatArray(frames * 2)
-            repeat(WARMUP_BLOCKS) { java.util.Arrays.fill(warm, 0f); p.process(warm, frames) }
+            val deadline = System.nanoTime() + WARMUP_MAX_MS * 1_000_000L
+            var blocks = 0
+            while (blocks < WARMUP_BLOCKS || (!p.rendererReady && System.nanoTime() < deadline)) {
+                java.util.Arrays.fill(warm, 0f); p.process(warm, frames); blocks++
+                if (blocks >= WARMUP_BLOCKS && !p.rendererReady) Thread.sleep(5)
+            }
             inLine.start()
             while (running) {
                 val n = inLine.read(bytes, 0, bytes.size)
@@ -141,8 +146,9 @@ class AudioEngine(
     }
 
     companion object {
-        /** 시작 전에 무음으로 미리 돌려 볼 블록 수 (약 0.4초 분량) */
+        /** 시작 전에 무음으로 미리 돌려 볼 최소 블록 수 (약 0.4초 분량) 와 렌더러 준비를 기다리는 최대 시간 */
         private const val WARMUP_BLOCKS = 40
+        private const val WARMUP_MAX_MS = 3000L
         private val probe = AudioFormat(48000f, 16, 2, true, false)
 
         /** 녹음(입력)이 가능한 장치 */

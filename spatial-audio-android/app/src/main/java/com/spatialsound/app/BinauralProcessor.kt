@@ -62,6 +62,12 @@ class BinauralProcessor(private val fs: Int) {
     /** 실측 렌더러를 쓰는 중이면 그 지연만큼 나머지 경로(반사음·잔향·원음)도 늦춰서 맞춘다 */
     private var latency = 0
 
+    /**
+     * 실측 렌더러가 준비됐는지 (기본 엔진이면 항상 true). 렌더러는 처음 [process] 때 다른 스레드에서 만들어지고(0.1~0.3초),
+     * 준비되는 순간 출력 경로가 바뀌므로(지연 0 → 1024 샘플) 재생 전에 이게 true 가 될 때까지 무음을 돌리면 그 순간이 들리지 않는다.
+     */
+    val rendererReady: Boolean get() = (pending?.engineMode ?: engineMode) == 0 || renderer != null
+
     private fun ensureRenderer() {
         if (engineMode == 0 || renderer != null || rendererLoading) return
         val base = hrirBase ?: return

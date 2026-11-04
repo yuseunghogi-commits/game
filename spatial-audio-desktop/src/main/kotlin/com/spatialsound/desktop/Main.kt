@@ -311,7 +311,7 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
             SwingUtilities.invokeLater {
                 dlg.dispose()
                 r.onSuccess { (newApp, work) ->
-                    engine?.stop(); engine = null
+                    stopEngine() // 교체 스크립트 실행에 실패하면 앱이 계속 뜨므로 상태 줄·버튼·타이머도 정지 상태로
                     val launched = runCatching { Updater.launchWindowsSwap(newApp, work) }
                     if (launched.isSuccess) {
                         dispose()
@@ -557,6 +557,8 @@ class MainWindow : JFrame("3D 사운드 (PC)") {
 
     private fun saveSettings() {
         prefs.putInt("ver", 3)
+        // 프리셋 번호도 함께 (v2.7 에서 옮긴 '사용자 설정' 번호가 ver=3 과 같이 저장되도록 — 콤보를 바꾸지 않아도)
+        prefs.putInt("preset", presetBox.selectedIndex.coerceAtLeast(0))
         prefs.putInt("strength", settings.virtualizerStrength); prefs.putInt("bass", settings.bassStrength)
         prefs.putInt("room", settings.spaceEq); prefs.putInt("reverb", settings.reverbPreset)
         prefs.putInt("width", settings.width)
