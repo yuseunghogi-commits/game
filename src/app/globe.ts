@@ -41,17 +41,19 @@ export async function createGlobe(
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(35, host.clientWidth / host.clientHeight, 0.1, 100);
-  camera.position.set(0, 1.0, 4.4);
+  camera.position.set(0, 0.7, 3.1);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
   controls.enablePan = false;
-  controls.minDistance = 2.3;
-  controls.maxDistance = 6;
-  controls.rotateSpeed = 0.5;
+  controls.minDistance = 1.14;
+  controls.maxDistance = 5;
+  controls.rotateSpeed = 0.45;
+  controls.zoomSpeed = 0.8;
 
   // ---- 텍스처 생성 (워커) ----
   const W = Q.tex, H = Q.tex / 2;
-  const tex = await new Promise<{ day: Uint8ClampedArray; night: Uint8ClampedArray }>((resolve) => {
+  const tex = await new Promise<{ day: Uint8ClampedArray; night: Uint8ClampedArray; relief: Uint8ClampedArray; ids: Uint8ClampedArray }>((resolve) => {
     const worker = new Worker(new URL('./planetTexture.worker.ts', import.meta.url), { type: 'module' });
     worker.onmessage = (e) => {
       if (e.data.progress !== undefined) onProgress(e.data.progress);
@@ -71,29 +73,90 @@ export async function createGlobe(
   };
   const dayTex = mk(tex.day, true);
   const nightTex = mk(tex.night, true);
+  const reliefTex = mk(tex.relief, false);
+  // 지역 번호 지도: 보간하면 번호가 섞이므로 최근접 샘플링, 밉맵 없음
+  const idTex = new THREE.DataTexture(tex.ids, W, H, THREE.RGBAFormat);
+  idTex.colorSpace = THREE.NoColorSpace;
+  idTex.wrapS = THREE.RepeatWrapping;
+  idTex.minFilter = THREE.NearestFilter;
+  idTex.magFilter = THREE.NearestFilter;
+  idTex.generateMipmaps = false;
+  idTex.needsUpdate = true;
 
+  const MAX_REGIONS = 96;
+  const regionTint = Array.from({ length: MAX_REGIONS }, () => new THREE.Vector4(0, 0, 0, 0));
   const sunDir = new THREE.Vector3(1, 0, 0);
   const planetMat = new THREE.ShaderMaterial({
-    uniforms: { dayMap: { value: dayTex }, nightMap: { value: nightTex }, sunDir: { value: sunDir }, mode: { value: Number(new URLSearchParams(location.search).get('view') ?? 0) } },
+    uniforms: {
+      dayMap: { value: dayTex }, nightMap: { value: nightTex }, reliefMap: { value: reliefTex }, idMap: { value: idTex },
+      texel: { value: new THREE.Vector2(1 / W, 1 / H) }, sunDir: { value: sunDir }, regionTint: { value: regionTint },
+      selected: { value: -1 }, camDist: { value: 3 }, time: { value: 0 },
+      mode: { value: Number(new URLSearchParams(location.search).get('view') ?? 0) },
+    },
     vertexShader: /* glsl */ `
-      varying vec2 vUv; varying vec3 vN; varying vec3 vW;
-      void main(){ vUv = uv; vN = normalize(mat3(modelMatrix) * normal); vec4 w = modelMatrix * vec4(position,1.0); vW = w.xyz;
+      varying vec2 vUv; varying vec3 vN; varying vec3 vW; varying vec3 vP;
+      void main(){ vUv = uv; vP = position; vN = normalize(mat3(modelMatrix) * normal); vec4 w = modelMatrix * vec4(position,1.0); vW = w.xyz;
         gl_Position = projectionMatrix * viewMatrix * w; }`,
     fragmentShader: /* glsl */ `
-      uniform sampler2D dayMap; uniform sampler2D nightMap; uniform vec3 sunDir; uniform float mode;
-      varying vec2 vUv; varying vec3 vN; varying vec3 vW;
+      uniform sampler2D dayMap; uniform sampler2D nightMap; uniform sampler2D reliefMap; uniform sampler2D idMap;
+      uniform vec2 texel; uniform vec3 sunDir; uniform float mode; uniform vec4 regionTint[${MAX_REGIONS}];
+      uniform float selected; uniform float camDist; uniform float time;
+      varying vec2 vUv; varying vec3 vN; varying vec3 vW; varying vec3 vP;
+
+      float h3(vec3 p){ p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+      float vnoise(vec3 x){ vec3 i = floor(x); vec3 f = fract(x); f = f*f*(3.0-2.0*f);
+        return mix(mix(mix(h3(i), h3(i+vec3(1,0,0)), f.x), mix(h3(i+vec3(0,1,0)), h3(i+vec3(1,1,0)), f.x), f.y),
+                   mix(mix(h3(i+vec3(0,0,1)), h3(i+vec3(1,0,1)), f.x), mix(h3(i+vec3(0,1,1)), h3(i+vec3(1,1,1)), f.x), f.y), f.z); }
+      float fbm(vec3 p){ float s = 0.0, a = 0.5; for (int k = 0; k < 4; k++) { s += a * vnoise(p); p *= 2.07; a *= 0.5; } return s; }
+      int rid(vec2 uv){ return int(texture2D(idMap, uv).r * 255.0 + 0.5); }
+
       void main(){
-        float l = dot(normalize(vN), normalize(sunDir));
-        float lit = smoothstep(-0.12, 0.25, l);
+        vec3 n0 = normalize(vN);
+        vec3 east = normalize(cross(vec3(0.0, 1.0, 0.0), n0) + vec3(1e-5, 0.0, 0.0));
+        vec3 north = cross(n0, east);
+        vec4 rel = texture2D(reliefMap, vUv);
+        float water = rel.b;
+        // 가까이 볼수록 세부 기복을 더한다 (텍스처 해상도 한계를 가림)
+        float near = 1.0 - smoothstep(1.25, 2.6, camDist);
+        vec3 dp = vP * 90.0;
+        float d1 = fbm(dp), d2 = fbm(dp + vec3(0.37, 0.0, 0.0)), d3 = fbm(dp + vec3(0.0, 0.37, 0.0));
+        vec2 grad = (rel.rg - 0.5) * 2.2 + vec2(d2 - d1, d3 - d1) * (1.0 - water) * (0.8 + 2.2 * near);
+        vec3 n = normalize(n0 - east * grad.x - north * grad.y);
+        vec3 L = normalize(sunDir);
+        float l0 = dot(n0, L);
+        float lit = smoothstep(-0.12, 0.25, l0);
+        float shade = clamp(dot(n, L) - l0 + 1.0, 0.55, 1.45);
         vec3 day = texture2D(dayMap, vUv).rgb;
+        day *= mix(1.0, 0.86 + 0.28 * fbm(vP * 260.0), near * (1.0 - water)); // 땅의 잔무늬
         vec3 night = texture2D(nightMap, vUv).rgb;
-        vec3 col = day * (0.05 + 1.05 * lit) + night * (1.0 - smoothstep(-0.25, 0.05, l)) * 1.4;
         vec3 V = normalize(cameraPosition - vW);
-        float rim = pow(1.0 - max(dot(normalize(vN), V), 0.0), 3.0);
-        col += vec3(0.25, 0.55, 0.9) * rim * (0.15 + 0.6 * lit);
+        vec3 col = day * (0.04 + 1.08 * lit) * mix(1.0, shade, 1.0 - water * 0.85);
+        // 바다: 햇빛 반사(물결 노이즈) + 비스듬한 각도의 하늘빛
+        vec3 wn = normalize(n0 + (vec3(fbm(vP * 140.0 + time * 0.00004), fbm(vP * 140.0 + 7.3), 0.0) - 0.5) * 0.08);
+        float spec = pow(max(dot(reflect(-L, wn), V), 0.0), 60.0);
+        float fres = pow(1.0 - max(dot(n0, V), 0.0), 4.0);
+        col += water * (vec3(1.0, 0.93, 0.8) * spec * 1.1 * lit + vec3(0.16, 0.32, 0.5) * fres * 0.6 * lit);
+        // 해 질 녘 띠 (명암 경계)
+        col += vec3(0.55, 0.25, 0.08) * exp(-pow(l0 * 7.0, 2.0)) * 0.22;
+        col += night * (1.0 - smoothstep(-0.25, 0.05, l0)) * 1.45;
+        // 지역: 색칠(지도 표시)과 경계선. 육지 위에만, 가까울수록 선명하게
+        int id = rid(vUv);
+        float land = texture2D(idMap, vUv).g;
+        vec4 tint = regionTint[id];
+        col = mix(col, tint.rgb * (0.35 + 0.75 * max(lit, 0.35)), tint.a * land);
+        float edge = 0.0;
+        for (int k = 0; k < 4; k++) {
+          vec2 o = k == 0 ? vec2(texel.x, 0.0) : k == 1 ? vec2(-texel.x, 0.0) : k == 2 ? vec2(0.0, texel.y) : vec2(0.0, -texel.y);
+          if (rid(vUv + o) != id) edge = 1.0;
+        }
+        float isSel = float(float(id) == selected);
+        col = mix(col, vec3(0.95, 0.7, 0.28), isSel * land * 0.10);
+        col = mix(col, isSel > 0.5 ? vec3(1.0, 0.72, 0.3) : vec3(0.85, 0.95, 1.0), edge * land * (0.12 + 0.25 * near + 0.45 * isSel));
+        float rim = pow(1.0 - max(dot(n0, V), 0.0), 3.0);
+        col += vec3(0.25, 0.55, 0.9) * rim * (0.12 + 0.55 * lit);
         if (mode > 0.5 && mode < 1.5) col = day;
         if (mode > 1.5 && mode < 2.5) col = night;
-        if (mode > 2.5) col = vec3(lit);
+        if (mode > 2.5) col = vec3(lit * shade);
         gl_FragColor = vec4(col, 1.0);
         #include <colorspace_fragment>
       }`,
@@ -211,13 +274,30 @@ export async function createGlobe(
   window.addEventListener('resize', onResize);
 
   let focusTarget: THREE.Vector3 | null = null;
+  let focusDist = 2.6;
+  /** 지도 표시 값 (0..1, 지역별). 표시 없음이면 null */
+  function overlayValues(): number[] | null {
+    if (overlay === 'none') return null;
+    if (overlay === 'price') { const ps = state.regionState.map((x) => x.priceMinor); const lo = Math.min(...ps), hi = Math.max(...ps); return ps.map((p) => (p - lo) / Math.max(1, hi - lo)); }
+    if (overlay === 'env') return state.regions.map((_, i) => Math.min(1, envOf(i)));
+    const caps = new Array(state.regions.length).fill(0);
+    for (const f of state.facilities) if (f.status === 'operating') caps[f.regionId] += f.capKw;
+    const hi = Math.max(1, ...caps);
+    return caps.map((c) => c / hi);
+  }
+  const C_LO = new THREE.Color(0x2f7fd0), C_MID = new THREE.Color(0xf2b248), C_HI = new THREE.Color(0xe5604d), C_GREEN = new THREE.Color(0x6ccb8b), C_OK = new THREE.Color(0x4fb37a);
+  const rampTmp = new THREE.Color();
+  function rampColor(ov: Overlay, v: number): THREE.Color {
+    if (ov === 'mine') return rampTmp.copy(C_GREEN);
+    const lo = ov === 'env' ? C_OK : C_LO;
+    return v < 0.5 ? rampTmp.copy(lo).lerp(C_MID, v * 2) : rampTmp.copy(C_MID).lerp(C_HI, (v - 0.5) * 2);
+  }
   let stopped = false;
   let state = s;
   let selectedId: number | null = null;
   let overlay: Overlay = 'none';
   let selectedFac: number | null = null;
   let lastTime = 0;
-  const tmpColor = new THREE.Color();
   const envOf = (i: number) => envIndex(state, i);
   const tmp = new THREE.Vector3();
 
@@ -267,12 +347,28 @@ export async function createGlobe(
     clouds.rotation.y = -Math.PI / 2 + time * 0.000004;
 
     if (focusTarget) {
-      const dist = camera.position.length();
+      // 지역 선택: 그 지역 위로 돌아가며 적당히 확대 (이미 가까우면 거리 유지)
+      const cur = camera.position.length();
+      const dist = cur + (focusDist - cur) * 0.08;
       camera.position.lerp(focusTarget.clone().multiplyScalar(dist), 0.08);
       camera.position.setLength(dist);
-      if (camera.position.distanceTo(focusTarget.clone().multiplyScalar(dist)) < 0.01) focusTarget = null;
+      if (camera.position.distanceTo(focusTarget.clone().multiplyScalar(focusDist)) < 0.01) focusTarget = null;
     }
     controls.update();
+    const camDist = camera.position.length();
+    planetMat.uniforms.camDist.value = camDist;
+    planetMat.uniforms.time.value = time;
+    planetMat.uniforms.selected.value = selectedId ?? -1;
+    (clouds.material as THREE.MeshLambertMaterial).opacity = 0.55 * (0.25 + 0.75 * Math.min(1, Math.max(0, (camDist - 1.3) / 1.2)));
+    // 지역 색칠 (지도 표시): 표식 대신 지역 면 전체를 칠한다
+    const ovVals = overlayValues();
+    for (let i = 0; i < regionTint.length; i++) {
+      const v = ovVals ? ovVals[i] : undefined;
+      if (v === undefined) { regionTint[i].set(0, 0, 0, 0); continue; }
+      const c = rampColor(overlay, v);
+      regionTint[i].set(c.r, c.g, c.b, overlay === 'mine' ? (v > 0 ? 0.25 + 0.35 * v : 0) : 0.42);
+    }
+    const ringScale = Math.max(0.35, Math.min(1, (camDist - 1.0) / 2.0));
 
     // 라벨 위치 (뒷면이면 숨김). 지역이 많으면 가까이 볼 때나 내 지역만 이름을 띄운다.
     const camDir = camera.position.clone().normalize();
@@ -292,16 +388,11 @@ export async function createGlobe(
       el.classList.toggle('selected', selectedId === r.id);
       const mk = markers[i];
       const mat = mk.material as THREE.MeshBasicMaterial;
-      // 오버레이: 지역 표식의 색·크기로 값을 보여준다 (Baseline §27.4)
-      let ov = 0;
-      if (overlay === 'price') { const ps = state.regionState.map((x) => x.priceMinor); const lo = Math.min(...ps), hi = Math.max(...ps); ov = (state.regionState[i].priceMinor - lo) / Math.max(1, hi - lo); }
-      else if (overlay === 'env') ov = Math.min(1, envOf(i));
-      else if (overlay === 'mine') { const caps = state.regions.map((_, j) => state.facilities.filter((f) => f.regionId === j && f.status === 'operating').reduce((a, f) => a + f.capKw, 0)); const hi = Math.max(1, ...caps); ov = caps[i] / hi; }
-      if (selectedId === r.id) mat.color.setHex(0xf2b248);
-      else if (overlay === 'none') mat.color.setHex(0x4fd1e0);
-      else mat.color.copy(tmpColor.setHex(0x4fd1e0)).lerp(new THREE.Color(overlay === 'env' ? 0xe5604d : overlay === 'mine' ? 0x6ccb8b : 0xf2b248), ov);
+      // 지역 중심 표식 (도시). 값 표시는 지역 면 색칠이 맡는다 (Baseline §27.4)
+      mat.color.setHex(selectedId === r.id ? 0xf2b248 : 0x4fd1e0);
+      mat.opacity = selectedId === r.id ? 1 : 0.75;
       const pulse = 1 + 0.25 * Math.sin(time / 300 + i);
-      mk.scale.setScalar(selectedId === r.id ? 1.6 * pulse : overlay === 'none' ? 1 : 0.8 + ov * 1.6);
+      mk.scale.setScalar((selectedId === r.id ? 1.5 * pulse : 0.9) * ringScale);
     });
 
     // 시설 모형: 건설 중 = 반투명 골조, 정지 = 어둡게, 고장·전조 = 머리 위 표시등, 풍력 날개는 출력에 비례해 회전
@@ -348,7 +439,7 @@ export async function createGlobe(
   return {
     labels,
     update(next, selected, ov, fac) { state = next; selectedId = selected; if (ov) overlay = ov; selectedFac = fac ?? null; },
-    focus(lat, lon) { focusTarget = vec(lat, lon).normalize(); },
+    focus(lat, lon) { focusTarget = vec(lat, lon).normalize(); focusDist = Math.min(camera.position.length(), 2.15); },
     setIdle(on) { controls.autoRotate = on; controls.autoRotateSpeed = 0.35; labels.style.opacity = on ? '0' : '1'; },
     dispose() { stopped = true; window.removeEventListener('resize', onResize); controls.dispose(); renderer.dispose(); },
   };

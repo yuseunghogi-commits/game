@@ -4,6 +4,7 @@
 import { heightAt, moistureAt, SEA_LEVEL } from '../world/terrain';
 
 interface Req { seed: number; width: number; height: number; cities: { lat: number; lon: number }[] }
+// 출력: day(색, a=바다 255), night(야간 불빛), relief(r·g = 동·북 방향 기울기, b = 바다), ids(r = 가장 가까운 지역 번호 → 지역 경계·색칠)
 
 type RGB = [number, number, number];
 const mix = (a: RGB, b: RGB, t: number): RGB => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
@@ -29,6 +30,9 @@ self.onmessage = (ev: MessageEvent<Req>) => {
   const { seed, width: W, height: H, cities } = ev.data;
   const day = new Uint8ClampedArray(W * H * 4);
   const night = new Uint8ClampedArray(W * H * 4);
+  const relief = new Uint8ClampedArray(W * H * 4);
+  const ids = new Uint8ClampedArray(W * H * 4);
+  const cv = cities.map((c) => { const la = (c.lat * Math.PI) / 180, lo = (c.lon * Math.PI) / 180; return [Math.cos(la) * Math.sin(lo), Math.sin(la), Math.cos(la) * Math.cos(lo)]; });
   const heights = new Float32Array(W * H);
   for (let y = 0; y < H; y++) {
     const lat = 90 - ((y + 0.5) / H) * 180;
@@ -47,7 +51,7 @@ self.onmessage = (ev: MessageEvent<Req>) => {
       const h = heights[i];
       // 간단한 음영: 동서 기울기
       const hx = heights[y * W + ((x + 1) % W)] - heights[y * W + ((x - 1 + W) % W)];
-      const shade = 1 + clamp01(hx * 40 + 0.5) * 0.25 - 0.125;
+      const shade = 1; // 음영은 화면 셰이더가 기울기 지도로 계산한다
       let c: RGB;
       let land = false;
       if (h < SEA_LEVEL) {
@@ -70,6 +74,20 @@ self.onmessage = (ev: MessageEvent<Req>) => {
       const n = 0.94 + hash(x, y) * 0.1;
       const o = (H - 1 - y) * W + x; // 텍스처는 아래 행부터 (v=0 = 남극)
       day[o * 4] = c[0] * n; day[o * 4 + 1] = c[1] * n; day[o * 4 + 2] = c[2] * n; day[o * 4 + 3] = 255;
+      // 지형 기울기 (화면에서 노멀로 바꿔 산·계곡 음영을 만든다). 동서 간격은 위도에 따라 좁아진다.
+      const cosl = Math.max(0.15, Math.cos((lat * Math.PI) / 180));
+      const hy = heights[Math.max(0, y - 1) * W + x] - heights[Math.min(H - 1, y + 1) * W + x];
+      const g = land ? 60 * (W / 2048) : 6 * (W / 2048);
+      relief[o * 4] = 128 + Math.max(-127, Math.min(127, (hx / cosl) * g));
+      relief[o * 4 + 1] = 128 + Math.max(-127, Math.min(127, hy * g));
+      relief[o * 4 + 2] = land ? 0 : 255;
+      relief[o * 4 + 3] = 255;
+      // 가장 가까운 지역 (구면 내적 최대)
+      const la = (lat * Math.PI) / 180, lo = (lon * Math.PI) / 180;
+      const px = Math.cos(la) * Math.sin(lo), py = Math.sin(la), pz = Math.cos(la) * Math.cos(lo);
+      let best = 0, bd = -2;
+      for (let k = 0; k < cv.length; k++) { const d = px * cv[k][0] + py * cv[k][1] + pz * cv[k][2]; if (d > bd) { bd = d; best = k; } }
+      ids[o * 4] = best; ids[o * 4 + 1] = land ? 255 : 0; ids[o * 4 + 3] = 255;
 
       // 야간 불빛: 지역 중심(도시) 주변 + 해안선, 육지에서만
       let light = 0;
@@ -91,5 +109,5 @@ self.onmessage = (ev: MessageEvent<Req>) => {
     }
     if (y % 32 === 0) (self as unknown as Worker).postMessage({ progress: 0.8 + (y / H) * 0.2 });
   }
-  (self as unknown as Worker).postMessage({ done: true, day, night, width: W, height: H }, [day.buffer, night.buffer]);
+  (self as unknown as Worker).postMessage({ done: true, day, night, relief, ids, width: W, height: H }, [day.buffer, night.buffer, relief.buffer, ids.buffer]);
 };
