@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sentry-lite"
+version = "0.1.0"
+description = "Personal AI-assisted security scanner for your own repositories (scanner pipeline + Claude Code triage)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+  "typer>=0.12",
+  "rich>=13.5",
+  "pydantic>=2.6",
+  "psutil>=5.9",
+]
+
+[project.optional-dependencies]
+scan = ["semgrep>=1.100"]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.10", "types-psutil"]
+
+[project.scripts]
+sentry = "sentry.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["sentry*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["fixtures", "tests/data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "ANN", "S", "PTH", "C4"]
+ignore = [
+  "ANN401",  # Any is sometimes the honest type for parsed tool JSON
+  "S603",    # subprocess without shell: all external calls go through toolrun.run_tool with argv lists
+  "S607",    # partial executable path (git) is resolved by shutil.which in toolrun
+  "RUF001", "RUF002", "RUF003",  # Korean/Unicode text in messages is intentional
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S108", "ANN", "PTH"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_ignores = true
+plugins = ["pydantic.mypy"]
+files = ["sentry", "tests"]
+exclude = ["fixtures/", "tests/data/"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "integration: runs real external tools (semgrep/gitleaks/osv-scanner); skipped when the tool is not installed",
+]

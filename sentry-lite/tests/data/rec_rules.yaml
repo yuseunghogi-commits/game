@@ -1,0 +1,35 @@
+rules:
+  - id: rec.express-reflected-xss
+    mode: taint
+    message: User input from req.query flows into res.send without escaping (reflected XSS).
+    severity: ERROR
+    languages: [javascript]
+    metadata:
+      cwe: "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+      confidence: HIGH
+      category: security
+      references: ["https://owasp.org/www-community/attacks/xss/"]
+    pattern-sources:
+      - pattern: req.query.$X
+    pattern-sinks:
+      - pattern: res.send(...)
+  - id: rec.eval-user-input
+    mode: taint
+    message: Request data reaches eval(), allowing arbitrary code execution.
+    severity: ERROR
+    languages: [javascript]
+    metadata:
+      cwe: ["CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"]
+      confidence: MEDIUM
+    pattern-sources:
+      - pattern: req.query.$X
+    pattern-sinks:
+      - pattern: eval(...)
+  - id: rec.dom-innerhtml
+    message: URL parameter assigned to innerHTML (DOM XSS).
+    severity: WARNING
+    languages: [javascript]
+    metadata:
+      cwe: "CWE-79"
+      confidence: LOW
+    pattern: $EL.innerHTML = $X

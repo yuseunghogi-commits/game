@@ -1,0 +1,42 @@
+[
+ {
+  "RuleID": "generic-api-key",
+  "Description": "Detected a Generic API Key, potentially exposing access to various services and sensitive operations.",
+  "StartLine": 1,
+  "EndLine": 1,
+  "StartColumn": 1,
+  "EndColumn": 49,
+  "Match": "VITE_ADMIN_TOKEN=Hq8vR3nT6wY1zK4mP7sL2xC9bF5dG0jQ",
+  "Secret": "Hq8vR3nT6wY1zK4mP7sL2xC9bF5dG0jQ",
+  "File": ".env",
+  "SymlinkFile": "",
+  "Commit": "",
+  "Entropy": 5,
+  "Author": "",
+  "Email": "",
+  "Date": "",
+  "Message": "",
+  "Tags": [],
+  "Fingerprint": ".env:generic-api-key:1"
+ },
+ {
+  "RuleID": "generic-api-key",
+  "Description": "Detected a Generic API Key, potentially exposing access to various services and sensitive operations.",
+  "StartLine": 2,
+  "EndLine": 2,
+  "StartColumn": 2,
+  "EndColumn": 45,
+  "Match": "DB_PASSWORD=Zr7Kp2Wq9Xv4Lm8Tn3Bc6Yd1Fs5Gh0Jj",
+  "Secret": "Zr7Kp2Wq9Xv4Lm8Tn3Bc6Yd1Fs5Gh0Jj",
+  "File": ".env",
+  "SymlinkFile": "",
+  "Commit": "",
+  "Entropy": 5,
+  "Author": "",
+  "Email": "",
+  "Date": "",
+  "Message": "",
+  "Tags": [],
+  "Fingerprint": ".env:generic-api-key:2"
+ }
+]

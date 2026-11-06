@@ -1,0 +1,22 @@
+[
+ {
+  "RuleID": "generic-api-key",
+  "Description": "Detected a Generic API Key, potentially exposing access to various services and sensitive operations.",
+  "StartLine": 2,
+  "EndLine": 2,
+  "StartColumn": 4,
+  "EndColumn": 53,
+  "Match": "paymentsApiKey: \"pk9Qz7XvT2mLw8RbN4cYh6JdK3sF5gA1\"",
+  "Secret": "pk9Qz7XvT2mLw8RbN4cYh6JdK3sF5gA1",
+  "File": "src/config.js",
+  "SymlinkFile": "",
+  "Commit": "b6f20f001adc4617237cfc0465836cbca1b37530",
+  "Entropy": 5,
+  "Author": "t",
+  "Email": "t@example.com",
+  "Date": "2026-11-06T11:38:11Z",
+  "Message": "initial with key",
+  "Tags": [],
+  "Fingerprint": "b6f20f001adc4617237cfc0465836cbca1b37530:src/config.js:generic-api-key:2"
+ }
+]
