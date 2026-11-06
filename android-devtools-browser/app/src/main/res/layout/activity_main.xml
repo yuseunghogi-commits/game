@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bar_bg"
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:id="@+id/top_bar"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingEnd="4dp">
+
+        <EditText
+            android:id="@+id/url_bar"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:background="@drawable/url_bar_bg"
+            android:hint="@string/url_hint"
+            android:imeOptions="actionGo|flagNoExtractUi"
+            android:importantForAutofill="no"
+            android:inputType="textUri"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:selectAllOnFocus="true"
+            android:singleLine="true"
+            android:textColor="@color/text"
+            android:textColorHint="@color/hint"
+            android:textSize="15sp" />
+
+        <ImageButton
+            android:id="@+id/btn_reload"
+            style="@style/BarButton"
+            android:layout_width="48dp"
+            android:layout_weight="0"
+            android:contentDescription="@string/reload"
+            android:src="@drawable/ic_refresh" />
+    </LinearLayout>
+
+    <ProgressBar
+        android:id="@+id/progress"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="3dp"
+        android:max="100"
+        android:progressDrawable="@drawable/progress_line"
+        android:visibility="gone" />
+
+    <WebView
+        android:id="@+id/web"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <LinearLayout
+        android:id="@+id/bottom_bar"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:orientation="horizontal">
+
+        <ImageButton
+            android:id="@+id/btn_back"
+            style="@style/BarButton"
+            android:contentDescription="@string/back"
+            android:src="@drawable/ic_arrow_back" />
+
+        <ImageButton
+            android:id="@+id/btn_forward"
+            style="@style/BarButton"
+            android:contentDescription="@string/forward"
+            android:src="@drawable/ic_arrow_forward" />
+
+        <ImageButton
+            android:id="@+id/btn_devtools"
+            style="@style/BarButton"
+            android:contentDescription="@string/devtools"
+            android:src="@drawable/ic_code"
+            android:tint="@color/accent" />
+
+        <ImageButton
+            android:id="@+id/btn_home"
+            style="@style/BarButton"
+            android:contentDescription="@string/home"
+            android:src="@drawable/ic_home" />
+
+        <ImageButton
+            android:id="@+id/btn_menu"
+            style="@style/BarButton"
+            android:contentDescription="@string/menu"
+            android:src="@drawable/ic_more_vert" />
+    </LinearLayout>
+</LinearLayout>

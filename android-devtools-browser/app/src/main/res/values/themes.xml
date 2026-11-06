@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppTheme" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:colorPrimary">@color/bar_bg</item>
+        <item name="android:colorPrimaryDark">@color/bar_bg</item>
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:windowBackground">@color/bar_bg</item>
+        <item name="android:statusBarColor">@color/bar_bg</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <!-- Android 8.1 미만은 밝은 내비게이션 바 아이콘을 쓸 수 없어 어두운 바를 둔다 (values-v27에서 바꿈) -->
+        <item name="android:navigationBarColor">#000000</item>
+    </style>
+
+    <style name="BarButton">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">match_parent</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:background">?android:attr/selectableItemBackgroundBorderless</item>
+        <item name="android:scaleType">center</item>
+        <item name="android:tint">@color/icon</item>
+    </style>
+</resources>

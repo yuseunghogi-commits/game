@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <group android:id="@+id/group_options" android:checkableBehavior="all">
+        <item
+            android:id="@+id/action_auto"
+            android:title="@string/action_auto" />
+        <item
+            android:id="@+id/action_desktop"
+            android:title="@string/action_desktop" />
+        <item
+            android:id="@+id/action_strip_csp"
+            android:title="@string/action_strip_csp" />
+    </group>
+    <group android:id="@+id/group_actions">
+        <item
+            android:id="@+id/action_share"
+            android:title="@string/share" />
+        <item
+            android:id="@+id/action_external"
+            android:title="@string/action_external" />
+        <item
+            android:id="@+id/action_clear"
+            android:title="@string/clear_data" />
+        <item
+            android:id="@+id/action_about"
+            android:title="@string/about" />
+    </group>
+</menu>
