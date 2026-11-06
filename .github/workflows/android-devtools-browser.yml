@@ -17,6 +17,8 @@ jobs:
     env:
       # 선택: 저장소 Secrets에 서명 키(debug.keystore를 base64로)를 넣어 두면 항상 같은 키로 서명한다.
       KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+      # app/build.gradle.kts가 이 파일로 서명한다.
+      DEVTOOLS_SIGNING_STORE: ${{ github.workspace }}/.devtools-sign/debug.keystore
     steps:
       - uses: actions/checkout@v4
 
@@ -28,16 +30,26 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       # 같은 키로 서명해야 새 APK를 이미 설치한 앱 위에 업데이트로 설치할 수 있다.
-      - name: Signing key from secret
-        if: env.KEYSTORE_B64 != ''
-        run: mkdir -p ~/.android && echo "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
-
+      # Secret이 있으면 그 키, 없으면 Actions 캐시에 보관한 키(처음 한 번 만들어 저장)를 쓴다.
       - name: Signing key from cache
         if: env.KEYSTORE_B64 == ''
         uses: actions/cache@v4
         with:
-          path: ~/.android/debug.keystore
-          key: devtools-browser-debug-keystore
+          path: ${{ env.DEVTOOLS_SIGNING_STORE }}
+          key: devtools-browser-debug-keystore-v1
+
+      - name: Prepare signing key
+        run: |
+          mkdir -p "$(dirname "$DEVTOOLS_SIGNING_STORE")"
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$DEVTOOLS_SIGNING_STORE"
+          elif [ ! -f "$DEVTOOLS_SIGNING_STORE" ]; then
+            echo "::notice::새 서명 키를 만듭니다. 이전 빌드를 설치했다면 한 번 지우고 설치해야 합니다."
+            keytool -genkeypair -keystore "$DEVTOOLS_SIGNING_STORE" -storetype PKCS12 \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
+          keytool -list -v -keystore "$DEVTOOLS_SIGNING_STORE" -storepass android | grep -m1 "SHA256:"
 
       - name: Unit tests
         run: ./gradlew --no-daemon testDebugUnitTest
