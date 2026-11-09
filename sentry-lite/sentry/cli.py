@@ -15,6 +15,7 @@ from typing import Annotated, Any
 
 import typer
 from rich.console import Console
+from rich.markup import escape as esc
 from rich.panel import Panel
 from rich.table import Table
 
@@ -63,7 +64,7 @@ def _emit_json(data: Any) -> None:
 
 
 def _fail(msg: str, code: int = 1) -> typer.Exit:
-    err_console.print(f"[bold red]error:[/] {msg}")
+    err_console.print(f"[bold red]error:[/] {esc(msg)}")
     return typer.Exit(code)
 
 
@@ -81,11 +82,11 @@ def _print_summary(o: ScanOutcome) -> None:
     inv = o.inventory
     console.print(
         Panel.fit(
-            f"[bold]{o.repo}[/]  ({o.root})\n"
-            f"scope: {o.scope.message}\n"
+            f"[bold]{esc(o.repo)}[/]  ({esc(str(o.root))})\n"
+            f"scope: {esc(o.scope.message)}\n"
             f"profile: {o.profile} · {inv.total_loc:,} LOC in {inv.total_files:,} files · "
             f"{len(inv.entrypoints)} entrypoints\n"
-            f"frameworks: {', '.join(inv.frameworks) or '-'}\n"
+            f"frameworks: {esc(', '.join(inv.frameworks)) or '-'}\n"
             f"scan id: {o.scan_id} · total {o.duration_s:.1f}s",
             title="Sentry-Lite scan",
         )
@@ -97,13 +98,13 @@ def _print_summary(o: ScanOutcome) -> None:
         status = "[dim]skipped[/]" if out.skipped else ("[green]ok[/]" if out.ok else "[red]failed[/]")
         notes = "; ".join([*([out.error] if out.error else []), *out.notes])
         t.add_row(
-            out.tool,
-            out.version,
+            esc(out.tool),
+            esc(out.version),
             status,
             f"{out.duration_s:.1f}s",
             f"{out.peak_rss_mb:.0f} MB" if out.peak_rss_mb else "-",
             str(len(out.findings)),
-            notes,
+            esc(notes),
         )
     console.print(t)
     ing = o.ingest
@@ -169,7 +170,7 @@ def scan(
             fail_on=fail_on,
             mem_cap_mb=mem_cap_mb,
             extra_semgrep_configs=config,
-            progress=None if as_json else (lambda m: err_console.print(f"[dim]· {m}[/]")),
+            progress=None if as_json else (lambda m: err_console.print(f"[dim]· {esc(m)}[/]")),
         )
     except ScopeError as exc:
         raise _fail(f"scope check refused: {exc}", 2) from exc
@@ -204,16 +205,16 @@ def inventory(
     if as_json:
         _emit_json(inv.model_dump())
         return
-    console.print(f"[bold]{inv.repo}[/] → {target}")
+    console.print(f"[bold]{esc(inv.repo)}[/] → {esc(str(target))}")
     langs = ", ".join(f"{k} {v.loc:,}" for k, v in inv.languages.items())
-    console.print(f"languages (LOC): {langs}")
-    console.print(f"package managers: {', '.join(inv.package_managers) or '-'}")
-    console.print(f"frameworks: {', '.join(inv.frameworks) or '-'}")
-    console.print(f"security-relevant libs: {', '.join(inv.security_libraries) or '-'}")
+    console.print(f"languages (LOC): {esc(langs)}")
+    console.print(f"package managers: {esc(', '.join(inv.package_managers)) or '-'}")
+    console.print(f"frameworks: {esc(', '.join(inv.frameworks)) or '-'}")
+    console.print(f"security-relevant libs: {esc(', '.join(inv.security_libraries)) or '-'}")
     kinds: dict[str, int] = {}
     for ep in inv.entrypoints:
         kinds[ep.kind] = kinds.get(ep.kind, 0) + 1
-    console.print(f"entrypoints: {kinds or '-'}")
+    console.print(f"entrypoints: {esc(str(kinds)) if kinds else '-'}")
 
 
 # ------------------------------------------------------------------------------------------ findings
@@ -229,9 +230,9 @@ def _print_findings_table(items: list[Finding], title: str = "Findings") -> None
             f"[{SEV_STYLE[f.severity.value]}]{f.severity.value}[/]",
             f.status.value,
             f"{f.confidence:.2f}",
-            f.source_tool,
-            f.location,
-            f.title[:90],
+            esc(f.source_tool),
+            esc(f.location),
+            esc(f.title[:90]),
         )
     console.print(t)
 
@@ -283,8 +284,7 @@ def findings_show(
     if as_json:
         _emit_json({**f.model_dump(mode="json"), "repo_root": repo["root"] if repo else None, "history": hist})
         return
-    body = [
-        f"[bold]{f.title}[/]",
+    lines = [
         f"id: {f.id}  repo: {f.repo}  root: {repo['root'] if repo else '?'}",
         f"tool: {f.source_tool}  rule: {f.rule_id}  cwe: {', '.join(f.cwe) or '-'}",
         f"severity: {f.severity.value}  status: {f.status.value}  confidence: {f.confidence}"
@@ -294,9 +294,9 @@ def findings_show(
         f.snippet or "(no snippet)",
     ]
     if f.message and f.message != f.title:
-        body += ["", f"message: {f.message}"]
+        lines += ["", f"message: {f.message}"]
     if f.dataflow:
-        body += ["", "dataflow:"] + [f"  {d.file}:{d.line}  {d.note}" for d in f.dataflow]
+        lines += ["", "dataflow:"] + [f"  {d.file}:{d.line}  {d.note}" for d in f.dataflow]
     for label, val in (
         ("justification", f.justification),
         ("poc", f.poc_path),
@@ -305,15 +305,18 @@ def findings_show(
         ("fix", f.fix_suggestion),
     ):
         if val:
-            body += ["", f"{label}: {val}"]
+            lines += ["", f"{label}: {val}"]
     if f.references:
-        body += ["", "references: " + " ".join(f.references[:5])]
-    console.print(Panel("\n".join(body), title=f.short_id, expand=False))
+        lines += ["", "references: " + " ".join(f.references[:5])]
+    # Code snippets and paths contain [brackets]; never let rich interpret them as markup.
+    body = f"[bold]{esc(f.title)}[/]\n" + esc("\n".join(lines))
+    console.print(Panel(body, title=f.short_id, expand=False))
     t = Table(title="history")
     for col in ("ts", "actor", "kind", "note"):
         t.add_column(col, overflow="fold")
     for h in hist:
-        t.add_row(h["ts"], h["actor"], h["kind"], (h["note"] or "") + (f" {h['data']}" if h["data"] else ""))
+        note = (h["note"] or "") + (f" {h['data']}" if h["data"] else "")
+        t.add_row(h["ts"], esc(h["actor"]), h["kind"], esc(note))
     console.print(t)
 
 
@@ -387,7 +390,7 @@ def findings_update(
     if as_json:
         _emit_json(updated.model_dump(mode="json"))
     else:
-        console.print(f"updated {updated.short_id}: {', '.join(sorted(changes))}")
+        console.print(esc(f"updated {updated.short_id}: {', '.join(sorted(changes))}"))
 
 
 @findings_app.command("history")
@@ -406,7 +409,7 @@ def findings_history(
         _emit_json(hist)
         return
     for h in hist:
-        console.print(f"{h['ts']}  {h['actor']:<14} {h['kind']:<11} {h['note'] or ''} {h['data'] or ''}")
+        console.print(esc(f"{h['ts']}  {h['actor']:<14} {h['kind']:<11} {h['note'] or ''} {h['data'] or ''}"))
 
 
 # --------------------------------------------------------------------------------------- scans/repos
@@ -436,9 +439,9 @@ def scans_list(
         )
         t.add_row(
             s["id"],
-            s["repo"],
+            esc(s["repo"]),
             s["profile"] or "",
-            s["since_ref"] or "",
+            esc(s["since_ref"] or ""),
             s["status"],
             f"{s['summary'].get('duration_s', '-')}s",
             tools,
@@ -458,7 +461,9 @@ def repos(as_json: Annotated[bool, typer.Option("--json")] = False) -> None:
         _emit_json(rows)
         return
     for r in rows:
-        console.print(f"[bold]{r['key']}[/]  {r['root']}  last scan {r['last_scan_at']}  {r['counts']}")
+        console.print(
+            f"[bold]{esc(r['key'])}[/]  {esc(str(r['root']))}  last scan {r['last_scan_at']}  {esc(str(r['counts']))}"
+        )
 
 
 @app.command("import-sarif")
@@ -499,7 +504,7 @@ def import_sarif(
         raise _fail(f"scope check refused: {exc}", 2) from exc
     except (OSError, ValueError, StoreError) as exc:
         raise _fail(str(exc)) from exc
-    console.print(f"imported {len(items)} finding(s): {res.as_dict()}")
+    console.print(esc(f"imported {len(items)} finding(s): {res.as_dict()}"))
 
 
 @app.command()
@@ -507,8 +512,8 @@ def doctor() -> None:
     """Show paths and the versions of every external tool Sentry-Lite uses."""
     _utf8_stdout()
     paths = _paths()
-    console.print(f"sentry-lite {__version__} · Python {platform.python_version()} · {platform.platform()}")
-    console.print(f"home: {paths.home}\ndb:   {paths.db}\nbin:  {paths.bin}")
+    console.print(esc(f"sentry-lite {__version__} · Python {platform.python_version()} · {platform.platform()}"))
+    console.print(esc(f"home: {paths.home}\ndb:   {paths.db}\nbin:  {paths.bin}"))
     t = Table(title="External tools")
     for col in ("tool", "path", "version", "needed for"):
         t.add_column(col, overflow="fold")
@@ -532,7 +537,7 @@ def doctor() -> None:
             ver = tool_version(name, exe)
         except ToolNotFoundError:
             ver = "?"
-        t.add_row(name, str(exe), ver, purpose)
+        t.add_row(name, esc(str(exe)), esc(ver), purpose)
     console.print(t)
     if missing:
         raise typer.Exit(1)

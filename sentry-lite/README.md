@@ -113,7 +113,8 @@ HIGH 0.5 / MEDIUM 0.35 / LOW 0.2)이다. `/triage`(M3)는 **영향 × 도달 가
 - 단일 도구 최대 RAM < 2 GB: semgrep `--jobs 2 --max-memory 1500`에 더해, 모든 외부 도구의 **프로세스 트리
   RSS 합**을 0.2초마다 재서 `--mem-cap-mb`(기본 1900)를 넘으면 강제 종료한다(나머지 도구는 계속 실행).
   RSS 합은 공유 메모리를 중복 계산하므로 보수적인(높게 나오는) 값이다.
-- 50k LOC 저장소 10분 이내: 측정 결과는 `docs/BENCHMARK.md`.
+- 50k LOC 저장소 10분 이내: 클라우드 샌드박스에서 55k LOC 약 22초, semgrep 최대 약 0.5 GB
+  (노트북 아님 — 측정 방법과 한계는 `docs/BENCHMARK.md`).
 
 ---
 
@@ -140,7 +141,7 @@ fixed. git-history secrets are protected in `--since` scans.
   `SEMGREP_ENABLE_VERSION_CHECK=0` and `SEMGREP_SEND_METRICS=off` are forced for every child process.
 - osv-scanner 2.x keeps its offline DB under `<cache>/osv-scalibr/<ecosystem>/all.zip`.
 
-**Tests.** `pytest` (85 tests). Unit tests replay outputs recorded from real semgrep 1.184 / gitleaks 8.30.1 /
+**Tests.** `pytest` (86 tests). Unit tests replay outputs recorded from real semgrep 1.184 / gitleaks 8.30.1 /
 osv-scanner 2.7.0 runs (`tests/data/`); `tests/test_integration.py` runs the real binaries offline (local
 rules only, a tiny local OSV DB) and is skipped when a tool is missing. No network in tests. Also
 `ruff check .`, `ruff format --check .`, `mypy` (strict) are clean.

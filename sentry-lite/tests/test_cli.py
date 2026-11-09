@@ -163,3 +163,32 @@ def test_since_scan(home: Paths, owned_repo: Path, fake_scanners: type[ReplaySem
     summary = jinvoke("scan", str(owned_repo), "--since", "HEAD~1", "--tools", "semgrep")
     assert summary["ingest"]["new"] == 4
     assert invoke("scan", str(owned_repo), "--since", "no-such-ref").exit_code == 1
+
+
+def test_brackets_in_titles_and_paths_are_not_eaten_by_rich(
+    home: Paths, owned_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sentry import cli
+    from sentry.models import Finding
+    from sentry.store import Store
+
+    monkeypatch.setattr(cli.console, "width", 200)
+
+    page = owned_repo / "pages" / "[id].tsx"
+    page.parent.mkdir()
+    page.write_text("el.innerHTML = q[0];\n")
+    f = Finding(
+        id="ab" * 20,
+        repo="yuseunghogi-commits/game",
+        source_tool="gitleaks",
+        rule_id="x",
+        title="하드코딩된 비밀값 [generic-api-key] — git",
+        file="pages/[id].tsx",
+        snippet="q[0] [bold]x[/]",
+    )
+    with Store(home.db) as store:
+        store.add(f, actor="test")
+    listed = invoke("findings", "list")
+    assert "[generic-api-key]" in listed.output and "[id].tsx" in listed.output
+    shown = invoke("findings", "show", "abab")
+    assert shown.exit_code == 0 and "q[0] [bold]x[/]" in shown.output

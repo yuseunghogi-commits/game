@@ -167,7 +167,7 @@ class SemgrepScanner:
         )
         notes = []
         if failed_files:
-            notes.append(f"{len(failed_files)} file(s) had semgrep errors/timeouts (excluded from auto-fix)")
+            notes.append(f"{len(failed_files)} file(s) had semgrep parse errors/timeouts (excluded from auto-fix)")
         if ctx.offline:
             notes.append("offline: registry packs skipped, local rules only")
         return ScannerOutput(
