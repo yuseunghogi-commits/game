@@ -19,6 +19,7 @@ interface Level {
   center: { x: number; y: number }; // 카메라 타일 (기준 대비)
   fixedCenter: boolean;
   pending: Set<string>;
+  failed: Set<string>;
   dirty: boolean;
   uniforms: Record<string, THREE.IUniform>;
 }
@@ -93,7 +94,7 @@ export class Imagery {
     const a1 = (nn / (2 * Math.PI)) * sec, a2 = (nn / (2 * Math.PI)) * 0.5 * sec * tan;
     const L: Level = {
       z, n, tex, slots, slotData, refTX, refTY, xref: w.x, zref: w.z, kx, a1, a2,
-      center: { x: 0, y: 0 }, fixedCenter: fixed, pending: new Set(), dirty: false, uniforms: {},
+      center: { x: 0, y: 0 }, fixedCenter: fixed, pending: new Set(), failed: new Set(), dirty: false, uniforms: {},
     };
     const p = `uImg${i}`;
     L.uniforms = {
@@ -143,13 +144,13 @@ export class Imagery {
         const k = s * 4;
         if (L.slotData[k + 2] === 1 && L.slotData[k] === tx && L.slotData[k + 1] === ty) continue;
         const key = `${tx},${ty}`;
-        if (L.pending.has(key)) continue;
+        if (L.pending.has(key) || L.failed.has(key)) continue;
         want.push([dx * dx + dy * dy, tx, ty]);
       }
       want.sort((a, b) => a[0] - b[0]);
       const share = i === 2 ? 10 : i === 1 ? 6 : 4;
       for (const [, tx, ty] of want) {
-        if (L.pending.size >= share || this.inflight >= 20 || this.failures > 60) break;
+        if (L.pending.size >= share || this.inflight >= 20 || this.failures > 400) break;
         this.fetchTile(L, tx, ty);
       }
     });
@@ -179,12 +180,14 @@ export class Imagery {
     img.onload = () => {
       this.inflight--;
       L.pending.delete(key);
+      this.failures = 0;
       // 그사이 창이 움직였으면 버린다
       const half = Math.floor(L.n / 2) - 1;
       if (Math.abs(tx - L.center.x) > half || Math.abs(ty - L.center.y) > half) return;
       this.upload(L, tx, ty, img);
     };
-    img.onerror = () => { this.inflight--; L.pending.delete(key); this.failures++; };
+    // 실패한 타일은 다시 요청하지 않는다 (사진 없는 곳 등). 성공하면 연속 실패 수 초기화
+    img.onerror = () => { this.inflight--; L.pending.delete(key); L.failed.add(key); this.failures++; };
     img.src = URL(L.z, L.refTX + tx, L.refTY + ty);
   }
 
