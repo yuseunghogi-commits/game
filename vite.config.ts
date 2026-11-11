@@ -4,5 +4,10 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   clearScreen: false,
   server: { port: 5173, strictPort: true },
-  build: { target: 'es2022', chunkSizeWarningLimit: 1200 },
+  build: {
+    target: 'es2022',
+    chunkSizeWarningLimit: 1200,
+    // 두 페이지: 행성 그리드(index.html) + 송도 플라이트(songdo.html)
+    rollupOptions: { input: { main: 'index.html', songdo: 'songdo.html' } },
+  },
 });
