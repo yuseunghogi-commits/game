@@ -3,20 +3,22 @@ import * as THREE from 'three';
 import { HeightField } from './heightfield';
 import { World } from './world';
 import { buildTerrain, buildSea } from './terrain';
-import { buildCity, type RoadSeg } from './city';
-import { buildAirport } from './airport';
-import { buildBridge } from './bridge';
+import { buildAirport, type RunwayInfo } from './airport';
+import { buildPylons } from './bridge';
+import { loadMapData, type Meta } from './data';
+import { BuildingSet } from './buildings';
+import { TreeSet } from './trees';
+import { buildRoads, processRoads } from './roads';
 import { Aircraft, SPECS, type AircraftSpec, type FlightInput } from './aircraft';
 import { makeAirliner, makeLightPlane, makePerson, type PlaneModel } from './aircraftModels';
 import { Walker } from './walker';
 import { Env, TIME_LABEL, type TimeOfDay } from './env';
-import { MapArt, MAP_SCALE } from './mapview';
+import { MapArt } from './mapview';
 import { FlightAudio } from './audio';
 import { Traffic } from './traffic';
 import { LightPoints } from './lights';
 import { nightU } from './materials';
-import { HF } from './heightfield';
-import { LANDMARKS, RUNWAYS, RWY_HEADING_DEG, ap, placeName, toLatLon, type P2 } from './geo';
+import { LANDMARKS, headingOf, initGeo, landmark, placeName, toLatLon, type P2 } from './geo';
 
 // ───────────────────────── DOM ─────────────────────────
 const app = document.getElementById('sd-app')!;
@@ -44,6 +46,7 @@ app.innerHTML = `
   <div id="sd-hint" class="panel hidden"></div>
   <div id="sd-toast" class="panel hidden"></div>
   <div id="sd-msg" class="panel hidden"></div>
+  <div id="sd-attr">© OpenStreetMap 기여자 · Overture Maps · AWS Terrain Tiles</div>
 </div>
 <div id="sd-touch" class="hidden">
   <div class="stick"><div class="knob"></div></div>
@@ -63,11 +66,11 @@ app.innerHTML = `
 <div id="sd-help" class="overlay hidden"><div class="panel"></div></div>
 <div id="sd-start" class="overlay hidden"><div class="panel">
   <h1>송도 플라이트</h1>
-  <div class="subtitle">인천국제공항에서 이륙해 인천대교를 넘어 송도국제도시 하늘을 날고, 내려서 걸어 보세요.</div>
+  <div class="subtitle">실제 지도 자료로 만든 인천 — 인천국제공항에서 이륙해 인천대교를 넘어 송도국제도시 하늘을 날고, 내려서 걸어 보세요.</div>
   <div class="choices">
     <button class="primary" data-start="airliner"><b>✈ 여객기로 이륙</b><span>인천공항 15L 활주로에서 출발</span></button>
     <button data-start="light"><b>🛩 경비행기로 이륙</b><span>느리고 다루기 쉬움 · 송도 구경용</span></button>
-    <button data-start="walk"><b>🚶 센트럴파크 걷기</b><span>동북아무역센터 앞에서 출발</span></button>
+    <button data-start="walk"><b>🚶 센트럴파크 걷기</b><span>송도 센트럴파크 산책로에서 출발</span></button>
     <button data-start="map"><b>🗺 지도에서 고르기</b><span>원하는 곳으로 바로 이동</span></button>
   </div>
   <div class="row seg" id="sd-tod"><span style="color:var(--dim)">시간대</span><button data-t="day" class="sel">낮</button><button data-t="sunset">노을</button><button data-t="night">밤</button></div>
@@ -100,12 +103,12 @@ $('#sd-help .panel').innerHTML = `<h2 style="margin:0 0 8px">조작법</h2><div 
 <div class="note"><b>이륙</b>: <kbd>W</kbd>를 눌러 추력을 끝까지 올리고, 여객기는 시속 약 270km, 경비행기는 약 100km에서 <kbd>↓</kbd>로 기수를 듭니다. 이륙 뒤 <kbd>G</kbd>로 착륙장치를 올리세요.<br>
 <b>송도 가는 길</b>: 공항에서 동남동쪽(방위 약 110°)으로 약 18km. 인천대교를 따라가면 송도가 나옵니다.<br>
 <b>착륙</b>: 착륙장치를 내리고 천천히 내려앉으면 활주로·도로·공원·옥상·다리 위 어디든 내릴 수 있습니다 (강하율이 너무 크면 추락).<br>
-<b>지형</b>: 실측 자료가 아니라 지도를 바탕으로 만든 근사 모형입니다. 큰 건물과 랜드마크는 실제 위치 근처에, 아파트 단지와 일반 건물은 송도 격자에 맞춰 자동으로 배치했습니다.</div>
+<b>지도 자료</b>: 건물 약 12만 채의 실제 외곽선, 도로·철도·다리, 활주로·유도로, 공원·물·땅 쓰임새는 OpenStreetMap(© OpenStreetMap 기여자, ODbL)과 Overture Maps 자료, 지형 높이는 AWS Terrain Tiles(SRTM 등)를 썼습니다. 높이 정보가 있는 건물(약 1만 4천 채)은 실제 높이, 나머지는 건물 종류·면적으로 추정한 높이입니다.</div>
 <div class="row" style="justify-content:flex-end"><button data-close>닫기 (H)</button></div>`;
 
 // ───────────────────────── 렌더러 ─────────────────────────
 const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.shadowMap.enabled = true;
@@ -122,6 +125,11 @@ let world!: World;
 let hf!: HeightField;
 let mapArt!: MapArt;
 let traffic!: Traffic;
+let meta!: Meta;
+let buildings!: BuildingSet;
+let trees!: TreeSet;
+let runways: RunwayInfo[] = [];
+let paths: THREE.Vector3[] = []; // 걷기 시작점 후보 (산책로·보행로)
 let seaUpdate: (t: number) => void = () => {};
 const lightSets: { lp: LightPoints; day: number; night: number }[] = [];
 let mode: Mode = 'fly';
@@ -280,42 +288,66 @@ function showMsg(html: string | null) {
 
 // ───────────────────────── 생성 ─────────────────────────
 async function load() {
-  setProgress(0.05, '지형 계산 중…'); await frame();
-  hf = new HeightField();
+  const data = await loadMapData(`${import.meta.env.BASE_URL}songdo/`, setProgress);
+  meta = data.meta;
+  initGeo(meta);
+  setProgress(0.25, '지형 만드는 중…'); await frame();
+  hf = new HeightField(meta, data.heights, data.water);
   world = new World(hf);
-  setProgress(0.3, '바다와 땅 만드는 중…'); await frame();
-  scene.add(buildTerrain(hf));
+  const groundTex = await new THREE.TextureLoader().loadAsync(data.groundUrl);
+  groundTex.colorSpace = THREE.SRGBColorSpace;
+  groundTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  scene.add(buildTerrain(hf, groundTex));
   const sea = buildSea();
   scene.add(sea.mesh);
   seaUpdate = sea.update;
-  setProgress(0.45, '인천국제공항 짓는 중…'); await frame();
-  const airport = buildAirport(world);
+  scene.add(buildWaterAreas(data.areas));
+  setProgress(0.4, `건물 ${data.buildings.n.toLocaleString()}채 세우는 중…`); await frame();
+  buildings = new BuildingSet(data.buildings, hf, world);
+  scene.add(buildings.group);
+  setProgress(0.6, '도로·다리 까는 중…'); await frame();
+  const lines = processRoads(data.roads, hf);
+  for (const l of lines) if ((l.cls === 8 || l.cls === 9 || l.cls === 6) && !l.bridge) for (let k = 0; k < l.pts.length; k += 2) paths.push(l.pts[k]);
+  const roads = buildRoads(lines, hf, world);
+  scene.add(roads.group);
+  setProgress(0.72, '인천국제공항·인천대교…'); await frame();
+  const airport = buildAirport(meta, world);
+  runways = airport.runways;
   scene.add(airport.group);
-  setProgress(0.55, '인천대교 놓는 중…'); await frame();
-  const bridge = buildBridge(world);
-  scene.add(bridge.group);
-  setProgress(0.65, '송도국제도시 짓는 중…'); await frame();
-  const city = buildCity(world);
-  scene.add(city.group);
-  setProgress(0.85, '불빛과 자동차…'); await frame();
+  const pylons = buildPylons(meta, world);
+  scene.add(pylons.group);
+  setProgress(0.82, '나무 심는 중…'); await frame();
+  trees = new TreeSet(data.trees, hf);
+  scene.add(trees.group);
+  setProgress(0.9, '불빛과 자동차…'); await frame();
   const addLights = (lp: LightPoints, day: number, night: number) => { lightSets.push({ lp, day, night }); scene.add(lp.points); };
-  addLights(new LightPoints(city.streetLights, new THREE.Color(1, 0.78, 0.45), { size: 2.2, minPx: 1.5, maxPx: 14 }), 0, 1);
+  addLights(new LightPoints(roads.lights, new THREE.Color(1, 0.78, 0.45), { size: 2.2, minPx: 1.2, maxPx: 14 }), 0, 1);
   addLights(new LightPoints(airport.lights.map((l) => l.pos), airport.lights.map((l) => l.color), { size: 1.6, minPx: 1.4, maxPx: 10 }), 0.25, 1);
-  addLights(new LightPoints(bridge.lights, new THREE.Color(1, 0.85, 0.55), { size: 2.5, minPx: 1.6, maxPx: 14 }), 0, 1);
-  addLights(new LightPoints([...city.beacons, ...bridge.beacons], new THREE.Color(1, 0.12, 0.08), { size: 4, minPx: 2.5, maxPx: 18, blink: true }), 0.6, 1);
-  // 다리 위 차량용 도로 조각
-  const bridgeRoads: RoadSeg[] = [];
-  for (let i = 0; i < bridge.path.length - 1; i += 4) {
-    const a = bridge.path[i], b = bridge.path[Math.min(i + 4, bridge.path.length - 1)];
-    bridgeRoads.push({ a: a.p, b: b.p, width: 28, y: a.y, ya: a.y + 0.05, yb: b.y + 0.05 });
-  }
-  const allRoads = [...city.roads, ...airport.roads, ...bridge.roads];
-  traffic = new Traffic([...allRoads, ...bridgeRoads], 1600);
+  addLights(new LightPoints(pylons.lights, new THREE.Color(1, 1, 0.95), { size: 6, minPx: 2, maxPx: 22 }), 0, 1);
+  addLights(new LightPoints([...buildings.beacons, ...pylons.beacons], new THREE.Color(1, 0.12, 0.08), { size: 4, minPx: 2.5, maxPx: 18, blink: true }), 0.6, 1);
+  traffic = new Traffic(lines, 2600);
   scene.add(traffic.mesh, traffic.lights);
-  mapArt = new MapArt(hf, allRoads, bridge.path.map((p) => p.p));
+  const img = groundTex.image as HTMLImageElement;
+  mapArt = new MapArt(img, meta);
   buildMapList();
   setProgress(1, '완료'); await frame();
   loading.classList.add('hidden');
+}
+
+/** 호수·수로 수면 (자료에서 미리 삼각형으로 나눔) */
+function buildWaterAreas(a: import('./data').WaterAreas): THREE.Mesh {
+  const pos = new Float32Array(a.n * 9), nor = new Float32Array(a.n * 9);
+  for (let i = 0; i < a.n; i++) for (let k = 0; k < 3; k++) {
+    pos.set([a.xz[(i * 3 + k) * 2], a.y[i], a.xz[(i * 3 + k) * 2 + 1]], (i * 3 + k) * 3);
+    nor[(i * 3 + k) * 3 + 1] = 1;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0x2d6278, roughness: 0.06, metalness: 0.15 }));
+  m.receiveShadow = true;
+  m.name = 'inland-water';
+  return m;
 }
 
 // ───────────────────────── 비행기 / 사람 배치 ─────────────────────────
@@ -326,22 +358,31 @@ function makePlane(id: AircraftSpec['id']) {
   plane = new Aircraft(SPECS[id]);
 }
 
+/** 15L 활주로 시작점 (이륙 방향 남동쪽) */
+function runwayStart(): { p: P2; heading: number } {
+  const r = runways.find((x) => x.labelA === '15L' || x.labelB === '15L') ?? runways[0];
+  const fromA = r.labelA === '15L';
+  const s = fromA ? r.a : r.b, e = fromA ? r.b : r.a;
+  const dx = (e.x - s.x) / r.len, dz = (e.z - s.z) / r.len;
+  return { p: { x: s.x + dx * 180, z: s.z + dz * 180 }, heading: headingOf(dx, dz) };
+}
+
 function spawnRunway(id: AircraftSpec['id']) {
   makePlane(id);
-  const r = RUNWAYS[1]; // 15L
-  const start = ap(r.d0 - r.len / 2000 + 0.25, r.p);
+  const { p: start, heading } = runwayStart();
   const g = world.ground(start.x, start.z, 1e4);
-  plane.place(start.x, g.h + plane.spec.gearH, start.z, RWY_HEADING_DEG);
+  plane.place(start.x, g.h + plane.spec.gearH, start.z, heading);
   throttleCmd = 0;
   enterFly();
   showMsg(null);
   chaseYaw = plane.euler().y;
+  primeAround();
   toast(`${plane.spec.name} · 인천공항 활주로 15L — W로 추력을 올리세요`, 4);
 }
 
 function spawnAir(p: P2, id: AircraftSpec['id']) {
   makePlane(id);
-  const target = LANDMARKS.find((l) => l.id === 'neatt')!.at;
+  const target = landmark('posco').at;
   let hdg = (Math.atan2(target.x - p.x, -(target.z - p.z)) * 180) / Math.PI;
   if (Math.hypot(target.x - p.x, target.z - p.z) < 3000) hdg += 180;
   const g = world.ground(p.x, p.z, 1e4);
@@ -351,12 +392,20 @@ function spawnAir(p: P2, id: AircraftSpec['id']) {
   enterFly();
   showMsg(null);
   chaseYaw = plane.euler().y;
+  primeAround();
 }
 
 function spawnWalk(p: P2) {
+  // 가까운 산책로·보행로 위에서 시작 (나무·건물 속 방지)
+  let best: THREE.Vector3 | null = null, bd = 160;
+  for (const v of paths) {
+    const d = Math.hypot(v.x - p.x, v.z - p.z);
+    if (d < bd && dryAround(v.x, v.z)) { bd = d; best = v; }
+  }
+  if (best) p = { x: best.x, z: best.z };
   // 바다면 가까운 땅 찾기
   let q = p;
-  const dry = (c: P2) => hf.at(c.x, c.z) > 0.8 && !world.inDecalWater(c.x, c.z);
+  const dry = (c: P2) => hf.at(c.x, c.z) > 0.8 && dryAround(c.x, c.z) && !world.hitAt(c.x, hf.at(c.x, c.z) + 1, c.z);
   if (!dry(p)) {
     outer: for (let r = 30; r < 5000; r += 30) for (let a = 0; a < 16; a++) {
       const c = { x: p.x + Math.cos((a / 16) * Math.PI * 2) * r, z: p.z + Math.sin((a / 16) * Math.PI * 2) * r };
@@ -369,14 +418,28 @@ function spawnWalk(p: P2) {
   walker.place(pp.x, pp.z, world, world.terrain(pp.x, pp.z) < 0.3 ? 0 : undefined);
   enterWalk();
   showMsg(null);
+  primeAround();
+}
+
+/** 반경 15m 안이 모두 마른 땅인가 */
+function dryAround(x: number, z: number) {
+  for (const [dx, dz] of [[0, 0], [15, 0], [-15, 0], [0, 15], [0, -15], [10, 10], [-10, -10], [10, -10], [-10, 10]])
+    if (hf.waterAt(x + dx, z + dz) !== 0) return false;
+  return true;
 }
 
 /** 걷기로 시작할 때 비행기는 공항에 세워 둔다 */
 function placeParked() {
-  const r = RUNWAYS[1];
-  const s = ap(r.d0 - r.len / 2000 + 0.25, r.p);
+  const { p: s, heading } = runwayStart();
   const g = world.ground(s.x, s.z, 1e4);
-  plane.place(s.x, g.h + plane.spec.gearH, s.z, RWY_HEADING_DEG);
+  plane.place(s.x, g.h + plane.spec.gearH, s.z, heading);
+}
+
+/** 순간이동 직후 주변 건물·나무를 한꺼번에 만든다 */
+function primeAround() {
+  updateCamera(0);
+  buildings.prime(camera.position);
+  trees.prime(camera.position);
 }
 
 function enterFly() {
@@ -467,7 +530,7 @@ function buildMapList() {
     const r = mc.getBoundingClientRect();
     const v = bigMapView;
     const x = v.x0 + ((e.clientX - r.left) / r.width) * v.w, y = v.y0 + ((e.clientY - r.top) / r.height) * v.h;
-    teleport(MapArt.fromPx(x, y));
+    teleport(mapArt.fromPx(x, y));
   });
 }
 function teleport(p: P2) {
@@ -480,14 +543,14 @@ const bigMapView = { x0: 0, y0: 0, w: 1, h: 1 };
 function drawBigMap() {
   const mc = $('#sd-mapc') as HTMLCanvasElement;
   // 보여 줄 범위: 영종도~송도 (지도 픽셀)
-  const a = MapArt.toPx({ x: -27000, z: -16000 }), b = MapArt.toPx({ x: 9000, z: 9000 });
+  const a = mapArt.toPx({ x: -26500, z: -19000 }), b = mapArt.toPx({ x: 12500, z: 11500 });
   Object.assign(bigMapView, { x0: a.x, y0: a.y, w: b.x - a.x, h: b.y - a.y });
   mc.width = 1000; mc.height = Math.round((1000 * bigMapView.h) / bigMapView.w);
   const g = mc.getContext('2d')!;
   g.fillStyle = '#28546d'; g.fillRect(0, 0, mc.width, mc.height);
   g.drawImage(mapArt.canvas, bigMapView.x0, bigMapView.y0, bigMapView.w, bigMapView.h, 0, 0, mc.width, mc.height);
   const s = mc.width / bigMapView.w;
-  const P = (p: P2) => { const q = MapArt.toPx(p); return [(q.x - bigMapView.x0) * s, (q.y - bigMapView.y0) * s] as const; };
+  const P = (p: P2) => { const q = mapArt.toPx(p); return [(q.x - bigMapView.x0) * s, (q.y - bigMapView.y0) * s] as const; };
   g.font = '12px sans-serif';
   for (const l of LANDMARKS) {
     const [x, y] = P(l.at);
@@ -501,7 +564,9 @@ function drawBigMap() {
   g.beginPath(); g.arc(mx, my, 6, 0, Math.PI * 2); g.fill(); g.stroke();
   if (plane && mode === 'walk') { const [px, py] = P({ x: plane.pos.x, z: plane.pos.z }); g.fillStyle = '#4fc3f7'; g.beginPath(); g.arc(px, py, 5, 0, Math.PI * 2); g.fill(); g.stroke(); }
   g.fillStyle = '#fff'; g.font = 'bold 13px sans-serif';
-  g.fillText(`축척: 1 km = ${(1000 / MAP_SCALE * s).toFixed(0)} px`, 10, mc.height - 10);
+  g.fillText(`축척: 1 km = ${((1000 / mapArt.scale) * s).toFixed(0)} px`, 10, mc.height - 10);
+  g.font = '11px sans-serif'; g.fillStyle = 'rgba(255,255,255,0.8)';
+  g.fillText('© OpenStreetMap 기여자, Overture Maps', mc.width - 230, mc.height - 10);
 }
 
 // ───────────────────────── 시작 화면 ─────────────────────────
@@ -521,8 +586,8 @@ $('#sd-start .choices').addEventListener('click', (e) => {
   $('#sd-hud').classList.remove('hidden');
   setupTouch();
   if (s === 'airliner' || s === 'light') spawnRunway(s);
-  else if (s === 'walk') { spawnWalk(LANDMARKS.find((l) => l.id === 'park')!.at); camYaw = 2.2; }
-  else { spawnWalk(LANDMARKS.find((l) => l.id === 'park')!.at); toggleMap(); }
+  else if (s === 'walk') { spawnWalk(landmark('park').at); camYaw = 2.2; }
+  else { spawnWalk(landmark('park').at); toggleMap(); }
 });
 
 // ───────────────────────── 매 프레임 ─────────────────────────
@@ -688,7 +753,7 @@ function updateHud(realDt: number) {
   const me = mode === 'fly' ? plane.pos : walker.pos;
   if (placeTimer <= 0) {
     placeTimer = 0.5;
-    $('#sd-top .place').textContent = placeName({ x: me.x, z: me.z });
+    $('#sd-top .place').textContent = placeName({ x: me.x, z: me.z }, hf.waterAt(me.x, me.z) === 2);
     $('#sd-top .mode').textContent = `${mode === 'fly' ? '✈ ' + plane.spec.name : walker.chute ? '🪂 낙하산' : walker.swimming ? '🏊 수영' : '🚶 걷기'} · ${TIME_LABEL[env.time]}`;
     const ll = toLatLon({ x: me.x, z: me.z });
     $('#sd-top .coord').textContent = `${ll.lat.toFixed(4)}°N ${ll.lon.toFixed(4)}°E`;
@@ -752,6 +817,8 @@ function loop(now: number) {
     physics(dt);
   }
   traffic.update(paused ? 0 : dt);
+  buildings.update(camera.position);
+  trees.update(camera.position);
   seaUpdate(now / 1000);
   updateFx(dt);
   syncModels(dt);
@@ -782,8 +849,10 @@ void (async () => {
   // 시작 화면 배경: 송도 상공에서 내려다보기
   mode = 'fly';
   piloting = false;
-  const neatt = LANDMARKS.find((l) => l.id === 'neatt')!.at;
-  plane.place(neatt.x - 2500, 420, neatt.z - 900, 110, 0.0001);
+  const neatt = landmark('posco').at;
+  plane.place(neatt.x - 2200, 380, neatt.z - 1600, 125, 0.0001);
+  updateCamera(0);
+  buildings.prime(camera.position);
   planeModel.root.visible = false;
   $('#sd-start').classList.remove('hidden');
   const params = new URLSearchParams(location.search);
@@ -792,11 +861,11 @@ void (async () => {
   if (params.has('debug')) {
     (window as unknown as Record<string, unknown>).__sd = {
       THREE, scene, camera, renderer, env, world, get plane() { return plane; }, walker, keys, spawnRunway, spawnAir, spawnWalk, teleport, toggleBoard,
-      setThrottle: (v: number) => { throttleCmd = v; }, LANDMARKS, HF,
+      setThrottle: (v: number) => { throttleCmd = v; }, LANDMARKS, hf, buildings, trees, landmark,
       start: (s: string) => (app.querySelector(`[data-start="${s}"]`) as HTMLButtonElement).click(),
       setCam: (m: 'chase' | 'cockpit') => { camMode = m; }, setWalkCam: (m: 'third' | 'first', yaw?: number, pitch?: number) => { walkCam = m; if (yaw !== undefined) camYaw = yaw; if (pitch !== undefined) camPitch = pitch; },
       setOrbit: (y: number, p: number) => { orbitYaw = y; orbitPitch = p; orbitIdle = -1e9; },
-      setZoom: (z: number) => { zoom = z; },
+      setZoom: (z: number) => { zoom = z; }, info: () => renderer.info,
     };
   }
   requestAnimationFrame(loop);

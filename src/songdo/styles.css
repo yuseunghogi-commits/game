@@ -97,3 +97,4 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 5px; border: 1px sol
   #sd-btns { top: auto; bottom: 170px; right: 8px; flex-direction: column; }
   #sd-top { font-size: 12px; }
 }
+#sd-attr { position: absolute; left: 8px; bottom: 4px; font-size: 10px; color: rgba(255,255,255,0.75); text-shadow: 0 0 3px #000; pointer-events: none; }

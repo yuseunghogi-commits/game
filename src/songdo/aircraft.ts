@@ -172,7 +172,7 @@ export class Aircraft {
       const sink = -this.vel.y;
       const e2 = this.euler();
       if (!this.onGround) this.lastTouch = sink;
-      if (g.water) return this.crash(g.h <= 0.01 ? '바다에 추락했습니다' : '물에 빠졌습니다');
+      if (g.water) return this.crash(g.sea ? '바다에 추락했습니다' : '물에 빠졌습니다');
       if (!this.gearDown && !this.onGround) return this.crash('착륙장치를 내리지 않고 동체 착륙했습니다');
       if (!this.onGround && sink > S.maxSink) return this.crash(`너무 세게 내렸습니다 (강하율 ${sink.toFixed(1)} m/s)`);
       if (Math.abs(e2.z) > 0.3) return this.crash('날개가 땅에 닿았습니다');
@@ -198,7 +198,7 @@ export class Aircraft {
       const px = this.pos.x + _f.x * a + _r.x * b;
       const py = this.pos.y + _f.y * a + _r.y * b;
       const pz = this.pos.z + _f.z * a + _r.z * b;
-      const hit = world.hitBox(px, py, pz);
+      const hit = world.hitAt(px, py, pz);
       if (hit && !(this.onGround && py - hit.top > -1.5)) return this.crash('건물에 충돌했습니다');
       // 다리 상판 아래에서 부딪힘
       const deck = world.deckAt(px, pz);

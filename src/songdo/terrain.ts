@@ -1,86 +1,78 @@
-// 지형 메시와 바다.
+// 지형 메시 (실제 고도 + 땅 쓰임새 그림) 와 바다.
 import * as THREE from 'three';
-import { HF, HeightField } from './heightfield';
-import { LANDS, fbm, pointInPoly, toAp } from './geo';
+import type { HeightField } from './heightfield';
 import { makeDetailTexture, makeWaterNormal } from './materials';
 
-export function buildTerrain(hf: HeightField): THREE.Mesh {
-  const { nx, nz } = hf;
-  const pos = new Float32Array(nx * nz * 3);
-  const col = new Float32Array(nx * nz * 3);
-  const uv = new Float32Array(nx * nz * 2);
-  const songdo = LANDS[1].pts;
-  const newport = LANDS[2].pts;
-  const c = new THREE.Color();
-  for (let j = 0; j < nz; j++) {
-    for (let i = 0; i < nx; i++) {
-      const k = j * nx + i;
-      const x = HF.x0 + i * HF.cell, z = HF.z0 + j * HF.cell;
-      const y = hf.h[k];
-      pos[k * 3] = x; pos[k * 3 + 1] = y; pos[k * 3 + 2] = z;
-      uv[k * 2] = x / 60; uv[k * 2 + 1] = z / 60;
-      const n = fbm(x / 900, z / 900, 3);
-      const sl = hf.slope(x, z);
-      if (y < -0.5) c.setRGB(0.42, 0.40, 0.33); // 갯벌·바닥
-      else if (y < 2.6 && sl < 0.08 && !(y > 3.5)) c.setRGB(0.70, 0.64, 0.50); // 모래·갯벌 경계
-      else {
-        const a = toAp({ x, z });
-        const inAirport = a.d > -4.5 && a.d < 3.3 && a.p > -2.3 && a.p < 4.7;
-        const inCity = pointInPoly(x, z, songdo) || pointInPoly(x, z, newport);
-        if (inAirport) c.setRGB(0.40 + n * 0.08, 0.50 + n * 0.08, 0.30);
-        else if (inCity) c.setRGB(0.47 + n * 0.06, 0.50 + n * 0.06, 0.44);
-        else {
-          // 자연 지형: 낮은 곳은 도시/논, 높은 곳은 숲
-          const forest = Math.min(1, Math.max(0, (y - 25) / 60 + (n - 0.5)));
-          const urban = Math.max(0, 1 - y / 35) * (x > -6000 ? 0.75 : 0.35);
-          c.setRGB(0.36, 0.47, 0.27);
-          c.lerp(new THREE.Color(0.52, 0.52, 0.49), urban * (0.6 + n * 0.4));
-          c.lerp(new THREE.Color(0.17, 0.29, 0.15), forest);
-          if (sl > 0.45) c.lerp(new THREE.Color(0.45, 0.42, 0.38), Math.min(1, (sl - 0.45) * 2));
-        }
+const CH = 64; // 조각당 셀 수
+
+export function buildTerrain(hf: HeightField, ground: THREE.Texture): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'terrain';
+  const detail = makeDetailTexture();
+  const mat = new THREE.MeshStandardMaterial({ map: ground, roughness: 0.95, metalness: 0 });
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uDetail = { value: detail };
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vTW;')
+      .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvTW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform sampler2D uDetail;\nvarying vec3 vTW;')
+      .replace('#include <map_fragment>', `#include <map_fragment>
+{
+  float d1 = texture2D(uDetail, vTW.xz / 23.0).r;
+  float d2 = texture2D(uDetail, vTW.xz / 170.0).r;
+  float dist = length(vTW - cameraPosition);
+  float k = clamp(1.0 - dist / 2500.0, 0.0, 1.0);
+  diffuseColor.rgb *= mix(1.0, d1 * 1.12, k) * mix(1.0, d2 * 1.1, 0.6);
+}`);
+  };
+  const W = hf.x1 - hf.x0, Hh = hf.z1 - hf.z0;
+  for (let cj = 0; cj < hf.nz - 1; cj += CH) {
+    for (let ci = 0; ci < hf.nx - 1; ci += CH) {
+      const ni = Math.min(CH, hf.nx - 1 - ci) + 1, nj = Math.min(CH, hf.nz - 1 - cj) + 1;
+      // 바다 밑 조각은 건너뛰기
+      let maxH = -Infinity;
+      for (let j = 0; j < nj; j++) for (let i = 0; i < ni; i++) maxH = Math.max(maxH, hf.h[(cj + j) * hf.nx + ci + i]);
+      if (maxH < -1.5) continue;
+      const pos = new Float32Array(ni * nj * 3), uv = new Float32Array(ni * nj * 2);
+      for (let j = 0; j < nj; j++) for (let i = 0; i < ni; i++) {
+        const k = j * ni + i, gi = ci + i, gj = cj + j;
+        const x = hf.x0 + gi * hf.cell, z = hf.z0 + gj * hf.cell;
+        pos[k * 3] = x; pos[k * 3 + 1] = hf.h[gj * hf.nx + gi]; pos[k * 3 + 2] = z;
+        uv[k * 2] = (x - hf.x0) / W; uv[k * 2 + 1] = 1 - (z - hf.z0) / Hh;
       }
-      col[k * 3] = c.r; col[k * 3 + 1] = c.g; col[k * 3 + 2] = c.b;
+      const idx = new Uint32Array((ni - 1) * (nj - 1) * 6);
+      let p = 0;
+      for (let j = 0; j < nj - 1; j++) for (let i = 0; i < ni - 1; i++) {
+        const a = j * ni + i, b = a + 1, c = a + ni, d = c + 1;
+        idx[p++] = a; idx[p++] = c; idx[p++] = b;
+        idx[p++] = b; idx[p++] = c; idx[p++] = d;
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+      g.setIndex(new THREE.BufferAttribute(idx, 1));
+      g.computeVertexNormals();
+      g.computeBoundingSphere();
+      const m = new THREE.Mesh(g, mat);
+      m.receiveShadow = true;
+      group.add(m);
     }
   }
-  const idx = new Uint32Array((nx - 1) * (nz - 1) * 6);
-  let p = 0;
-  for (let j = 0; j < nz - 1; j++) for (let i = 0; i < nx - 1; i++) {
-    const a = j * nx + i, b = a + 1, cc = a + nx, d = cc + 1;
-    idx[p++] = a; idx[p++] = cc; idx[p++] = b;
-    idx[p++] = b; idx[p++] = cc; idx[p++] = d;
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-  g.setIndex(new THREE.BufferAttribute(idx, 1));
-  g.computeVertexNormals();
-  const tex = makeDetailTexture();
-  const m = new THREE.MeshStandardMaterial({ vertexColors: true, map: tex, roughness: 0.95, metalness: 0 });
-  const mesh = new THREE.Mesh(g, m);
-  mesh.receiveShadow = true;
-  mesh.name = 'terrain';
-  return mesh;
+  return group;
 }
 
 export function buildSea(): { mesh: THREE.Mesh; update: (t: number) => void } {
   const nrm = makeWaterNormal();
   nrm.repeat.set(2500, 2500);
-  const nrm2 = nrm.clone();
   const m = new THREE.MeshStandardMaterial({
-    color: 0x24566b, roughness: 0.08, metalness: 0.15, normalMap: nrm, normalScale: new THREE.Vector2(0.22, 0.22),
-    envMapIntensity: 1.0,
+    color: 0x2a5868, roughness: 0.1, metalness: 0.1, normalMap: nrm, normalScale: new THREE.Vector2(0.25, 0.25),
   });
-  const g = new THREE.PlaneGeometry(200000, 200000, 1, 1).rotateX(-Math.PI / 2);
+  // 큰 삼각형은 로그 깊이 정밀도 문제로 가까운 물체를 덮어 버리므로 잘게 나눈다
+  const g = new THREE.PlaneGeometry(200000, 200000, 160, 160).rotateX(-Math.PI / 2);
   const mesh = new THREE.Mesh(g, m);
-  mesh.position.set(-6000, 0, -5000);
+  mesh.position.set(-7000, 0, -5000);
   mesh.receiveShadow = true;
   mesh.name = 'sea';
-  void nrm2;
-  return {
-    mesh,
-    update(t: number) {
-      nrm.offset.set(t * 0.004, t * 0.0027);
-    },
-  };
+  return { mesh, update: (t: number) => nrm.offset.set(t * 0.004, t * 0.0027) };
 }

@@ -75,7 +75,7 @@ export class Walker {
     const g = world.ground(this.pos.x, this.pos.z, this.pos.y + 0.05, 0.6);
     this.swimming = false;
     this.wading = false;
-    if (g.water && g.h <= 0.01 && world.terrain(this.pos.x, this.pos.z) < -0.6) {
+    if (g.sea && world.terrain(this.pos.x, this.pos.z) < -0.6) {
       // 바다: 수영
       if (this.pos.y <= -1.15) {
         this.pos.y = -1.15;

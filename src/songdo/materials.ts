@@ -66,8 +66,8 @@ float bGlass = 0.0;
   w *= wall * step(0.0, fy) * (st == 4 ? 0.0 : 1.0);
   bWin = w;
   float seed = vStyle.y;
-  float lit = step(0.52, bHash(cell + vec2(seed * 17.0, seed * 3.0)));
-  bLit = mix(0.45, lit, aa) * w * step(1.0, fy);
+  float lit = step(0.68, bHash(cell + vec2(seed * 17.0, seed * 3.0)));
+  bLit = mix(0.12, lit, aa) * w * step(1.0, fy);
   vec3 glass = (st == 1 || st == 5) ? mix(diffuseColor.rgb * 0.55, vec3(0.20, 0.28, 0.36), 0.55) : vec3(0.10, 0.13, 0.17);
   vec3 wallC = (st == 1 || st == 5) ? diffuseColor.rgb * 0.85 : diffuseColor.rgb;
   diffuseColor.rgb = mix(wallC, glass, w);
@@ -82,7 +82,7 @@ metalnessFactor = mix(metalnessFactor, 0.35, bGlass);`)
 {
   float warm = bHash(floor(vec2(vWPos.x, vWPos.z) / 9.0) + vStyle.y);
   vec3 lightC = mix(vec3(1.0, 0.78, 0.45), vec3(0.85, 0.92, 1.0), step(0.6, warm));
-  totalEmissiveRadiance += lightC * bLit * uNight * 1.35;
+  totalEmissiveRadiance += lightC * bLit * uNight * 1.1;
 }`);
   };
   return m;
