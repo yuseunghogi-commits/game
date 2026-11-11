@@ -599,7 +599,7 @@ function syncModels(dt: number) {
   planeModel.root.quaternion.copy(plane.q);
   for (const g of planeModel.gear) g.visible = plane.gearDown;
   if (planeModel.prop) planeModel.prop.rotation.z += dt * (8 + plane.throttle * 120);
-  planeModel.root.visible = !(mode === 'fly' && camMode === 'cockpit' && plane.spec.id === 'airliner');
+  planeModel.root.visible = !(mode === 'fly' && camMode === 'cockpit');
   if (mode === 'walk') {
     walker.animate(person);
     person.root.visible = walkCam === 'third';

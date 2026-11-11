@@ -10,7 +10,7 @@ interface Preset { elev: number; azim: number; sun: number; sunColor: number; he
 const PRESETS: Record<TimeOfDay, Preset> = {
   day: { elev: 48, azim: 160, sun: 3.0, sunColor: 0xfff4e5, hemi: 0.9, sky: 0xbfd8ff, ground: 0x5a6650, fog: 0xb4c8dc, fogDensity: 0.000034, exposure: 0.62, night: 0, turbidity: 4, rayleigh: 1.2 },
   sunset: { elev: 3.5, azim: 255, sun: 2.2, sunColor: 0xffa060, hemi: 0.45, sky: 0xffb48a, ground: 0x4a4038, fog: 0xd9a483, fogDensity: 0.00004, exposure: 0.55, night: 0.55, turbidity: 8, rayleigh: 2.5 },
-  night: { elev: -12, azim: 220, sun: 0.25, sunColor: 0x8fa8ff, hemi: 0.16, sky: 0x223355, ground: 0x0b0d12, fog: 0x0b1320, fogDensity: 0.00004, exposure: 0.85, night: 1, turbidity: 2, rayleigh: 0.5 },
+  night: { elev: -12, azim: 220, sun: 0.55, sunColor: 0x8fa8ff, hemi: 0.45, sky: 0x2a3d66, ground: 0x1c2230, fog: 0x0b1320, fogDensity: 0.00004, exposure: 0.85, night: 1, turbidity: 2, rayleigh: 0.5 },
 };
 
 export class Env {
@@ -80,7 +80,7 @@ export class Env {
     if (this.envRT) this.envRT.dispose();
     this.envRT = rt;
     this.scene.environment = rt.texture;
-    this.scene.environmentIntensity = t === 'night' ? 0.25 : t === 'sunset' ? 0.7 : 1.0;
+    this.scene.environmentIntensity = t === 'night' ? 0.45 : t === 'sunset' ? 0.7 : 1.0;
   }
 
   /** 그림자 영역을 카메라 주변으로 옮긴다 */
