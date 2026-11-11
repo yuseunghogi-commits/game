@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import type { HeightField } from './heightfield';
 import { makeDetailTexture, makeWaterNormal } from './materials';
+import { withImagery } from './imagery';
 
 const CH = 64; // 조각당 셀 수
 
@@ -26,6 +27,7 @@ export function buildTerrain(hf: HeightField, ground: THREE.Texture): THREE.Grou
   diffuseColor.rgb *= mix(1.0, d1 * 1.12, k) * mix(1.0, d2 * 1.1, 0.6);
 }`);
   };
+  withImagery(mat, 'ground');
   const W = hf.x1 - hf.x0, Hh = hf.z1 - hf.z0;
   for (let cj = 0; cj < hf.nz - 1; cj += CH) {
     for (let ci = 0; ci < hf.nx - 1; ci += CH) {

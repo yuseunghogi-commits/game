@@ -16,7 +16,7 @@ RELEASE = 'release/2026-10-21.0/theme='
 BB = (126.34, 37.28, 126.80, 37.60)  # 경도·위도 범위
 OUT = sys.argv[1]
 os.makedirs(OUT, exist_ok=True)
-THEMES = {'buildings/type=building': 'buildings', 'base/type=land': 'land', 'base/type=water': 'water',
+THEMES = {'buildings/type=building': 'buildings', 'buildings/type=building_part': 'parts', 'base/type=land': 'land', 'base/type=water': 'water',
           'base/type=land_use': 'landuse', 'transportation/type=segment': 'segments', 'base/type=infrastructure': 'infra'}
 
 

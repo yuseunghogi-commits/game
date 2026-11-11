@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { RC, type Roads } from './data';
 import type { HeightField } from './heightfield';
 import type { World } from './world';
+import { withImagery } from './imagery';
 
 export interface RoadLine { cls: number; width: number; pts: THREE.Vector3[]; bridge: boolean }
 
@@ -176,7 +177,9 @@ export function buildRoads(lines: RoadLine[], hf: HeightField, world: World): Ro
     g.setAttribute('uv', new THREE.Float32BufferAttribute(B.uv, 2));
     g.setIndex(B.idx);
     g.computeVertexNormals();
-    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ map: kinds[k], roughness: k === 'foot' ? 0.95 : 0.85, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+    const rm = new THREE.MeshStandardMaterial({ map: kinds[k], roughness: k === 'foot' ? 0.95 : 0.85 });
+    if (k !== 'rail' && k !== 'taxi') withImagery(rm, 'road');
+    const m = new THREE.Mesh(g, rm);
     m.receiveShadow = true;
     m.name = 'roads-' + k;
     group.add(m);

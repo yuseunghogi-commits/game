@@ -1,5 +1,6 @@
 // 공용 재질: 건물 창문 무늬(월드 좌표 기반 셰이더), 밤 조명, 지면 디테일 텍스처, 물결 노멀맵.
 import * as THREE from 'three';
+import { IMG_U, IMAGERY_GLSL } from './imagery';
 
 /** 0 = 낮, 1 = 밤 (창문 불빛·가로등 세기) */
 export const nightU = { value: 0 };
@@ -15,6 +16,7 @@ export function makeBuildingMaterial(): THREE.MeshStandardMaterial {
   const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.75, metalness: 0.05 });
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uNight = nightU;
+    Object.assign(sh.uniforms, IMG_U);
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', `#include <common>
 attribute vec4 aStyle;
@@ -40,7 +42,8 @@ uniform float uNight;
 varying vec3 vWPos;
 varying vec3 vWNorm;
 varying vec4 vStyle;
-float bHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }`)
+float bHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+${IMAGERY_GLSL}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
 float bWin = 0.0;
 float bLit = 0.0;
@@ -74,6 +77,11 @@ float bGlass = 0.0;
   // 지붕은 조금 어둡게
   diffuseColor.rgb *= mix(0.78, 1.0, wall);
   bGlass = w;
+  // 낮은 건물 지붕에는 항공사진 (높은 건물은 사진에서 기울어져 보여 맞지 않음)
+  if (n.y > 0.45 && vWPos.y - vStyle.w < 45.0) {
+    vec4 im = imgColor(vWPos.xz);
+    diffuseColor.rgb = mix(diffuseColor.rgb, im.rgb, im.w * 0.9);
+  }
 }`)
       .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
 roughnessFactor = mix(roughnessFactor, 0.12, bGlass);

@@ -213,6 +213,18 @@ print('  terrain', NX, NZ, float(height.min()), float(height.max()))
 
 print('3/8 건물')
 B = read('buildings', ['id', 'names', 'height', 'min_height', 'num_floors', 'class', 'facade_color', 'roof_shape', 'is_underground', 'geometry'])
+# 건물 부분(building:part)이 있으면 본 건물 대신 부분들로 (층별 높이·모양이 정확함)
+if os.path.exists(os.path.join(SRC, 'parts.parquet')):
+    import pandas as pd
+    PT = read('parts', ['id', 'names', 'height', 'min_height', 'num_floors', 'facade_color', 'roof_shape', 'is_underground', 'geometry', 'building_id'])
+    parent = B.set_index('id')
+    PT = PT[PT.building_id.isin(parent.index)].copy()
+    PT['class'] = [parent.at[b, 'class'] for b in PT.building_id]
+    PT['names'] = [n if n is not None else parent.at[b, 'names'] for n, b in zip(PT.names, PT.building_id)]
+    # 높이 없는 부분은 본 건물 높이
+    PT['height'] = [h if h == h and h is not None else parent.at[b, 'height'] for h, b in zip(PT.height, PT.building_id)]
+    B = pd.concat([B[~B.id.isin(set(PT.building_id))], PT.drop(columns=['building_id'])], ignore_index=True)
+    print('  building parts', len(PT))
 NEW_TOWNS = [Polygon([proj(126.595, 37.425), proj(126.705, 37.385), proj(126.69, 37.335), proj(126.585, 37.36)]),  # 송도
              Polygon([proj(126.53, 37.51), proj(126.60, 37.51), proj(126.60, 37.47), proj(126.53, 37.47)]),  # 영종하늘도시
              Polygon([proj(126.62, 37.555), proj(126.69, 37.555), proj(126.69, 37.515), proj(126.62, 37.515)])]  # 청라

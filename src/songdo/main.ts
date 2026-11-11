@@ -9,6 +9,7 @@ import { loadMapData, type Meta } from './data';
 import { BuildingSet } from './buildings';
 import { TreeSet } from './trees';
 import { buildRoads, processRoads } from './roads';
+import { Imagery } from './imagery';
 import { Aircraft, SPECS, type AircraftSpec, type FlightInput } from './aircraft';
 import { makeAirliner, makeLightPlane, makePerson, type PlaneModel } from './aircraftModels';
 import { Walker } from './walker';
@@ -46,7 +47,7 @@ app.innerHTML = `
   <div id="sd-hint" class="panel hidden"></div>
   <div id="sd-toast" class="panel hidden"></div>
   <div id="sd-msg" class="panel hidden"></div>
-  <div id="sd-attr">© OpenStreetMap 기여자 · Overture Maps · AWS Terrain Tiles</div>
+  <div id="sd-attr">© OpenStreetMap 기여자 · Overture Maps · AWS Terrain Tiles · 항공사진: Esri, Maxar, Earthstar Geographics</div>
 </div>
 <div id="sd-touch" class="hidden">
   <div class="stick"><div class="knob"></div></div>
@@ -97,13 +98,14 @@ const KEYS_HTML = `
 <h3>공통</h3>
 <div><kbd>C</kbd> 시점 바꾸기 · 마우스 끌기: 둘러보기 · 휠: 거리</div>
 <div><kbd>M</kbd> 지도·순간이동 · <kbd>N</kbd> 낮/노을/밤</div>
-<div><kbd>R</kbd> 활주로에서 다시 시작 · <kbd>O</kbd> 소리 · <kbd>H</kbd> 도움말</div>`;
+<div><kbd>R</kbd> 활주로에서 다시 시작 · <kbd>O</kbd> 소리 · <kbd>H</kbd> 도움말</div>
+<div><kbd>I</kbd> 항공사진 켜기/끄기 (인터넷 필요)</div>`;
 $('#sd-start .keys').innerHTML = KEYS_HTML;
 $('#sd-help .panel').innerHTML = `<h2 style="margin:0 0 8px">조작법</h2><div class="keys">${KEYS_HTML}</div>
 <div class="note"><b>이륙</b>: <kbd>W</kbd>를 눌러 추력을 끝까지 올리고, 여객기는 시속 약 270km, 경비행기는 약 100km에서 <kbd>↓</kbd>로 기수를 듭니다. 이륙 뒤 <kbd>G</kbd>로 착륙장치를 올리세요.<br>
 <b>송도 가는 길</b>: 공항에서 동남동쪽(방위 약 110°)으로 약 18km. 인천대교를 따라가면 송도가 나옵니다.<br>
 <b>착륙</b>: 착륙장치를 내리고 천천히 내려앉으면 활주로·도로·공원·옥상·다리 위 어디든 내릴 수 있습니다 (강하율이 너무 크면 추락).<br>
-<b>지도 자료</b>: 건물 약 12만 채의 실제 외곽선, 도로·철도·다리, 활주로·유도로, 공원·물·땅 쓰임새는 OpenStreetMap(© OpenStreetMap 기여자, ODbL)과 Overture Maps 자료, 지형 높이는 AWS Terrain Tiles(SRTM 등)를 썼습니다. 높이 정보가 있는 건물(약 1만 4천 채)은 실제 높이, 나머지는 건물 종류·면적으로 추정한 높이입니다.</div>
+<b>지도 자료</b>: 건물 약 12만 채의 실제 외곽선, 도로·철도·다리, 활주로·유도로, 공원·물·땅 쓰임새는 OpenStreetMap(© OpenStreetMap 기여자, ODbL)과 Overture Maps 자료, 지형 높이는 AWS Terrain Tiles(SRTM 등), 땅과 낮은 지붕의 항공사진은 Esri World Imagery(Esri, Maxar, Earthstar Geographics)를 실행 중에 받아 씁니다(인터넷이 없으면 지도 그림으로 대신합니다). 높이 정보가 있는 건물(약 1만 4천 채)은 실제 높이, 나머지는 건물 종류·면적으로 추정한 높이입니다.</div>
 <div class="row" style="justify-content:flex-end"><button data-close>닫기 (H)</button></div>`;
 
 // ───────────────────────── 렌더러 ─────────────────────────
@@ -128,6 +130,7 @@ let traffic!: Traffic;
 let meta!: Meta;
 let buildings!: BuildingSet;
 let trees!: TreeSet;
+let imagery: Imagery | null = null;
 let runways: RunwayInfo[] = [];
 let paths: THREE.Vector3[] = []; // 걷기 시작점 후보 (산책로·보행로)
 let seaUpdate: (t: number) => void = () => {};
@@ -192,6 +195,9 @@ function onKey(code: string) {
     case 'KeyR': spawnRunway(plane?.spec.id ?? 'airliner'); break;
     case 'KeyO': audio.setMuted(!audio.muted); toast(audio.muted ? '소리 끔' : '소리 켬'); break;
     case 'KeyP': paused = !paused; toast(paused ? '일시정지' : '계속'); break;
+    case 'KeyI':
+      if (imagery) { imagery.setEnabled(!imagery.enabled); toast(imagery.enabled ? '항공사진 켬' : '항공사진 끔 (지도 그림)'); }
+      break;
   }
 }
 
@@ -298,6 +304,10 @@ async function load() {
   groundTex.colorSpace = THREE.SRGBColorSpace;
   groundTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
   scene.add(buildTerrain(hf, groundTex));
+  try {
+    imagery = new Imagery(renderer, { x: (meta.bounds[0] + meta.bounds[2]) / 2, z: (meta.bounds[1] + meta.bounds[3]) / 2 });
+    if (new URLSearchParams(location.search).get('photo') === 'off') imagery.setEnabled(false);
+  } catch (e) { console.warn('항공사진 사용 불가', e); imagery = null; }
   const sea = buildSea();
   scene.add(sea.mesh);
   seaUpdate = sea.update;
@@ -819,6 +829,7 @@ function loop(now: number) {
   traffic.update(paused ? 0 : dt);
   buildings.update(camera.position);
   trees.update(camera.position);
+  imagery?.update(camera.position, Math.max(0, hf.at(camera.position.x, camera.position.z)));
   seaUpdate(now / 1000);
   updateFx(dt);
   syncModels(dt);
@@ -865,7 +876,7 @@ void (async () => {
       start: (s: string) => (app.querySelector(`[data-start="${s}"]`) as HTMLButtonElement).click(),
       setCam: (m: 'chase' | 'cockpit') => { camMode = m; }, setWalkCam: (m: 'third' | 'first', yaw?: number, pitch?: number) => { walkCam = m; if (yaw !== undefined) camYaw = yaw; if (pitch !== undefined) camPitch = pitch; },
       setOrbit: (y: number, p: number) => { orbitYaw = y; orbitPitch = p; orbitIdle = -1e9; },
-      setZoom: (z: number) => { zoom = z; }, info: () => renderer.info,
+      setZoom: (z: number) => { zoom = z; }, info: () => renderer.info, get imagery() { return imagery; },
     };
   }
   requestAnimationFrame(loop);
