@@ -273,6 +273,7 @@ air_zone = shapely.union_all(air_zone) if air_zone else None
 if air_zone is not None:
     shapely.prepare(air_zone)
 dropped = 0
+dome_polys = []
 bld = []  # (cx, cz, h, minh, style, flags, color, ring)
 named_bld = {}
 for idx, (bid, nm, hgt, minh, nfl, cls, fc, rs, und, g) in enumerate(zip(B.id, B.names, B.height, B.min_height, B.num_floors, B['class'], B.facade_color, B.roof_shape, B.is_underground, B.geometry)):
@@ -344,6 +345,10 @@ for idx, (bid, nm, hgt, minh, nfl, cls, fc, rs, und, g) in enumerate(zip(B.id, B
         if fcol:
             col = fcol
         flags = (1 if real else 0) | (2 if (style == 6 and area < 600 and h < 12) or rs in ('gabled', 'hipped', 'pyramidal') else 0)
+        # 공항 여객터미널·탑승동: 벽은 18m, 위에는 곡선 금속 지붕(아래 roofs)을 따로 얹는다
+        if name and c.x < -15000 and ('여객터미널' in name or '탑승동' in name) and area > 5000:
+            h, mh, style, col = 18.0, 0.0, 5, (176, 196, 210)
+            dome_polys.append((P, c.x, c.y))
         ring = list(P.exterior.coords)[:-1]
         if not P.exterior.is_ccw:
             ring = ring[::-1]
@@ -351,8 +356,40 @@ for idx, (bid, nm, hgt, minh, nfl, cls, fc, rs, und, g) in enumerate(zip(B.id, B
         if name and (h > 60 or area > 3000 or name in ('트라이볼',)):
             named_bld.setdefault(name, (c.x, c.y, h))
 
-# 이름 있는 건물 높이 보정 (OSM 높이가 없을 때)
-FIX_H = {'인천국제공항 제1여객터미널': 33, '인천국제공항 제2여객터미널': 36}
+# 곡선 지붕: 외곽선 안쪽 점 + 둘레 점으로 삼각망, 높이 = 벽 위 + 가장자리에서 멀수록 솟음 (지면 기준 높이)
+roof_tris = []
+for P, cx, cz in dome_polys:
+    Pd = P.buffer(0)
+    edge = Pd.exterior
+    pts = [edge.interpolate(d) for d in np.arange(0, edge.length, 12)]
+    bx0, bz0, bx1, bz1 = Pd.bounds
+    inner = Pd.buffer(-4)
+    for x in np.arange(bx0, bx1, 14):
+        for z in np.arange(bz0, bz1, 14):
+            if inner.contains(Point(x, z)):
+                pts.append(Point(x, z))
+    T = shapely.delaunay_triangles(shapely.MultiPoint(pts))
+    span = min(bx1 - bx0, bz1 - bz0)
+    D = max(25.0, min(70.0, span * 0.3))
+    bulge = 16.0
+    def hy(x, z):
+        d = Pd.exterior.distance(Point(x, z))
+        t = min(1.0, d / D)
+        return 18.0 + bulge * (t * t * (3 - 2 * t))
+    for t in T.geoms:
+        if not Pd.contains(t.centroid):
+            continue
+        c3 = list(t.exterior.coords)[:3]
+        (ax, az), (bx, bz), (qx, qz) = c3
+        if (bz - az) * (qx - ax) - (bx - ax) * (qz - az) < 0:
+            c3 = [c3[0], c3[2], c3[1]]
+        roof_tris.append([(x, z, hy(x, z)) for x, z in c3])
+buf = bytearray(b'SDF1') + struct.pack('<I', len(roof_tris))
+buf += np.array([[round(p[0] * 10), round(p[1] * 10)] for t in roof_tris for p in t], '<i4').tobytes()
+buf += np.array([p[2] for t in roof_tris for p in t], '<f4').tobytes()
+with gzip.open(os.path.join(OUT, 'roofs.bin.gz'), 'wb', 9) as f:
+    f.write(bytes(buf))
+print('  dome roofs', len(dome_polys), 'triangles', len(roof_tris))
 n = len(bld)
 nv = sum(len(b[7]) for b in bld)
 buf = bytearray()

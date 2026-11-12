@@ -46,6 +46,23 @@ export class TreeSet {
     }
   }
   prime(cam: THREE.Vector3) { this.update(cam, 1e9); }
+  /** 점이 나무 수관(타원체) 안인가 (카메라가 나무 속으로 들어가지 않게) */
+  inCrown(p: THREE.Vector3): boolean {
+    const c = this.chunks.get((Math.floor(p.x / CHUNK) + 1000) * 4096 + Math.floor(p.z / CHUNK) + 1000);
+    if (!c || !c.mesh) return false;
+    for (const i of c.ids) {
+      const dx = this.t.x[i] - p.x, dz = this.t.z[i] - p.z;
+      if (dx * dx + dz * dz > 100) continue;
+      const r = ((i * 2654435761) >>> 0) / 4294967296;
+      const kind = this.t.kind[i];
+      const size = kind === 0 ? 8 + r * 7 : kind === 1 ? 6 + r * 6 : 5 + r * 3;
+      const cy = this.hf.at(this.t.x[i], this.t.z[i]) + size * 0.62;
+      const rx = size * 0.55 * (0.85 + r * 0.3) + 0.4, ry = size * 0.62 + 0.4;
+      const ex = dx / rx, ez = dz / rx, ey = (p.y - cy) / ry;
+      if (ex * ex + ez * ez + ey * ey < 1) return true;
+    }
+    return false;
+  }
   update(cam: THREE.Vector3, budgetMs = 4) {
     const t0 = performance.now();
     // 높이 올라가면 나무 거리 줄이기 (멀리서는 지면 그림이 대신함)

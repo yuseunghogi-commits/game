@@ -42,6 +42,19 @@ export interface Trees { n: number; x: Float32Array; z: Float32Array; kind: Uint
 /** 호수·수로 수면 삼각형 (바다와 이어진 물 제외) */
 export interface WaterAreas { n: number; y: Float32Array; xz: Float32Array }
 
+/** 곡선 지붕 삼각형 (y = 지면 위 높이) */
+export interface Roofs { n: number; xz: Float32Array; y: Float32Array }
+export function parseRoofs(buf: ArrayBuffer): Roofs {
+  const dv = new DataView(buf);
+  magic(dv, 'SDF1');
+  const n = dv.getUint32(4, true);
+  const i32 = new Int32Array(buf.slice(8, 8 + n * 24));
+  const y = new Float32Array(buf.slice(8 + n * 24, 8 + n * 24 + n * 12));
+  const xz = new Float32Array(i32.length);
+  for (let i = 0; i < i32.length; i++) xz[i] = i32[i] / 10;
+  return { n, xz, y };
+}
+
 export interface MapData {
   meta: Meta;
   heights: Float32Array;
@@ -50,6 +63,7 @@ export interface MapData {
   roads: Roads;
   trees: Trees;
   areas: WaterAreas;
+  roofs: Roofs | null;
   groundUrl: string;
 }
 
@@ -152,7 +166,7 @@ export async function loadMapData(base: string, progress: (f: number, s: string)
   progress(0.06, '지형 고도 자료');
   const [t, w] = await Promise.all([get('terrain.bin.gz'), get('water.bin.gz')]);
   progress(0.12, '건물 12만 채 자료');
-  const [b, r, tr, a] = await Promise.all([get('buildings.bin.gz'), get('roads.bin.gz'), get('trees.bin.gz'), get('areas.bin.gz')]);
+  const [b, r, tr, a, rf] = await Promise.all([get('buildings.bin.gz'), get('roads.bin.gz'), get('trees.bin.gz'), get('areas.bin.gz'), get('roofs.bin.gz').catch(() => null)]);
   return {
     meta,
     heights: parseTerrain(t),
@@ -161,6 +175,7 @@ export async function loadMapData(base: string, progress: (f: number, s: string)
     roads: parseRoads(r),
     trees: parseTrees(tr),
     areas: parseAreas(a),
+    roofs: rf ? parseRoofs(rf) : null,
     groundUrl: `${base}ground.jpg`,
   };
 }

@@ -318,6 +318,7 @@ async function load() {
   buildings = new BuildingSet(data.buildings, hf, world, lm.hidden);
   scene.add(buildings.group);
   scene.add(lm.build(buildings.base));
+  if (data.roofs) scene.add(buildRoofs(data.roofs));
   setProgress(0.6, '도로·다리 까는 중…'); await frame();
   const lines = processRoads(data.roads, hf);
   for (const l of lines) if ((l.cls === 8 || l.cls === 9 || l.cls === 6) && !l.bridge) for (let k = 0; k < l.pts.length; k += 2) paths.push(l.pts[k]);
@@ -345,6 +346,22 @@ async function load() {
   buildMapList();
   setProgress(1, '완료'); await frame();
   loading.classList.add('hidden');
+}
+
+/** 공항 터미널 곡선 금속 지붕 */
+function buildRoofs(r: import('./data').Roofs): THREE.Mesh {
+  const pos = new Float32Array(r.n * 9);
+  for (let i = 0; i < r.n * 3; i++) {
+    const x = r.xz[i * 2], z = r.xz[i * 2 + 1];
+    pos.set([x, Math.max(0.5, hf.at(x, z)) - 0.4 + r.y[i], z], i * 3);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0xd3d9de, roughness: 0.28, metalness: 0.65 }));
+  m.castShadow = true; m.receiveShadow = true;
+  m.name = 'terminal-roofs';
+  return m;
 }
 
 /** 호수·수로 수면 (자료에서 미리 삼각형으로 나눔) */
@@ -716,8 +733,15 @@ function updateCamera(dt: number) {
   } else {
     const head = tmpV.copy(walker.pos).add(new THREE.Vector3(0, walker.swimming ? 0.5 : 1.6, 0));
     if (walkCam === 'third') {
-      const dist = (walker.chute ? 14 : 4.5) * zoom;
-      camera.position.set(head.x + Math.sin(camYaw) * Math.cos(camPitch) * dist, head.y + Math.sin(camPitch) * dist, head.z + Math.cos(camYaw) * Math.cos(camPitch) * dist);
+      let dist = (walker.chute ? 14 : 4.5) * zoom;
+      // 머리에서 뒤로 가며 벽·나무에 막히면 그 앞에 카메라를 둔다
+      const dir = new THREE.Vector3(Math.sin(camYaw) * Math.cos(camPitch), Math.sin(camPitch), Math.cos(camYaw) * Math.cos(camPitch));
+      const probe = new THREE.Vector3();
+      for (let d = 0.6; d <= dist; d += 0.3) {
+        probe.copy(head).addScaledVector(dir, d);
+        if (world.hitAt(probe.x, probe.y, probe.z) || trees.inCrown(probe)) { dist = Math.max(0.6, d - 0.4); break; }
+      }
+      camera.position.copy(head).addScaledVector(dir, dist);
       const gy = world.ground(camera.position.x, camera.position.z, camera.position.y).h + 0.4;
       if (camera.position.y < gy) camera.position.y = gy;
       camera.lookAt(head);
