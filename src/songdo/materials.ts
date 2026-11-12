@@ -155,6 +155,7 @@ float bMetal = 0.0;
   } else {
     col = wallC * (0.95 + 0.05 * bHash(floor(vWPos.xz / 2.0)));
   }
+  col *= mix(1.0, mix(0.62, 1.0, clamp(y / 5.0, 0.0, 1.0)), wall);   // 땅에 닿는 아랫부분 어둡게
   col = mix(wallC * 0.78, col, wall);            // 지붕
   diffuseColor.rgb = col;
   bLit *= wall * step(0.0, fy);

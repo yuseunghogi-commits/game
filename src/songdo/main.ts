@@ -100,7 +100,7 @@ const KEYS_HTML = `
 <div><kbd>C</kbd> 시점 바꾸기 · 마우스 끌기: 둘러보기 · 휠: 거리</div>
 <div><kbd>M</kbd> 지도·순간이동 · <kbd>N</kbd> 낮/노을/밤</div>
 <div><kbd>R</kbd> 활주로에서 다시 시작 · <kbd>O</kbd> 소리 · <kbd>H</kbd> 도움말</div>
-<div><kbd>I</kbd> 항공사진 켜기/끄기 (인터넷 필요)</div>`;
+<div><kbd>I</kbd> 항공사진 켜기/끄기 (인터넷 필요) · <kbd>K</kbd> 그림자 켜기/끄기 (느릴 때)</div>`;
 $('#sd-start .keys').innerHTML = KEYS_HTML;
 $('#sd-help .panel').innerHTML = `<h2 style="margin:0 0 8px">조작법</h2><div class="keys">${KEYS_HTML}</div>
 <div class="note"><b>이륙</b>: <kbd>W</kbd>를 눌러 추력을 끝까지 올리고, 여객기는 시속 약 270km, 경비행기는 약 100km에서 <kbd>↓</kbd>로 기수를 듭니다. 이륙 뒤 <kbd>G</kbd>로 착륙장치를 올리세요.<br>
@@ -196,6 +196,11 @@ function onKey(code: string) {
     case 'KeyR': spawnRunway(plane?.spec.id ?? 'airliner'); break;
     case 'KeyO': audio.setMuted(!audio.muted); toast(audio.muted ? '소리 끔' : '소리 켬'); break;
     case 'KeyP': paused = !paused; toast(paused ? '일시정지' : '계속'); break;
+    case 'KeyK':
+      renderer.shadowMap.enabled = !renderer.shadowMap.enabled;
+      scene.traverse((o) => { const m = (o as THREE.Mesh).material as THREE.Material | undefined; if (m && !Array.isArray(m)) m.needsUpdate = true; });
+      toast(renderer.shadowMap.enabled ? '그림자 켬' : '그림자 끔 (빠르게)');
+      break;
     case 'KeyI':
       if (imagery) { imagery.setEnabled(!imagery.enabled); toast(imagery.enabled ? '항공사진 켬' : '항공사진 끔 (지도 그림)'); }
       break;
@@ -344,6 +349,11 @@ async function load() {
   const img = groundTex.image as HTMLImageElement;
   mapArt = new MapArt(img, meta);
   buildMapList();
+  // 도시 전체 그림자 (주소에 ?shadow=low 를 붙이면 끔)
+  if (new URLSearchParams(location.search).get('shadow') !== 'low') {
+    env.enableCSM(camera);
+    env.setupMaterials(scene);
+  }
   setProgress(1, '완료'); await frame();
   loading.classList.add('hidden');
 }
@@ -470,6 +480,7 @@ function primeAround() {
   updateCamera(0);
   buildings.prime(camera.position);
   trees.prime(camera.position);
+  env.setupMaterials(scene);
 }
 
 function enterFly() {

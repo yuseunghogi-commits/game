@@ -40,7 +40,7 @@ const dummy = new THREE.DataTexture(new Uint8Array(4), 1, 1);
 dummy.needsUpdate = true;
 /** 지형·도로·건물 셰이더가 공유하는 uniform (Imagery가 값을 채운다) */
 export const IMG_U: Record<string, THREE.IUniform> = { uImgOn: { value: 0 } };
-for (let i = 0; i < 3; i++) {
+for (let i = 0; i < 4; i++) {
   IMG_U[`uImg${i}Tex`] = { value: dummy };
   IMG_U[`uImg${i}Slots`] = { value: dummy };
   IMG_U[`uImg${i}A`] = { value: new THREE.Vector4(0, 0, 0, 1) };
@@ -60,7 +60,8 @@ export class Imagery {
     this.gl = renderer.getContext() as WebGL2RenderingContext;
     const maxTex = renderer.capabilities.maxTextureSize;
     // 단계: z13 전체(고정), z15 약 7.8km, z17 약 3.9km(큰 텍스처 지원 시) / 2km
-    const defs: [number, number, boolean][] = [[13, 16, true], [15, 8, false], [17, maxTex >= 8192 ? 16 : 8, false]];
+    // z19(약 0.25m)는 낮게 날거나 걸을 때만 (주변 약 700m)
+    const defs: [number, number, boolean][] = [[13, 16, true], [15, 8, false], [17, maxTex >= 8192 ? 16 : 8, false], [19, 12, false]];
     defs.forEach(([z, n, fixed], i) => this.levels.push(this.makeLevel(i, z, n, fixed, worldCenter)));
     IMG_U.uImgOn.value = 1;
   }
@@ -127,6 +128,7 @@ export class Imagery {
     // 자세한 단계부터 요청 (단계마다 동시 요청 몫을 둔다)
     [...this.levels.entries()].reverse().forEach(([i, L]) => {
       if (i === 2 && alt > 3000) return;
+      if (i === 3 && alt > 500) return;
       if (!L.fixedCenter) {
         const r = this.rel(L, cam.x, cam.z);
         const cx = Math.floor(r.x), cy = Math.floor(r.y);
@@ -148,7 +150,7 @@ export class Imagery {
         want.push([dx * dx + dy * dy, tx, ty]);
       }
       want.sort((a, b) => a[0] - b[0]);
-      const share = i === 2 ? 10 : i === 1 ? 6 : 4;
+      const share = i === 3 ? 10 : i === 2 ? 8 : i === 1 ? 5 : 3;
       for (const [, tx, ty] of want) {
         if (L.pending.size >= share || this.inflight >= 20 || this.failures > 400) break;
         this.fetchTile(L, tx, ty);
@@ -212,7 +214,7 @@ export class Imagery {
 /** 셰이더 조각: imgColor(worldXZ) → vec4(rgb, 가중치). 단계 높을수록 우선. */
 export const IMAGERY_GLSL = /* glsl */ `
 uniform float uImgOn;
-${[0, 1, 2].map((i) => `uniform sampler2D uImg${i}Tex; uniform sampler2D uImg${i}Slots; uniform vec4 uImg${i}A; uniform vec4 uImg${i}B; uniform vec2 uImg${i}C;`).join('\n')}
+${[0, 1, 2, 3].map((i) => `uniform sampler2D uImg${i}Tex; uniform sampler2D uImg${i}Slots; uniform vec4 uImg${i}A; uniform vec4 uImg${i}B; uniform vec2 uImg${i}C;`).join('\n')}
 vec4 imgLevel(vec2 wxz, sampler2D tex, sampler2D slots, vec4 A, vec4 B, vec2 C) {
   float N = A.w;
   float d = -(wxz.y - A.y) / ${R.toFixed(1)};
@@ -237,6 +239,8 @@ vec4 imgColor(vec2 wxz) {
   a = imgLevel(wxz, uImg1Tex, uImg1Slots, uImg1A, uImg1B, uImg1C);
   r = vec4(mix(r.rgb, a.rgb, a.w), max(r.w, a.w));
   a = imgLevel(wxz, uImg2Tex, uImg2Slots, uImg2A, uImg2B, uImg2C);
+  r = vec4(mix(r.rgb, a.rgb, a.w), max(r.w, a.w));
+  a = imgLevel(wxz, uImg3Tex, uImg3Slots, uImg3A, uImg3B, uImg3C);
   r = vec4(mix(r.rgb, a.rgb, a.w), max(r.w, a.w));
   return vec4(r.rgb, r.w * uImgOn);
 }
