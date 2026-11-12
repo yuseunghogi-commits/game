@@ -21,7 +21,8 @@ export class BuildingSet {
   private chunks = new Map<number, Chunk>();
   private bigMeshes: THREE.Mesh[] = [];
   private seed: Float32Array;
-  constructor(private b: Buildings, hf: HeightField, world: World) {
+  /** hidden: 직접 모델링한 랜드마크로 바꿔 그릴 건물 번호 (충돌은 그대로) */
+  constructor(private b: Buildings, hf: HeightField, world: World, private hidden: Set<number> = new Set()) {
     this.group.name = 'buildings';
     const n = b.n;
     this.base = new Float32Array(n);
@@ -101,11 +102,12 @@ export class BuildingSet {
       const c = b.count[i];
       nv += c * 6 + 1; ni += c * 6 + c * 3;
     }
-    const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), col = new Uint8Array(nv * 3), sty = new Float32Array(nv * 4);
+    const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), col = new Uint8Array(nv * 3), sty = new Float32Array(nv * 4), tops = new Float32Array(nv);
     const idx = new Uint32Array(ni);
     let v = 0, q = 0;
     const contour: THREE.Vector2[] = [];
     for (const i of ids) {
+      if (this.hidden.has(i)) continue;
       const c = b.count[i], s = b.start[i] * 2;
       const base = this.base[i] + b.minH[i];
       const top = this.base[i] + b.h[i];
@@ -131,6 +133,7 @@ export class BuildingSet {
         nor[v * 3] = nx; nor[v * 3 + 1] = ny; nor[v * 3 + 2] = nz;
         col[v * 3] = cr; col[v * 3 + 1] = cg; col[v * 3 + 2] = cb;
         sty[v * 4] = ss; sty[v * 4 + 1] = seed; sty[v * 4 + 2] = fh; sty[v * 4 + 3] = this.base[i];
+        tops[v] = wallTop;
         return v++;
       };
       // 벽
@@ -191,6 +194,7 @@ export class BuildingSet {
     g.setAttribute('normal', new THREE.BufferAttribute(nor.subarray(0, v * 3), 3));
     g.setAttribute('color', new THREE.BufferAttribute(col.subarray(0, v * 3), 3, true));
     g.setAttribute('aStyle', new THREE.BufferAttribute(sty.subarray(0, v * 4), 4));
+    g.setAttribute('aTop', new THREE.BufferAttribute(tops.subarray(0, v), 1));
     g.setIndex(new THREE.BufferAttribute(idx.subarray(0, q), 1));
     g.computeBoundingSphere();
     const m = new THREE.Mesh(g, bldMat());
@@ -201,7 +205,7 @@ export class BuildingSet {
 }
 
 let mat: THREE.Material | null = null;
-function bldMat(): THREE.Material {
+export function bldMat(): THREE.Material {
   if (mat) return mat;
   const c = buildingMaterial.clone();
   c.vertexColors = true;
